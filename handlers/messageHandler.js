@@ -3,34 +3,39 @@
 const wa = require('../utils/whatsapp');
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
+// Retailer IDs match Commerce Manager Content IDs exactly
 const PRODUCTS = [
   {
     id: 'original-atta-cookie',
-    name: 'Original Atta Cookie',
-    price: 290,
+    retailerId: '91slwpjdqq',
+    name: 'Munchingo Atta Original',
+    price: 250,
     emoji: '🍪',
     description: 'Classic pure desi ghee atta cookie — the one that started it all.',
   },
   {
-    id: 'choco-atta-cookie',
-    name: 'Choco Atta Cookie',
-    price: 290,
-    emoji: '🍫',
-    description: 'Rich chocolate twist on our signature atta base.',
-  },
-  {
     id: 'kesari-atta-cookie',
-    name: 'Kesari Atta Cookie',
+    retailerId: 'w2w5ynf2m5',
+    name: 'Munchingo Atta Kesari',
     price: 290,
     emoji: '🌸',
     description: 'Aromatic saffron & cardamom — a festive favourite.',
   },
   {
-    id: 'sugar-lite-atta-cookie',
-    name: 'Sugar Lite Atta Cookie',
+    id: 'lite-sugar-atta-cookie',
+    retailerId: 'vf5p90bcy5',
+    name: 'Munchingo Atta Lite-Sugar',
     price: 290,
     emoji: '💛',
     description: 'All the flavour, lighter on the sugar.',
+  },
+  {
+    id: 'ajwain-atta-cookie',
+    retailerId: '97q9r5q5q3',
+    name: 'Munchingo Atta Ajwain',
+    price: 250,
+    emoji: '🌿',
+    description: 'Warm carom seeds & pure desi ghee — a digestive delight.',
   },
 ];
 
@@ -52,7 +57,8 @@ async function sendWelcome(to, name) {
 async function sendProductList(to) {
   await wa.sendCatalog(
     to,
-    '🍪 Here\'s our full range of pure desi ghee atta cookies — ₹290 each.\n\nTap a product to add it to your cart!'
+    '🍪 Here\'s our full range of pure desi ghee atta cookies — starting at ₹250.\n\nTap a product to add it to your cart!',
+    '91slwpjdqq'   // Original Atta as the thumbnail
   );
 }
 
@@ -65,7 +71,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
-      `Minimum order: 1 pack (₹290)\n` +
+      `Minimum order: 1 pack (from ₹250)\n` +
       `Delivery across India 🇮🇳`,
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
@@ -86,9 +92,9 @@ async function sendIngredients(to) {
       `✅ No maida / refined flour\n\n` +
       `Each variant uses the same clean base — only the flavour changes:\n` +
       `• *Original* — pure & buttery\n` +
-      `• *Choco* — real cocoa powder\n` +
       `• *Kesari* — saffron & cardamom\n` +
-      `• *Sugar Lite* — reduced sugar, same love ❤️`
+      `• *Lite-Sugar* — reduced sugar, same love ❤️\n` +
+      `• *Ajwain* — carom seeds, great for digestion 🌿`
   );
 }
 
@@ -117,7 +123,7 @@ async function sendPriceList(to) {
 
   await wa.sendButtons(
     to,
-    `💰 *Munchingo Pricing:*\n\n${lines}\n\nAll prices per pack. Free delivery on orders ₹599+.`,
+    `💰 *Munchingo Pricing:*\n\n${lines}\n\nAll prices per 250g pack. Free delivery on orders ₹599+.`,
     [
       { id: 'btn_products', title: '🛒 Shop Now' },
       { id: 'btn_order', title: '📦 How to Order' },
