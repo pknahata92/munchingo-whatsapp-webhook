@@ -11,23 +11,23 @@ const PRODUCTS = [
     name: 'Munchingo Atta Original',
     price: 250,
     emoji: '🍪',
-    description: 'Classic pure desi ghee atta cookie — the one that started it all.',
+    description: 'Cardamom-kissed. The one we started with. Slow-baked to a warm gold, with just enough sweetness to know it\'s a cookie.',
   },
   {
     id: 'kesari-atta-cookie',
     retailerId: 'w2w5ynf2m5',
     name: 'Munchingo Atta Kesari',
-    price: 290,
+    price: 250,
     emoji: '🌸',
-    description: 'Aromatic saffron & cardamom — a festive favourite.',
+    description: 'Real saffron, hand-mixed into every batch. What you serve when someone visits and you want to impress them.',
   },
   {
     id: 'lite-sugar-atta-cookie',
     retailerId: 'vf5p90bcy5',
     name: 'Munchingo Atta Lite-Sugar',
-    price: 290,
+    price: 250,
     emoji: '💛',
-    description: 'All the flavour, lighter on the sugar.',
+    description: '95% less sugar than our Original. Sweetened with maltitol. For the person who reads the back of the pack first.',
   },
   {
     id: 'ajwain-atta-cookie',
@@ -35,9 +35,24 @@ const PRODUCTS = [
     name: 'Munchingo Atta Ajwain',
     price: 250,
     emoji: '🌿',
-    description: 'Warm carom seeds & pure desi ghee — a digestive delight.',
+    description: 'Ajwain-forward, less sweet, more aromatic. Best with strong chai and a slow evening.',
   },
 ];
+
+// ── Retailer ID → product lookup ──────────────────────────────────────────────
+const RETAILER_MAP = Object.fromEntries(PRODUCTS.map((p) => [p.retailerId, p]));
+
+// ── Generate a short human-friendly order ID ──────────────────────────────────
+function generateOrderId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous I/O/0/1
+  const rand = Array.from({ length: 4 }, () =>
+    chars[Math.floor(Math.random() * chars.length)]
+  ).join('');
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `MNG-${rand}-${dd}${mm}`;
+}
 
 // ── Greet a new / returning user ─────────────────────────────────────────────
 async function sendWelcome(to, name) {
@@ -57,7 +72,7 @@ async function sendWelcome(to, name) {
 async function sendProductList(to) {
   await wa.sendCatalog(
     to,
-    '🍪 Here\'s our full range of pure desi ghee atta cookies — starting at ₹250.\n\nTap a product to add it to your cart!',
+    '🍪 Here\'s our full range of pure desi ghee atta cookies — ₹250 each.\n\nTap a product to add it to your cart!',
     '91slwpjdqq'   // Original Atta as the thumbnail
   );
 }
@@ -71,7 +86,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
-      `Minimum order: 1 pack (from ₹250)\n` +
+      `Minimum order: 1 pack (₹250)\n` +
       `Delivery across India 🇮🇳`,
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
@@ -123,7 +138,7 @@ async function sendPriceList(to) {
 
   await wa.sendButtons(
     to,
-    `💰 *Munchingo Pricing:*\n\n${lines}\n\nAll prices per 250g pack. Free delivery on orders ₹599+.`,
+    `💰 *Munchingo Pricing:*\n\n${lines}\n\nAll variants ₹250 per 250g pack (60 pcs). Free delivery on orders ₹599+.`,
     [
       { id: 'btn_products', title: '🛒 Shop Now' },
       { id: 'btn_order', title: '📦 How to Order' },
@@ -163,23 +178,29 @@ async function sendFAQ(to) {
 async function handleOrderMessage(to, order, contactName) {
   const name = contactName || 'there';
   const items = order.product_items || [];
+  const orderId = generateOrderId();
 
   const lines = items
-    .map((item) => `• ${item.product_retailer_id} × ${item.quantity} — ₹${item.item_price * item.quantity}`)
+    .map((item) => {
+      const product = RETAILER_MAP[item.product_retailer_id];
+      const productName = product ? product.name : item.product_retailer_id;
+      return `• ${productName} × ${item.quantity} — ₹${item.item_price * item.quantity}`;
+    })
     .join('\n');
 
   const total = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
 
   await wa.sendText(
     to,
-    `🎉 *Order received, ${name}!*\n\n` +
+    `🧾 *Order Confirmed, ${name}!*\n\n` +
+      `*Order #${orderId}*\n\n` +
       `${lines}\n\n` +
       `*Total: ₹${total}*\n\n` +
-      `We'll confirm and share payment details within a few minutes. ✅`
+      `We'll share payment & delivery details shortly. 🍪`
   );
 
-  // Log order for manual processing (in production: write to DB / notify team)
   console.log('[ORDER]', {
+    orderId,
     customer: to,
     name,
     items,
