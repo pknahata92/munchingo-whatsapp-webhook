@@ -1,0 +1,27 @@
+## Render.com one-click deployment config
+## Commit this file to your repo, then:
+## 1. Go to https://dashboard.render.com → New → Web Service
+## 2. Connect your GitHub repo
+## 3. Render auto-detects this file and fills in the settings
+
+services:
+  - type: web
+    name: munchingo-whatsapp-webhook
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free        # free tier is fine for a webhook receiver
+    healthCheckPath: /
+    envVars:
+      - key: WHATSAPP_TOKEN
+        sync: false   # you enter this manually in Render Dashboard
+      - key: VERIFY_TOKEN
+        sync: false   # you enter this manually in Render Dashboard
+      - key: PHONE_NUMBER_ID
+        value: "1245334191995122"
+      - key: WABA_ID
+        value: "1934053140598084"
+      - key: CATALOG_ID
+        value: "1592646269154053"
+      - key: NODE_ENV
+        value: production
