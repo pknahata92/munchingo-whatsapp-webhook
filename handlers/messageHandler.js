@@ -1,6 +1,7 @@
 'use strict';
 
 const wa = require('../utils/whatsapp');
+const { sendOrderEmail } = require('../utils/mailer');
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 // Retailer IDs match Commerce Manager Content IDs exactly
@@ -199,15 +200,19 @@ async function handleOrderMessage(to, order, contactName) {
       `We'll share payment & delivery details shortly. 🍪`
   );
 
-  console.log('[ORDER]', {
-    orderId,
-    customer: to,
-    name,
-    items,
-    total,
-    currency: order.currency,
-    timestamp: new Date().toISOString(),
+  const timestamp = new Date().toISOString();
+  const enrichedItems = items.map((item) => {
+    const product = RETAILER_MAP[item.product_retailer_id];
+    return { ...item, productName: product ? product.name : item.product_retailer_id };
   });
+
+  console.log('[ORDER]', { orderId, customer: to, name, items, total, currency: order.currency, timestamp });
+
+  try {
+    await sendOrderEmail({ orderId, customerPhone: to, customerName: name, items: enrichedItems, total, timestamp });
+  } catch (err) {
+    console.error('[MAILER] Failed to send order notification:', err.message);
+  }
 }
 
 // ── Route text messages by keyword ───────────────────────────────────────────
