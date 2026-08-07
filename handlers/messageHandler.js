@@ -2,9 +2,9 @@
 
 const wa = require('../utils/whatsapp');
 const { sendOrderEmail } = require('../utils/mailer');
+const { saveOrder, updateOrderAddress, getRecentPendingOrder } = require('../utils/database');
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
-// Retailer IDs match Commerce Manager Content IDs exactly
 const PRODUCTS = [
   {
     id: 'original-atta-cookie',
@@ -49,7 +49,7 @@ const RETAILER_MAP = Object.fromEntries(PRODUCTS.map((p) => [p.retailerId, p]));
 
 // ── Generate a short human-friendly order ID ──────────────────────────────────
 function generateOrderId() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous I/O/0/1
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const rand = Array.from({ length: 4 }, () =>
     chars[Math.floor(Math.random() * chars.length)]
   ).join('');
@@ -78,7 +78,7 @@ async function sendProductList(to) {
   await wa.sendCatalog(
     to,
     '🍪 Our pure desi ghee atta cookies — starting at ₹279 for a 250g pack.\n\nTap a product to add it to your cart!',
-    '91slwpjdqq'   // Original Atta as the thumbnail
+    '91slwpjdqq'
   );
 }
 
@@ -184,34 +184,54 @@ async function handleOrderMessage(to, order, contactName) {
   const name = contactName || 'there';
   const items = order.product_items || [];
   const orderId = generateOrderId();
+  const timestamp = new Date().toISOString();
 
-  const lines = items
-    .map((item) => {
-      const product = RETAILER_MAP[item.product_retailer_id];
-      const productName = product ? product.name : item.product_retailer_id;
-      return `• ${productName} × ${item.quantity} — ₹${item.item_price * item.quantity}`;
-    })
+  const enrichedItems = items.map((item) => {
+    const product = RETAILER_MAP[item.product_retailer_id];
+    return { ...item, productName: product ? product.name : item.product_retailer_id };
+  });
+
+  const lines = enrichedItems
+    .map((item) => `• ${item.productName} × ${item.quantity} — ₹${item.item_price * item.quantity}`)
     .join('\n');
 
   const total = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
 
+  // 1. Send order receipt
   await wa.sendText(
     to,
     `🧾 *Order Received, ${name}!*\n\n` +
       `*Order #${orderId}*\n\n` +
       `${lines}\n\n` +
       `*Total: ₹${total}*\n\n` +
-      `We'll share a payment link shortly. Your order ships once payment is confirmed. 🍪`
+      `Just one more step — we need your delivery address! 📍`
   );
 
-  const timestamp = new Date().toISOString();
-  const enrichedItems = items.map((item) => {
-    const product = RETAILER_MAP[item.product_retailer_id];
-    return { ...item, productName: product ? product.name : item.product_retailer_id };
-  });
+  // 2. Ask for delivery address
+  await wa.sendText(
+    to,
+    `📍 *Please reply with your delivery address:*\n\n` +
+      `Include flat/house no., area/locality, city, and pincode.\n\n` +
+      `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_`
+  );
 
-  console.log('[ORDER]', { orderId, customer: to, name, items, total, currency: order.currency, timestamp });
+  // 3. Save to Supabase (status = pending_address)
+  try {
+    await saveOrder({
+      orderId,
+      customerPhone: to,
+      customerName: name,
+      items: enrichedItems,
+      total,
+      currency: order.currency,
+      timestamp,
+    });
+  } catch (err) {
+    console.error('[DB] Failed to save order:', err.message);
+  }
 
+  // 4. Send email notification
+  console.log('[ORDER]', { orderId, customer: to, name, total, timestamp });
   try {
     await sendOrderEmail({ orderId, customerPhone: to, customerName: name, items: enrichedItems, total, timestamp });
   } catch (err) {
@@ -223,6 +243,29 @@ async function handleOrderMessage(to, order, contactName) {
 async function routeText(to, text, name) {
   const t = text.toLowerCase().trim();
 
+  // ── Address collection: catch free-text replies for pending orders ─────────
+  // Skip if it looks like a greeting/menu command
+  if (!/^(hi|hello|hey|namaste|hola|start|menu)/.test(t)) {
+    try {
+      const pendingOrder = await getRecentPendingOrder(to);
+      if (pendingOrder) {
+        await updateOrderAddress(pendingOrder.order_id, text);
+        await wa.sendText(
+          to,
+          `✅ *Address saved!*\n\n` +
+            `📍 ${text}\n\n` +
+            `Your payment link for *Order #${pendingOrder.order_id}* (₹${pendingOrder.total}) will be sent to you shortly.\n\n` +
+            `We'll dispatch your cookies once payment is confirmed. 🍪`
+        );
+        return;
+      }
+    } catch (err) {
+      console.error('[DB] Address lookup error:', err.message);
+      // fall through to normal routing
+    }
+  }
+
+  // ── Standard keyword routing ───────────────────────────────────────────────
   if (/^(hi|hello|hey|namaste|hola|start|menu)/.test(t)) {
     return sendWelcome(to, name);
   }
