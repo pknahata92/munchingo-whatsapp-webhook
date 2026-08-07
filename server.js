@@ -11,6 +11,28 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'munchingo_webhook_secret_2026';
 
+
+// ── Test email notification (remove after verifying) ─────────────────────────
+app.get('/test-email', async (req, res) => {
+  const { sendOrderEmail } = require('./utils/mailer');
+  try {
+    await sendOrderEmail({
+      orderId: 'MNG-TEST-0708',
+      customerPhone: '919999999999',
+      customerName: 'Test Customer',
+      items: [
+        { productName: 'Munchingo Atta Original', quantity: 2, item_price: 250, product_retailer_id: '91slwpjdqq' },
+        { productName: 'Munchingo Atta Kesari', quantity: 1, item_price: 250, product_retailer_id: 'w2w5ynf2m5' },
+      ],
+      total: 750,
+      timestamp: new Date().toISOString(),
+    });
+    res.json({ ok: true, message: 'Test email sent to ' + process.env.NOTIFY_EMAIL });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Munchingo WhatsApp Webhook', ts: new Date().toISOString() });
