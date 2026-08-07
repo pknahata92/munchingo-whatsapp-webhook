@@ -3,6 +3,7 @@
 const wa = require('../utils/whatsapp');
 const { sendOrderEmail } = require('../utils/mailer');
 const { saveOrder, updateOrderAddress, getRecentPendingOrder } = require('../utils/database');
+const { createPaymentLink } = require('../utils/razorpay');
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -250,13 +251,42 @@ async function routeText(to, text, name) {
       const pendingOrder = await getRecentPendingOrder(to);
       if (pendingOrder) {
         await updateOrderAddress(pendingOrder.order_id, text);
+
+        // Confirm address immediately
         await wa.sendText(
           to,
           `✅ *Address saved!*\n\n` +
             `📍 ${text}\n\n` +
-            `Your payment link for *Order #${pendingOrder.order_id}* (₹${pendingOrder.total}) will be sent to you shortly.\n\n` +
-            `We'll dispatch your cookies once payment is confirmed. 🍪`
+            `Generating your payment link... 🔗`
         );
+
+        // Create Razorpay payment link and send it
+        try {
+          const { id: paymentLinkId, url: paymentLinkUrl } = await createPaymentLink({
+            orderId:      pendingOrder.order_id,
+            amount:       pendingOrder.total,
+            customerPhone: to,
+            customerName: pendingOrder.customer_name,
+          });
+
+          const { updateOrderPaymentLink } = require('../utils/database');
+          await updateOrderPaymentLink(pendingOrder.order_id, { paymentLinkId, paymentLinkUrl });
+
+          await wa.sendText(
+            to,
+            `💳 *Pay for your Munchingo Order*\n\n` +
+              `*Order #${pendingOrder.order_id}* — ₹${pendingOrder.total}\n\n` +
+              `👉 ${paymentLinkUrl}\n\n` +
+              `Link valid for 24 hours. We'll confirm & ship once payment is received! 🍪`
+          );
+        } catch (err) {
+          console.error('[RAZORPAY] Failed to create payment link:', err.message);
+          await wa.sendText(
+            to,
+            `✅ Address saved! We'll share your payment link shortly. \n\n` +
+              `If you don't hear from us in 10 minutes, message us again.`
+          );
+        }
         return;
       }
     } catch (err) {

@@ -33,6 +33,56 @@ app.get('/test-email', async (req, res) => {
   }
 });
 
+
+// ── Razorpay payment webhook (POST) ──────────────────────────────────────────
+// Razorpay calls this when a payment link is paid.
+// Register this URL in Razorpay Dashboard → Webhooks:
+//   https://munchingo-whatsapp-webhook.onrender.com/razorpay-webhook
+// Events to subscribe: payment_link.paid
+app.post('/razorpay-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const signature = req.headers['x-razorpay-signature'];
+  const { verifyWebhookSignature } = require('./utils/razorpay');
+  const { markOrderPaid } = require('./utils/database');
+
+  if (!verifyWebhookSignature(req.body, signature)) {
+    console.warn('[RAZORPAY] Webhook signature mismatch — ignoring');
+    return res.sendStatus(400);
+  }
+
+  // Acknowledge fast — Razorpay will retry if we don't respond in 5 s
+  res.sendStatus(200);
+
+  try {
+    const event = JSON.parse(req.body.toString());
+    console.log('[RAZORPAY] Event:', event.event);
+
+    if (event.event === 'payment_link.paid') {
+      const pl        = event.payload.payment_link.entity;
+      const payment   = event.payload.payment.entity;
+      const orderId   = pl.reference_id;   // e.g. MNG-XXXX-DDMM
+      const paymentId = payment.id;
+      const phone     = pl.customer?.contact?.replace(/^\+/, ''); // strip + for WA
+
+      await markOrderPaid(orderId, paymentId);
+      console.log(`[RAZORPAY] Order ${orderId} paid — paymentId: ${paymentId}`);
+
+      // Send confirmation on WhatsApp
+      if (phone) {
+        await wa.sendText(
+          phone,
+          `🎉 *Payment Confirmed!*\n\n` +
+            `Your Munchingo order *#${orderId}* is confirmed!\n\n` +
+            `We'll pack it fresh and ship within 1–2 business days. ` +
+            `You'll get a tracking number once it's dispatched. 🍪\n\n` +
+            `Thank you for ordering from Munchingo!`
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[RAZORPAY] Webhook processing error:', err.message);
+  }
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Munchingo WhatsApp Webhook', ts: new Date().toISOString() });
