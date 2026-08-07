@@ -1,17 +1,26 @@
 'use strict';
 const { createClient } = require('@supabase/supabase-js');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+// ── Lazy client — only initialised on first DB call ───────────────────────────
+// This prevents a startup crash if SUPABASE_URL / SUPABASE_ANON_KEY
+// haven't been added to the environment yet.
+let _supabase = null;
+function db() {
+  if (!_supabase) {
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+      throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY env vars must be set');
+    }
+    _supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+  }
+  return _supabase;
+}
 
 /**
- * Persist a new order to Supabase.
- * Status starts as 'pending_address' so the bot knows to collect delivery info.
+ * Persist a new order. Status = 'pending_address' so the bot
+ * knows to collect delivery info next.
  */
 async function saveOrder({ orderId, customerPhone, customerName, items, total, currency, timestamp }) {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('orders')
     .insert({
       order_id:       orderId,
@@ -32,10 +41,10 @@ async function saveOrder({ orderId, customerPhone, customerName, items, total, c
 }
 
 /**
- * Save the customer's delivery address and advance status to 'pending_payment'.
+ * Save the customer's delivery address and advance to 'pending_payment'.
  */
 async function updateOrderAddress(orderId, rawAddress) {
-  const { error } = await supabase
+  const { error } = await db()
     .from('orders')
     .update({
       delivery_address: { raw: rawAddress },
@@ -51,7 +60,7 @@ async function updateOrderAddress(orderId, rawAddress) {
  * Store the Razorpay payment link against the order.
  */
 async function updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl }) {
-  const { error } = await supabase
+  const { error } = await db()
     .from('orders')
     .update({ payment_link_id: paymentLinkId, payment_link_url: paymentLinkUrl })
     .eq('order_id', orderId);
@@ -61,10 +70,10 @@ async function updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl }
 }
 
 /**
- * Mark an order as paid after Razorpay webhook confirms payment.
+ * Mark an order as paid after Razorpay confirms payment.
  */
 async function markOrderPaid(orderId, paymentId) {
-  const { error } = await supabase
+  const { error } = await db()
     .from('orders')
     .update({ status: 'paid', payment_id: paymentId })
     .eq('order_id', orderId);
@@ -75,10 +84,9 @@ async function markOrderPaid(orderId, paymentId) {
 
 /**
  * Return the most recent order for a customer that is still waiting for an address.
- * Returns null if none found.
  */
 async function getRecentPendingOrder(customerPhone) {
-  const { data, error } = await supabase
+  const { data, error } = await db()
     .from('orders')
     .select('*')
     .eq('customer_phone', customerPhone)
