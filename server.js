@@ -34,6 +34,33 @@ app.get('/test-email', async (req, res) => {
 });
 
 
+
+// ── Payment success redirect (GET) ───────────────────────────────────────────
+// Razorpay redirects the customer's browser here after payment.
+// The actual order confirmation is handled by the POST /razorpay-webhook.
+app.get('/payment-success', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Successful – Munchingo</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 60px 20px; background: #fffbf5; color: #333; }
+    h1 { font-size: 2rem; margin-bottom: 8px; }
+    p  { font-size: 1.1rem; color: #666; }
+    .emoji { font-size: 3rem; }
+  </style>
+</head>
+<body>
+  <div class="emoji">🍪</div>
+  <h1>Payment Successful!</h1>
+  <p>Thank you for ordering from <strong>Munchingo</strong>.</p>
+  <p>You'll receive a WhatsApp confirmation shortly.</p>
+</body>
+</html>`);
+});
+
 // ── Razorpay payment webhook (POST) ──────────────────────────────────────────
 // Razorpay calls this when a payment link is paid.
 // Register this URL in Razorpay Dashboard → Webhooks:

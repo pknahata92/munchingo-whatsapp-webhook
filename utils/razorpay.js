@@ -39,7 +39,7 @@ async function createPaymentLink({ orderId, amount, customerPhone, customerName 
     },
     reminder_enable: false,
     expire_by:       expireBy,
-    callback_url:    `https://munchingo-whatsapp-webhook.onrender.com/razorpay-webhook`,
+    callback_url:    `https://munchingo-whatsapp-webhook.onrender.com/payment-success`,
     callback_method: 'get',
   };
 
