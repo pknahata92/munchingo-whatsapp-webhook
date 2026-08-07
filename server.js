@@ -90,6 +90,14 @@ app.post('/razorpay-webhook', async (req, res) => {
       const paymentId = payment.id;
       const phone     = pl.customer?.contact?.replace(/^\+/, ''); // strip + for WA
 
+      // Idempotency: skip if already marked paid (duplicate webhook)
+      const { getOrder } = require('./utils/database');
+      const existing = await getOrder(orderId);
+      if (existing?.status === 'paid') {
+        console.log(`[RAZORPAY] Duplicate webhook for ${orderId} — ignoring`);
+        return;
+      }
+
       await markOrderPaid(orderId, paymentId);
       console.log(`[RAZORPAY] Order ${orderId} paid — paymentId: ${paymentId}`);
 

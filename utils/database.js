@@ -102,10 +102,25 @@ async function getRecentPendingOrder(customerPhone) {
   return data;
 }
 
+
+/**
+ * Fetch a single order by order_id. Returns null if not found.
+ */
+async function getOrder(orderId) {
+  const { data, error } = await db()
+    .from('orders')
+    .select('*')
+    .eq('order_id', orderId)
+    .maybeSingle();
+  if (error) { console.error('[DB] getOrder error:', error.message); return null; }
+  return data;
+}
+
 module.exports = {
   saveOrder,
   updateOrderAddress,
   updateOrderPaymentLink,
   markOrderPaid,
   getRecentPendingOrder,
+  getOrder,
 };
