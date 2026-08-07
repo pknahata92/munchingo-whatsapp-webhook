@@ -6,7 +6,7 @@ const handler = require('./handlers/messageHandler');
 const wa = require('./utils/whatsapp');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'munchingo_webhook_secret_2026';
@@ -66,12 +66,12 @@ app.get('/payment-success', (req, res) => {
 // Register this URL in Razorpay Dashboard → Webhooks:
 //   https://munchingo-whatsapp-webhook.onrender.com/razorpay-webhook
 // Events to subscribe: payment_link.paid
-app.post('/razorpay-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/razorpay-webhook', async (req, res) => {
   const signature = req.headers['x-razorpay-signature'];
   const { verifyWebhookSignature } = require('./utils/razorpay');
   const { markOrderPaid } = require('./utils/database');
 
-  if (!verifyWebhookSignature(req.body, signature)) {
+  if (!verifyWebhookSignature(req.rawBody, signature)) {
     console.warn('[RAZORPAY] Webhook signature mismatch — ignoring');
     return res.sendStatus(400);
   }
@@ -80,7 +80,7 @@ app.post('/razorpay-webhook', express.raw({ type: 'application/json' }), async (
   res.sendStatus(200);
 
   try {
-    const event = JSON.parse(req.body.toString());
+    const event = req.body; // already parsed by express.json()
     console.log('[RAZORPAY] Event:', event.event);
 
     if (event.event === 'payment_link.paid') {
