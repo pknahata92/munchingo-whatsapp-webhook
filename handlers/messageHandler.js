@@ -10,7 +10,8 @@ const PRODUCTS = [
     id: 'original-atta-cookie',
     retailerId: '91slwpjdqq',
     name: 'Munchingo Atta Original',
-    price: 250,
+    mrp: 330,
+    price: 279,
     emoji: '🍪',
     description: 'Cardamom-kissed. The one we started with. Slow-baked to a warm gold, with just enough sweetness to know it\'s a cookie.',
   },
@@ -18,7 +19,8 @@ const PRODUCTS = [
     id: 'kesari-atta-cookie',
     retailerId: 'w2w5ynf2m5',
     name: 'Munchingo Atta Kesari',
-    price: 250,
+    mrp: 375,
+    price: 319,
     emoji: '🌸',
     description: 'Real saffron, hand-mixed into every batch. What you serve when someone visits and you want to impress them.',
   },
@@ -26,7 +28,8 @@ const PRODUCTS = [
     id: 'lite-sugar-atta-cookie',
     retailerId: 'vf5p90bcy5',
     name: 'Munchingo Atta Lite-Sugar',
-    price: 250,
+    mrp: 375,
+    price: 319,
     emoji: '💛',
     description: '95% less sugar than our Original. Sweetened with maltitol. For the person who reads the back of the pack first.',
   },
@@ -34,7 +37,8 @@ const PRODUCTS = [
     id: 'ajwain-atta-cookie',
     retailerId: '97q9r5q5q3',
     name: 'Munchingo Atta Ajwain',
-    price: 250,
+    mrp: 330,
+    price: 279,
     emoji: '🌿',
     description: 'Ajwain-forward, less sweet, more aromatic. Best with strong chai and a slow evening.',
   },
@@ -73,7 +77,7 @@ async function sendWelcome(to, name) {
 async function sendProductList(to) {
   await wa.sendCatalog(
     to,
-    '🍪 Here\'s our full range of pure desi ghee atta cookies — ₹250 each.\n\nTap a product to add it to your cart!',
+    '🍪 Our pure desi ghee atta cookies — starting at ₹279 for a 250g pack.\n\nTap a product to add it to your cart!',
     '91slwpjdqq'   // Original Atta as the thumbnail
   );
 }
@@ -87,7 +91,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
-      `Minimum order: 1 pack (₹250)\n` +
+      `Minimum order: 1 pack (from ₹279)\n` +
       `Delivery across India 🇮🇳`,
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
@@ -134,12 +138,12 @@ async function sendShippingInfo(to) {
 // ── Price list ────────────────────────────────────────────────────────────────
 async function sendPriceList(to) {
   const lines = PRODUCTS.map(
-    (p) => `${p.emoji} *${p.name}* — ₹${p.price}`
-  ).join('\n');
+    (p) => `${p.emoji} *${p.name}*\n   ~~₹${p.mrp}~~ → *₹${p.price}* (250g pack, ~60 pcs)`
+  ).join('\n\n');
 
   await wa.sendButtons(
     to,
-    `💰 *Munchingo Pricing:*\n\n${lines}\n\nAll variants ₹250 per 250g pack (60 pcs). Free delivery on orders ₹599+.`,
+    `💰 *Munchingo Pricing:*\n\n${lines}\n\n🚚 Free delivery on orders ₹599+`,
     [
       { id: 'btn_products', title: '🛒 Shop Now' },
       { id: 'btn_order', title: '📦 How to Order' },
@@ -193,11 +197,11 @@ async function handleOrderMessage(to, order, contactName) {
 
   await wa.sendText(
     to,
-    `🧾 *Order Confirmed, ${name}!*\n\n` +
+    `🧾 *Order Received, ${name}!*\n\n` +
       `*Order #${orderId}*\n\n` +
       `${lines}\n\n` +
       `*Total: ₹${total}*\n\n` +
-      `We'll share payment & delivery details shortly. 🍪`
+      `We'll share a payment link shortly. Your order ships once payment is confirmed. 🍪`
   );
 
   const timestamp = new Date().toISOString();
