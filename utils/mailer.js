@@ -1,19 +1,7 @@
 'use strict';
 
-const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,          // STARTTLS on port 587
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-  connectionTimeout: 10000,   // 10 s to connect
-  greetingTimeout:   10000,   // 10 s for server greeting
-  socketTimeout:     15000,   // 15 s idle socket
-});
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function sendOrderEmail({ orderId, customerPhone, customerName, items, total, timestamp }) {
   const itemRows = items
@@ -64,13 +52,14 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
     </div>
   `;
 
-  await transporter.sendMail({
-    from: `"Munchingo Orders" <${process.env.GMAIL_USER}>`,
-    to: process.env.NOTIFY_EMAIL,
-    subject: `🧺 New Order #${orderId} - Rs.${total} from ${customerName}`,
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <onboarding@resend.dev>',
+    to: [process.env.NOTIFY_EMAIL],
+    subject: `New Order #${orderId} - Rs.${total} from ${customerName}`,
     html,
   });
 
+  if (error) throw new Error(error.message);
   console.log(`[MAILER] Order notification sent for #${orderId}`);
 }
 
