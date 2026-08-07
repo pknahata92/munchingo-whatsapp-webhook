@@ -3,11 +3,16 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,          // STARTTLS on port 587
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
   },
+  connectionTimeout: 10000,   // 10 s to connect
+  greetingTimeout:   10000,   // 10 s for server greeting
+  socketTimeout:     15000,   // 15 s idle socket
 });
 
 async function sendOrderEmail({ orderId, customerPhone, customerName, items, total, timestamp }) {
@@ -62,7 +67,7 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
   await transporter.sendMail({
     from: `"Munchingo Orders" <${process.env.GMAIL_USER}>`,
     to: process.env.NOTIFY_EMAIL,
-    subject: `&#127850; New Order #${orderId} - Rs.${total} from ${customerName}`,
+    subject: `🧺 New Order #${orderId} - Rs.${total} from ${customerName}`,
     html,
   });
 
