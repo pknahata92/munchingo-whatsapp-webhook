@@ -53,7 +53,7 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
   `;
 
   const { error } = await resend.emails.send({
-    from: 'Munchingo Orders <onboarding@resend.dev>',
+    from: 'Munchingo Orders <orders@munchingo.com>',
     to: [process.env.NOTIFY_EMAIL],
     subject: `New Order #${orderId} - Rs.${total} from ${customerName}`,
     html,
