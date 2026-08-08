@@ -35,15 +35,18 @@ Files changed:
   paid status flow entirely, since I have no visibility into whether `status`
   has a DB-level CHECK constraint or enum and didn't want to risk it.
 
-*** DEPLOYMENT BLOCKER (resolved before push, noted for the record): ***
+*** DEPLOYMENT BLOCKER -- RESOLVED, commit pushed: ***
 saveOrder()'s insert unconditionally includes a customer_email key (null when
-not provided) on EVERY order-creation call, both channels. If the Supabase
-`orders` table doesn't have a customer_email column, every single order
-insert would fail immediately on deploy -- not just the email feature, ALL
-checkout. Told Prashant explicitly before committing to push; he needs to run
-`ALTER TABLE orders ADD COLUMN customer_email text;` in the Supabase SQL
-editor BEFORE this deploys. Do not push this commit until that's confirmed
-done -- check this log / ask him directly if picking this up fresh.
+not provided) on EVERY order-creation call, both channels. This required a
+Supabase schema change first. Drove it via browser (Claude in Chrome, with
+Prashant's explicit confirmation before running the DDL) in the Supabase SQL
+editor for the Munchingo project (project ref rpjfkzskmjwqomyjbnvl):
+`ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_email text;` -- verified
+via information_schema.columns that customer_email (text, nullable) now
+exists (16 columns total on orders). Then pushed commit 34c9da8 to
+origin/main with Prashant's explicit go-ahead. Verified on the Render
+dashboard: "Deploy live for 34c9da8" succeeded cleanly (Aug 8, 2026, 6:21 PM),
+no crash. This feature is now live in production on both channels.
 
 ====================================================================
 
