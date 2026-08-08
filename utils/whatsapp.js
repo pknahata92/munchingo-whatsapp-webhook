@@ -27,6 +27,26 @@ async function sendMessage(payload) {
   }
 }
 
+// ── Approved template message (bypasses the 24h session window) ───────────────
+async function sendTemplate(to, templateName, languageCode, bodyParams) {
+  return sendMessage({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      components: [
+        {
+          type: 'body',
+          parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })),
+        },
+      ],
+    },
+  });
+}
+
 // ── Plain text ────────────────────────────────────────────────────────────────
 async function sendText(to, text) {
   return sendMessage({
@@ -133,6 +153,7 @@ async function sendImage(to, imageUrl, caption) {
 }
 
 module.exports = {
+  sendTemplate,
   sendText,
   sendButtons,
   sendList,

@@ -134,14 +134,22 @@ app.post('/razorpay-webhook', async (req, res) => {
       console.log(`[RAZORPAY] Order ${orderId} paid — paymentId: ${paymentId}`);
 
       if (phone) {
-        await wa.sendText(
-          phone,
-          `🎉 *Payment Confirmed!*\n\n` +
-            `Your Munchingo order *#${orderId}* is confirmed!\n\n` +
-            `We'll pack it fresh and ship within 1–2 business days. ` +
-            `You'll get a tracking number once it's dispatched. 🍪\n\n` +
-            `Thank you for ordering from Munchingo!`
-        );
+        // Uses the approved "munchingo_order_confirmed" template instead of free text --
+        // free text only delivers within WhatsApp's 24h session window, which a
+        // website-checkout customer has almost never opened with the bot.
+        const itemsSummary = (existing?.items || [])
+          .map((item) => `${item.quantity}x ${item.productName || item.product_retailer_id}`)
+          .join(', ');
+        try {
+          await wa.sendTemplate(phone, 'munchingo_order_confirmed', 'en', [
+            existing?.customer_name || 'there',
+            orderId,
+            itemsSummary || 'your order',
+            existing?.total,
+          ]);
+        } catch (err) {
+          console.error('[WA] Failed to send order_confirmed template:', err.message);
+        }
       }
 
       // Customer email confirmation — optional, only sent if the customer gave an email

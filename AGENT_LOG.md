@@ -6,6 +6,56 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (Meta follow-up: signature verification + WhatsApp template)
+
+Closed out the two remaining open items from the previous entry below (both
+needed Prashant's Meta account access), driven via Claude in Chrome on his
+logged-in Meta session.
+
+- META_APP_SECRET: retrieved from Meta Developer Portal > Munchingo API app
+  (App ID 3526889110799161) > App Settings > Basic > App Secret (Prashant
+  entered his own password at Meta's re-auth prompt, then copied the secret
+  himself -- Claude never saw the raw value, only pasted it via OS clipboard
+  into Render's env var value field). Added META_APP_SECRET in Render
+  (munchingo-whatsapp-webhook > Environment), saved -- this triggered an
+  automatic redeploy of the existing commit (9a760ee), verified live and
+  clean in Render logs with no "META_APP_SECRET not set" warning. This
+  activates the X-Hub-Signature-256 verification added in commit 7de70bd
+  (previously failing open).
+
+- WhatsApp "Payment Confirmed" template: discovered Prashant (or an earlier,
+  unlogged session) had already created and gotten approval for a template
+  named `munchingo_order_confirmed` in WhatsApp Manager (Utility category,
+  English, status "Active" as of 4 Aug 2026) -- so no new template needed
+  submitting. Its approved body (4 variables, {{1}}-{{4}}):
+    Hi {{1}}, payment received! ✅
+    Your Munchingo order is confirmed. 🍪
+    *Order ID:* {{2}}
+    *Items:* {{3}}
+    *Amount Paid:* ₹{{4}}
+    We'll dispatch within 24 hours and send you tracking details.
+    Thank you for choosing pure ghee, no compromise. 🙏
+    — Team Munchingo
+  Code changes:
+  - utils/whatsapp.js: added sendTemplate(to, templateName, languageCode,
+    bodyParams) -- sends a `type: template` Cloud API message with body
+    parameters, exported alongside the existing helpers.
+  - server.js: in the payment_link.paid handler, replaced the free-text
+    wa.sendText(...) "Payment Confirmed" message with
+    wa.sendTemplate(phone, 'munchingo_order_confirmed', 'en', [customerName,
+    orderId, itemsSummary, total]) wrapped in try/catch (logs on failure,
+    doesn't block the email-confirmation path below it). This fixes the
+    known bug: free-text messages to website-checkout customers were
+    silently failing because those customers are outside WhatsApp's 24h
+    session window; approved templates bypass that window.
+  Assumption not independently verified against the Graph API: language code
+  "en" for the template's "English" (not "English (US)") locale setting --
+  standard Meta convention, but if template sends start failing with a
+  language-mismatch error, check this first.
+
+Both changes committed together. Prashant's explicit go-ahead obtained
+immediately before `git push origin main` per this repo's standing rule.
+
 2026-08-09 -- Claude session (Phase 9 ecosystem audit + fixes)
 
 Did a full live verification pass (all 6 pages on munchingo.com, WhatsApp
