@@ -439,26 +439,10 @@ async function handleOrderMessage(to, order, contactName) {
 
   const total = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
 
-  // 1. Send order receipt
-  await wa.sendText(
-    to,
-    `🧾 *Order Received, ${name}!*\n\n` +
-      `*Order #${orderId}*\n\n` +
-      `${lines}\n\n` +
-      `*Total: ₹${total}*\n\n` +
-      `Just one more step — we need your delivery address! 📍`
-  );
-
-  // 2. Ask for delivery address (and, optionally, an email for an order confirmation)
-  await wa.sendText(
-    to,
-    `📍 *Please reply with your delivery address:*\n\n` +
-      `Include flat/house no., area/locality, city, and pincode.\n\n` +
-      `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_\n\n` +
-      `Want an email confirmation too? Add your email on a new line — totally optional.`
-  );
-
-  // 3. Save to Supabase
+  // 1. Save to Supabase FIRST. If this fails, the customer must not be told
+  // to reply with an address for an order that doesn't exist -- their next
+  // message would then be silently misinterpreted as a normal chat message
+  // (no order to attach it to), leaving them stuck with no error shown.
   try {
     await saveOrder({
       orderId,
@@ -471,7 +455,32 @@ async function handleOrderMessage(to, order, contactName) {
     });
   } catch (err) {
     console.error('[DB] Failed to save order:', err.message);
+    await wa.sendText(
+      to,
+      `⚠️ Sorry, something went wrong saving your order. Please try placing it again in a moment, ` +
+        `or reply *human* to speak with our team directly.`
+    );
+    return;
   }
+
+  // 2. Send order receipt
+  await wa.sendText(
+    to,
+    `🧾 *Order Received, ${name}!*\n\n` +
+      `*Order #${orderId}*\n\n` +
+      `${lines}\n\n` +
+      `*Total: ₹${total}*\n\n` +
+      `Just one more step — we need your delivery address! 📍`
+  );
+
+  // 3. Ask for delivery address (and, optionally, an email for an order confirmation)
+  await wa.sendText(
+    to,
+    `📍 *Please reply with your delivery address:*\n\n` +
+      `Include flat/house no., area/locality, city, and pincode.\n\n` +
+      `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_\n\n` +
+      `Want an email confirmation too? Add your email on a new line — totally optional.`
+  );
 
   // 4. Send email notification
   console.log('[ORDER]', { orderId, customer: to, name, total, timestamp });
@@ -529,6 +538,22 @@ async function routeText(to, text, name) {
       const emailMatch = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
       const email = emailMatch ? emailMatch[0] : null;
       const address = email ? text.replace(email, '').trim() : text;
+
+      // Sanity check: a real address is reasonably long and has a number in
+      // it somewhere (house no., pincode, etc). Without this, a stray reply
+      // ("how much is shipping?") gets silently locked in as the delivery
+      // address and a payment link generated for it.
+      const looksLikeAddress = address.length >= 12 && /\d/.test(address);
+      if (!looksLikeAddress) {
+        await wa.sendText(
+          to,
+          `That doesn't look like a delivery address yet — I still need one to continue ` +
+            `order *#${pendingOrder.order_id}*.\n\n` +
+            `📍 Please reply with your full address (flat/house no., area, city, pincode).\n\n` +
+            `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_`
+        );
+        return;
+      }
 
       await updateOrderAddress(pendingOrder.order_id, address);
       if (email) {

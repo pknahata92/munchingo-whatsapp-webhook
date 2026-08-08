@@ -1,10 +1,43 @@
 'use strict';
 
 require('dotenv').config();
+const crypto  = require('crypto');
 const express = require('express');
 const handler = require('./handlers/messageHandler');
 const wa      = require('./utils/whatsapp');
 const checkoutRoutes = require('./routes/checkout');
+
+// Verifies Meta's X-Hub-Signature-256 header on incoming WhatsApp webhook
+// calls, using the App Secret from Meta Developer Portal > App Settings.
+// Without this, anyone who finds this URL can POST fake WhatsApp messages
+// (any "from" number, any content) and the bot will act on them.
+//
+// Fails OPEN (logs a warning, allows the request) if META_APP_SECRET isn't
+// set yet, so this doesn't take the live bot down before the secret is
+// configured in Render. Once set, it fails CLOSED like the Razorpay check.
+let warnedMissingAppSecret = false;
+function verifyMetaSignature(rawBody, signatureHeader) {
+  const secret = process.env.META_APP_SECRET;
+  if (!secret) {
+    if (!warnedMissingAppSecret) {
+      console.warn('[WEBHOOK] META_APP_SECRET not set — incoming WhatsApp webhook requests are NOT signature-verified. Set it in Render to close this gap.');
+      warnedMissingAppSecret = true;
+    }
+    return true;
+  }
+  if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
+
+  try {
+    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    const expectedBuf  = Buffer.from(expected, 'hex');
+    const providedBuf  = Buffer.from(signatureHeader.slice('sha256='.length), 'hex');
+    if (expectedBuf.length !== providedBuf.length) return false;
+    return crypto.timingSafeEqual(expectedBuf, providedBuf);
+  } catch (err) {
+    console.warn('[WEBHOOK] Signature verification error:', err.message);
+    return false;
+  }
+}
 
 const app = express();
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
@@ -24,43 +57,24 @@ const PORT         = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'munchingo_webhook_secret_2026';
 
 
-// ── Test email notification ───────────────────────────────────────────────────
-app.get('/test-email', async (req, res) => {
-  const { sendOrderEmail } = require('./utils/mailer');
-  try {
-    await sendOrderEmail({
-      orderId:       'MNG-TEST-0708',
-      customerPhone: '919999999999',
-      customerName:  'Test Customer',
-      items: [
-        { productName: 'Munchingo Atta Original', quantity: 2, item_price: 250, product_retailer_id: '91slwpjdqq' },
-        { productName: 'Munchingo Atta Kesari',   quantity: 1, item_price: 250, product_retailer_id: 'w2w5ynf2m5' },
-      ],
-      total:     750,
-      timestamp: new Date().toISOString(),
-    });
-    res.json({ ok: true, message: 'Test email sent to ' + process.env.NOTIFY_EMAIL });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-
 // ── Payment success redirect (GET) ────────────────────────────────────────────
 // Razorpay redirects the customer's browser here after payment.
 // The actual order confirmation is handled by the POST /razorpay-webhook.
 app.get('/payment-success', (req, res) => {
+  const SITE_URL = process.env.SITE_ORIGIN || 'https://munchingo.com';
   res.send(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="4;url=${SITE_URL}">
   <title>Payment Successful – Munchingo</title>
   <style>
     body { font-family: sans-serif; text-align: center; padding: 60px 20px; background: #fffbf5; color: #333; }
     h1 { font-size: 2rem; margin-bottom: 8px; }
     p  { font-size: 1.1rem; color: #666; }
     .emoji { font-size: 3rem; }
+    a  { color: #6B3A2A; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -68,6 +82,7 @@ app.get('/payment-success', (req, res) => {
   <h1>Payment Successful!</h1>
   <p>Thank you for ordering from <strong>Munchingo</strong>.</p>
   <p>You'll receive a WhatsApp confirmation shortly.</p>
+  <p>Redirecting you back to <a href="${SITE_URL}">munchingo.com</a>…</p>
 </body>
 </html>`);
 });
@@ -256,6 +271,11 @@ app.get('/webhook', (req, res) => {
 
 // ── Incoming messages (POST) ──────────────────────────────────────────────────
 app.post('/webhook', async (req, res) => {
+  if (!verifyMetaSignature(req.rawBody, req.headers['x-hub-signature-256'])) {
+    console.warn('[WEBHOOK] Signature mismatch — ignoring request');
+    return res.sendStatus(401);
+  }
+
   // Acknowledge immediately — Meta retries if we don't respond within 20 s
   res.sendStatus(200);
 

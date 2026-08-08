@@ -7,6 +7,8 @@ const router = express.Router();
 const { createPaymentLink } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('../utils/database');
 const { sendOrderEmail } = require('../utils/mailer');
+const { priceForSlug } = require('../utils/catalog');
+const { rateLimit } = require('../utils/rateLimit');
 
 // Helpers
 function generateOrderId() {
@@ -22,14 +24,26 @@ function generateOrderId() {
 // saveOrder just stores whatever shape is in items (jsonb column) - match the
 // shape messageHandler.js already uses elsewhere so anything reading order.items
 // downstream (owner email, etc.) stays consistent.
+//
+// SECURITY: item_price is looked up server-side from utils/catalog.js by
+// slug, never trusted from the client's submitted price/total - a customer
+// could otherwise tamper with the POST body (devtools, curl) and pay
+// whatever amount they choose for real products.
+// Returns null if any item's slug isn't a recognised product.
 function normaliseItems(cartItems) {
-    return (cartItems || []).map((c) => ({
-          productName: c.name,
-          quantity: c.qty,
-          item_price: c.price,
-          unit: c.unit,
-          slug: c.slug,
-    }));
+    const items = (cartItems || []).map((c) => {
+          const realPrice = priceForSlug(c.slug);
+          if (realPrice == null) return null;
+          return {
+                productName: c.name,
+                quantity: c.qty,
+                item_price: realPrice,
+                unit: c.unit,
+                slug: c.slug,
+          };
+    });
+    if (items.some((i) => i === null)) return null;
+    return items;
 }
 
 function normalisePhone(rawPhone) {
@@ -46,7 +60,9 @@ function normalisePhone(rawPhone) {
 // Payment confirmation, failed-payment, and expired-link handling all live in the
 // EXISTING POST /razorpay-webhook route in server.js - this route does not touch
 // any of that, so there's exactly one webhook handler, not two.
-router.post('/api/checkout', async (req, res) => {
+// Max 5 checkout attempts per IP per minute — generous for a real customer
+// (who submits once), tight enough to blunt scripted abuse.
+router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
           const { name, phone, address, email, items, total } = req.body;
 
@@ -59,9 +75,17 @@ router.post('/api/checkout', async (req, res) => {
                   return res.status(400).json({ ok: false, error: 'Phone number looks invalid - include a 10-digit number' });
           }
 
+      const enrichedItems = normaliseItems(items);
+          if (!enrichedItems) {
+                  return res.status(400).json({ ok: false, error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' });
+          }
+
+      // Recompute the total server-side from real catalog prices - never trust
+      // the client's submitted total (see normaliseItems for why).
+      const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+
       const orderId = generateOrderId();
           const timestamp = new Date().toISOString();
-          const enrichedItems = normaliseItems(items);
 
       // 1. Save order (status -> pending_address, then immediately attach address -> pending_payment)
       await saveOrder({
@@ -70,7 +94,7 @@ router.post('/api/checkout', async (req, res) => {
               customerName: name,
               customerEmail: (email || '').trim() || null,
               items: enrichedItems,
-              total,
+              total: realTotal,
               currency: 'INR',
               timestamp,
       });
@@ -80,7 +104,7 @@ router.post('/api/checkout', async (req, res) => {
       //    (real createPaymentLink returns { id, url }, takes amount in rupees)
       const { id: paymentLinkId, url: paymentLinkUrl } = await createPaymentLink({
               orderId,
-              amount: total,
+              amount: realTotal,
               customerName: name,
               customerPhone,
       });
@@ -88,7 +112,7 @@ router.post('/api/checkout', async (req, res) => {
 
       // 3. Notify the owner by email (mirrors handlers/messageHandler.js's WhatsApp order flow)
       try {
-        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total, timestamp });
+        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total: realTotal, timestamp });
       } catch (err) {
         console.error('[MAILER] Failed to send order notification:', err.message);
       }
