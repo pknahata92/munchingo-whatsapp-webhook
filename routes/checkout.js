@@ -48,7 +48,7 @@ function normalisePhone(rawPhone) {
 // any of that, so there's exactly one webhook handler, not two.
 router.post('/api/checkout', async (req, res) => {
     try {
-          const { name, phone, address, items, total } = req.body;
+          const { name, phone, address, email, items, total } = req.body;
 
       if (!name || !phone || !address || !Array.isArray(items) || !items.length || !total) {
               return res.status(400).json({ ok: false, error: 'Missing required fields: name, phone, address, items, total' });
@@ -68,6 +68,7 @@ router.post('/api/checkout', async (req, res) => {
               orderId,
               customerPhone,
               customerName: name,
+              customerEmail: (email || '').trim() || null,
               items: enrichedItems,
               total,
               currency: 'INR',

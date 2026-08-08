@@ -128,6 +128,23 @@ app.post('/razorpay-webhook', async (req, res) => {
             `Thank you for ordering from Munchingo!`
         );
       }
+
+      // Customer email confirmation — optional, only sent if the customer gave an email
+      if (existing?.customer_email) {
+        try {
+          const { sendCustomerConfirmationEmail } = require('./utils/mailer');
+          await sendCustomerConfirmationEmail({
+            email:        existing.customer_email,
+            orderId,
+            customerName: existing.customer_name,
+            items:        existing.items,
+            total:        existing.total,
+            timestamp:    existing.created_at,
+          });
+        } catch (err) {
+          console.error('[MAILER] Failed to send customer confirmation:', err.message);
+        }
+      }
       return;
     }
 

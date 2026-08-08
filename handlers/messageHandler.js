@@ -5,6 +5,7 @@ const { sendOrderEmail } = require('../utils/mailer');
 const {
   saveOrder,
   updateOrderAddress,
+  updateOrderEmail,
   updateOrderPaymentLink,
   cancelOrder,
   getRecentPendingOrder,
@@ -448,12 +449,13 @@ async function handleOrderMessage(to, order, contactName) {
       `Just one more step — we need your delivery address! 📍`
   );
 
-  // 2. Ask for delivery address
+  // 2. Ask for delivery address (and, optionally, an email for an order confirmation)
   await wa.sendText(
     to,
     `📍 *Please reply with your delivery address:*\n\n` +
       `Include flat/house no., area/locality, city, and pincode.\n\n` +
-      `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_`
+      `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_\n\n` +
+      `Want an email confirmation too? Add your email on a new line — totally optional.`
   );
 
   // 3. Save to Supabase
@@ -523,13 +525,26 @@ async function routeText(to, text, name) {
   try {
     const pendingOrder = await getRecentPendingOrder(to);
     if (pendingOrder) {
-      await updateOrderAddress(pendingOrder.order_id, text);
+      // Customer may have added an email on its own line along with the address — pull it out.
+      const emailMatch = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+      const email = emailMatch ? emailMatch[0] : null;
+      const address = email ? text.replace(email, '').trim() : text;
+
+      await updateOrderAddress(pendingOrder.order_id, address);
+      if (email) {
+        try {
+          await updateOrderEmail(pendingOrder.order_id, email);
+        } catch (err) {
+          console.error('[DB] Failed to save email:', err.message);
+        }
+      }
 
       await wa.sendText(
         to,
         `✅ *Address saved!*\n\n` +
-          `📍 ${text}\n\n` +
-          `Generating your payment link... 🔗`
+          `📍 ${address}` +
+          (email ? `\n✉️ Confirmation will be sent to ${email}` : '') +
+          `\n\nGenerating your payment link... 🔗`
       );
 
       try {

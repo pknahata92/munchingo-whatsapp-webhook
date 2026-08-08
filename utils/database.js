@@ -17,13 +17,14 @@ function db() {
  * Persist a new order. Status = 'pending_address' so the bot
  * knows to collect delivery info next.
  */
-async function saveOrder({ orderId, customerPhone, customerName, items, total, currency, timestamp }) {
+async function saveOrder({ orderId, customerPhone, customerName, customerEmail, items, total, currency, timestamp }) {
   const { data, error } = await db()
     .from('orders')
     .insert({
       order_id:       orderId,
       customer_phone: customerPhone,
       customer_name:  customerName,
+      customer_email: customerEmail || null,
       items,
       total,
       currency:   currency || 'INR',
@@ -52,6 +53,20 @@ async function updateOrderAddress(orderId, rawAddress) {
 
   if (error) throw new Error(`Supabase update (address) failed: ${error.message}`);
   console.log(`[DB] Order ${orderId} address saved`);
+}
+
+/**
+ * Save/update the customer's email for order confirmation. Optional field —
+ * pass null/empty to leave it unset (no confirmation email will be sent).
+ */
+async function updateOrderEmail(orderId, email) {
+  const { error } = await db()
+    .from('orders')
+    .update({ customer_email: email || null })
+    .eq('order_id', orderId);
+
+  if (error) throw new Error(`Supabase update (email) failed: ${error.message}`);
+  console.log(`[DB] Order ${orderId} email saved`);
 }
 
 /**
@@ -177,6 +192,7 @@ async function getOrder(orderId) {
 module.exports = {
   saveOrder,
   updateOrderAddress,
+  updateOrderEmail,
   updateOrderPaymentLink,
   markOrderPaid,
   cancelOrder,
