@@ -5,10 +5,13 @@ const { createClient } = require('@supabase/supabase-js');
 let _supabase = null;
 function db() {
   if (!_supabase) {
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-      throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY env vars must be set');
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars must be set');
     }
-    _supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+    // Service role key, not anon: RLS is enabled on `orders` with zero public
+    // policies, so the anon key can no longer read/write it at all. Only the
+    // service role (server-side only, never exposed to a browser) bypasses RLS.
+    _supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
   }
   return _supabase;
 }

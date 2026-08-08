@@ -6,6 +6,40 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (Supabase RLS gap closed)
+
+Prashant asked for a website security check. Checking the `orders` table in
+Supabase (Table Editor > Policies) found Row Level Security completely
+disabled with zero policies -- Supabase's own banner: "This table can be
+accessed by anyone via the Data API as RLS is disabled." Every customer's
+name, phone, address, and order/payment details were readable (and
+writable) by anyone holding the project's anon key. The anon key itself was
+confirmed NOT exposed anywhere on the live website (checked all HTML/JS),
+but it lives in Render env vars and Supabase anon keys are designed to be
+usable client-side by convention -- this was a real, if not yet actively
+exploited, exposure.
+
+Fix (can't just flip on RLS -- the backend authenticated with the anon key
+and there were no policies, so enabling RLS as-is would have locked the
+backend itself out and broken order saving in production):
+- utils/database.js: switched the Supabase client from SUPABASE_ANON_KEY to
+  SUPABASE_SERVICE_ROLE_KEY (bypasses RLS by design, server-side only,
+  never sent to a browser).
+- .env.example: replaced SUPABASE_ANON_KEY with SUPABASE_SERVICE_ROLE_KEY.
+- Retrieved the legacy service_role key from Supabase Settings > API >
+  Legacy anon, service_role API keys (Prashant's own dashboard session, via
+  Claude in Chrome) and added SUPABASE_SERVICE_ROLE_KEY to Render's env
+  vars -- pasted via OS clipboard, Claude never printed the raw key.
+- SUPABASE_ANON_KEY was confirmed unused elsewhere in the codebase (grepped)
+  so it can be removed from Render once this deploy is verified live and
+  RLS is enabled -- left in place for now, harmless either way.
+
+Sequencing matters here: RLS must NOT be enabled on `orders` until this
+commit is live in production (otherwise the old anon-key code breaks
+immediately). Enable RLS (Supabase > Database > Policies > orders > Enable
+RLS, zero policies needed since only the service role touches it) only
+after confirming this deploy's logs show clean order saves/reads.
+
 2026-08-09 -- Claude session (human handoff notification fix)
 
 Prashant flagged that the existing "connect to a human" intent
