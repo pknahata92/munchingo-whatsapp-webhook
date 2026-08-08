@@ -40,6 +40,16 @@ immediately). Enable RLS (Supabase > Database > Policies > orders > Enable
 RLS, zero policies needed since only the service role touches it) only
 after confirming this deploy's logs show clean order saves/reads.
 
+CLOSED OUT same session: confirmed e1632e2 deployed clean, enabled RLS on
+`orders` (zero policies -- Supabase UI confirms "No data will be returned
+via the Data API as no RLS policies exist on this table", anon key now
+fully locked out). Verified end-to-end with a REAL order placed by Prashant
+through the WhatsApp native catalog: Render logs show `[DB] Order
+MNG-BFVZ-0808 saved` and `[MAILER] Order notification sent` with zero
+errors -- service role key + RLS-enabled table works correctly in
+production. Removed the now-fully-unused SUPABASE_ANON_KEY from Render env
+vars; redeployed clean. This security gap is fully closed.
+
 2026-08-09 -- Claude session (human handoff notification fix)
 
 Prashant flagged that the existing "connect to a human" intent
