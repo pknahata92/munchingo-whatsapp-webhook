@@ -63,6 +63,36 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
   console.log(`[MAILER] Order notification sent for #${orderId}`);
 }
 
+async function sendHumanHandoffAlert({ customerPhone, customerName, message }) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#B0413E;padding:22px 26px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">&#128075; Customer wants a human</h2>
+      </div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${customerName || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
+          ${message ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Message</td><td style="padding:4px 0;">${message}</td></tr>` : ''}
+        </table>
+        <p style="margin:0;font-size:13px;color:#999;">
+          Reply directly on WhatsApp: <a href="https://wa.me/${customerPhone}">+${customerPhone}</a>
+        </p>
+      </div>
+    </div>
+  `;
+
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [process.env.NOTIFY_EMAIL],
+    subject: `Customer wants a human — +${customerPhone}`,
+    html,
+  });
+
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Human handoff alert sent for ${customerPhone}`);
+}
+
 async function sendCustomerConfirmationEmail({ email, orderId, customerName, items, total, timestamp }) {
   const itemRows = items
     .map(
@@ -125,4 +155,4 @@ async function sendCustomerConfirmationEmail({ email, orderId, customerName, ite
   console.log(`[MAILER] Customer confirmation sent for #${orderId}`);
 }
 
-module.exports = { sendOrderEmail, sendCustomerConfirmationEmail };
+module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert };

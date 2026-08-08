@@ -241,7 +241,7 @@ async function sendBulkOrderInfo(to) {
 }
 
 // ── Human handoff ─────────────────────────────────────────────────────────────
-async function sendHumanHandoff(to) {
+async function sendHumanHandoff(to, name, message) {
   await wa.sendText(
     to,
     `👋 *We'll get a real person to you!*\n\n` +
@@ -252,7 +252,31 @@ async function sendHumanHandoff(to) {
       `We typically respond within a few hours. Thanks for your patience! 🍪`
   );
   console.log(`[HANDOFF] Customer ${to} requested human agent`);
-  // TODO: Add a Slack/email alert here to notify the team
+
+  const ownerPhone = process.env.OWNER_PHONE;
+  if (ownerPhone) {
+    try {
+      await wa.sendText(
+        ownerPhone,
+        `👋 *Human handoff requested*\n\n` +
+          `Customer: ${name || 'Unknown'}\n` +
+          `WhatsApp: +${to}\n` +
+          (message ? `Message: "${message}"\n\n` : '\n') +
+          `Reply directly on WhatsApp: https://wa.me/${to}`
+      );
+    } catch (err) {
+      console.error('[WA] Failed to notify owner of handoff request:', err.message);
+    }
+  } else {
+    console.warn('[HANDOFF] OWNER_PHONE not set — owner not notified via WhatsApp');
+  }
+
+  try {
+    const { sendHumanHandoffAlert } = require('../utils/mailer');
+    await sendHumanHandoffAlert({ customerPhone: to, customerName: name, message });
+  } catch (err) {
+    console.error('[MAILER] Failed to send human handoff alert:', err.message);
+  }
 }
 
 // ── Order status lookup ───────────────────────────────────────────────────────
@@ -515,7 +539,7 @@ async function routeText(to, text, name) {
   }
   // Human handoff
   if (/\bhuman\b|real person|talk.*person|speak.*someone|live.*agent|\bsupport\b/.test(t)) {
-    return sendHumanHandoff(to);
+    return sendHumanHandoff(to, name, text);
   }
   // Return / refund
   if (/return|refund|damage|broken|wrong.*item/.test(t)) {
@@ -659,7 +683,7 @@ async function routeInteractive(to, interactive, name) {
     case 'faq_order':       return sendOrderInstructions(to);
     case 'faq_return':      return sendReturnPolicy(to);
     case 'faq_bulk':        return sendBulkOrderInfo(to);
-    case 'faq_human':       return sendHumanHandoff(to);
+    case 'faq_human':       return sendHumanHandoff(to, name);
     case 'faq_shelf':
       return wa.sendText(
         to,

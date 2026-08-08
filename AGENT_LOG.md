@@ -6,6 +6,35 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (human handoff notification fix)
+
+Prashant flagged that the existing "connect to a human" intent
+(handlers/messageHandler.js sendHumanHandoff, triggered by keywords like
+"human"/"real person"/"talk to someone", also reachable via the faq_human
+button) told the customer a team member would reach out, but the code that
+was supposed to actually notify the team was a stub -- just a
+console.log and a `// TODO: Add a Slack/email alert here`. Nobody was ever
+actually notified.
+
+Fixes:
+- utils/mailer.js: added sendHumanHandoffAlert({customerPhone, customerName,
+  message}) -- reuses the existing Resend setup to email NOTIFY_EMAIL with
+  the customer's phone, name, and message text.
+- handlers/messageHandler.js sendHumanHandoff(to, name, message): now also
+  (a) WhatsApp-texts the owner directly at a new OWNER_PHONE env var with
+  the customer's details, and (b) calls sendHumanHandoffAlert() for the
+  email. Both wrapped in try/catch so a notification failure never blocks
+  the customer-facing reply. Updated both call sites (routeText's keyword
+  match, routeInteractive's faq_human case) to pass name/message through.
+- .env.example: added OWNER_PHONE (owner's personal WhatsApp number, E.164
+  no +). Optional -- if unset, owner is only notified by email, with a
+  console.warn logged.
+- Set OWNER_PHONE in Render (Prashant's personal WhatsApp number, given
+  explicitly this session, not recorded here or in .env.example -- treat as
+  private) via Claude in Chrome, saved -- triggered an env-var redeploy of
+  the then-current commit before this code was pushed; code push follows in
+  the same session, so the var is already live for it.
+
 2026-08-09 -- Claude session (Meta follow-up: signature verification + WhatsApp template)
 
 Closed out the two remaining open items from the previous entry below (both
