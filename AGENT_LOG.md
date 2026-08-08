@@ -85,8 +85,9 @@ munchingo-website.pages.dev. Status was "Initializing" as of this session --
 should self-resolve to Active within minutes since it's already on the same
 zone.
 
-Not committed/pushed as of writing this entry -- see the entry above (or
-check `git log`) for whether it landed.
+Pushed with Prashant's explicit go-ahead: commit 7de70bd on origin/main.
+Verified live via Render logs: clean deploy, "Your service is live",
+no errors, correct commit deployed.
 
 ====================================================================
 
