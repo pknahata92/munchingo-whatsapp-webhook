@@ -91,7 +91,10 @@ async function updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl }
 async function markOrderPaid(orderId, paymentId) {
   const { error } = await db()
     .from('orders')
-    .update({ status: 'paid', payment_id: paymentId })
+    // updated_at is set explicitly (not relying on a DB trigger) because the
+    // daily digest's getOrdersPaidSince() filters on this column to build the
+    // packing list for orders that just became payable-for-shipping.
+    .update({ status: 'paid', payment_id: paymentId, updated_at: new Date().toISOString() })
     .eq('order_id', orderId);
 
   if (error) throw new Error(`Supabase update (paid) failed: ${error.message}`);
@@ -192,6 +195,25 @@ async function getOrder(orderId) {
   return data;
 }
 
+/**
+ * Orders that turned 'paid' within [sinceISO, untilISO) — the packing list
+ * for the daily ops digest. Filters on the paid transition, not created_at,
+ * so an order placed one day and paid the next still shows up on the day it
+ * actually needs packing.
+ */
+async function getOrdersPaidSince(sinceISO, untilISO) {
+  const { data, error } = await db()
+    .from('orders')
+    .select('*')
+    .eq('status', 'paid')
+    .gte('updated_at', sinceISO)
+    .lt('updated_at', untilISO)
+    .order('updated_at', { ascending: true });
+
+  if (error) { console.error('[DB] getOrdersPaidSince error:', error.message); return []; }
+  return data || [];
+}
+
 module.exports = {
   saveOrder,
   updateOrderAddress,
@@ -204,4 +226,5 @@ module.exports = {
   getRecentOrders,
   getOrderByPaymentLinkId,
   getOrder,
+  getOrdersPaidSince,
 };

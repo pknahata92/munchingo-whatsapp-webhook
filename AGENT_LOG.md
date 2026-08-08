@@ -6,6 +6,54 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (GST display + daily packing digest + audit fixes)
+
+GST (GSTIN 06AIIPN5005C2ZP, 5% rate on HSN 1905 post the Sept 2025 GST 2.0
+revision, confirmed with Prashant against the actual GST certificate and
+FSSAI license in Munchingo Docs/):
+- utils/mailer.js: new gstBreakupHtml() helper, inserted into sendOrderEmail
+  and sendCustomerConfirmationEmail right after the totals table.
+- handlers/messageHandler.js: sendPriceList(), handleOrderMessage()'s order
+  receipt, and completeAddressCollection()'s payment-link message now state
+  the 5% GST breakup / GSTIN.
+(Website side — checkout.html, cart.html, footer GSTIN/FSSAI on all pages —
+done in the munchingo-website repo, not this one.)
+
+Daily packing-list digest (new):
+- utils/database.js: new getOrdersPaidSince(sinceISO, untilISO), filtering
+  on `updated_at`. markOrderPaid() now explicitly sets updated_at (it didn't
+  before) since this query depends on it.
+- utils/mailer.js: new sendDailyDigestEmail({orders, windowLabel}) — product
+  quantity totals (for pulling stock) + per-order cards (name, phone, items,
+  address) for labels.
+- server.js: new GET /internal/daily-digest, secret-protected via a new
+  DIGEST_SECRET env var (timing-safe compare, same pattern as the Meta
+  signature check). Pulls orders paid in the last 24h and emails the digest.
+- .github/workflows/daily-digest.yml: new scheduled GitHub Action, fires
+  daily at 08:00 IST via curl to the endpoint. Chose this over an in-process
+  timer because this service runs on Render's free tier and can spin down
+  between requests — a setInterval isn't guaranteed to fire at a wall-clock
+  time. Needs DIGEST_SECRET set as both a Render env var and a GitHub Actions
+  repo secret (same value) — Prashant to do both, not yet done as of this
+  commit, so the endpoint will 503 until DIGEST_SECRET exists in Render.
+- .env.example: documented DIGEST_SECRET.
+
+Ordering-experience audit (full report given to Prashant, most findings
+deferred as product decisions — cart→WhatsApp handoff losing gift-set
+selections, non-India phone assumption, no stock/inventory concept, etc.
+are NOT fixed, intentionally, pending Prashant's calls). Two findings fixed
+now since they were factual corrections, not judgment calls:
+- Removed the false "Cash on Delivery (select pincodes)" line from both
+  payment-info replies in messageHandler.js (routeText's payment keyword
+  reply and the faq_payment case) — there is no COD logic anywhere in the
+  codebase; every order is prepaid-only via Razorpay. Saying otherwise to a
+  customer right before they pay was a real, provable false claim.
+- Fixed the bot's shelf-life claim from "30 days" (two locations:
+  routeText's shelf/expiry keyword reply and the faq_shelf case) to "90
+  days" — confirmed the true figure with Prashant (the website's
+  contact.html FAQ said 6 months, the bot said 30 days; neither was right,
+  fixed both to 90 in their respective repos).
+
 2026-08-09 -- Claude session (fix: Flow send was failing, not a template issue)
 
 Prashant tested a real order after the previous entry's deploy and got the

@@ -198,7 +198,7 @@ async function sendPriceList(to) {
 
   await wa.sendButtons(
     to,
-    `💰 *Munchingo Pricing:*\n\n${lines}\n\n🚚 Free delivery on orders ₹599+`,
+    `💰 *Munchingo Pricing:*\n\n${lines}\n\n🚚 Free delivery on orders ₹599+\n_Prices inclusive of 5% GST (GSTIN 06AIIPN5005C2ZP)_`,
     [
       { id: 'btn_products', title: '🛒 Shop Now' },
       { id: 'btn_order',    title: '📦 How to Order' },
@@ -496,12 +496,13 @@ async function handleOrderMessage(to, order, contactName) {
   }
 
   // 2. Send order receipt
+  const gstAmount = Math.round(total - total / 1.05);
   await wa.sendText(
     to,
     `🧾 *Order Received, ${name}!*\n\n` +
       `*Order #${orderId}*\n\n` +
       `${lines}\n\n` +
-      `*Total: ₹${total}*\n\n` +
+      `*Total: ₹${total}* _(incl. GST 5%: ₹${gstAmount} · GSTIN 06AIIPN5005C2ZP)_\n\n` +
       `Just one more step — we need your delivery address! 📍`
   );
 
@@ -566,7 +567,7 @@ async function completeAddressCollection(to, pendingOrder, address, email) {
     await wa.sendText(
       to,
       `💳 *Pay for your Munchingo Order*\n\n` +
-        `*Order #${pendingOrder.order_id}* — ₹${pendingOrder.total}\n\n` +
+        `*Order #${pendingOrder.order_id}* — ₹${pendingOrder.total} _(incl. 5% GST)_\n\n` +
         `👉 ${paymentLinkUrl}\n\n` +
         `Link valid for 24 hours. We'll confirm & ship once payment is received! 🍪`
     );
@@ -673,13 +674,13 @@ async function routeText(to, text, name) {
   if (/shelf|expiry|expire|last|fresh|store/.test(t)) {
     return wa.sendText(
       to,
-      `⏳ *Shelf life:*\n\nOur cookies stay fresh for *30 days* from the bake date (printed on the pack).\n\nStore in a cool, dry place — and try not to eat them all at once! 😄`
+      `⏳ *Shelf life:*\n\nOur cookies stay fresh for *90 days* from the bake date (printed on the pack).\n\nStore in a cool, dry place — and try not to eat them all at once! 😄`
     );
   }
   if (/pay|payment|upi|gpay|phonepe|card|cod|cash/.test(t)) {
     return wa.sendText(
       to,
-      `💳 *Payment options:*\n\n✅ UPI (Google Pay, PhonePe, Paytm)\n✅ Debit / Credit card\n✅ Net banking\n✅ Cash on Delivery (select pincodes)\n\nWe'll share a secure payment link after confirming your order.`
+      `💳 *Payment options:*\n\n✅ UPI (Google Pay, PhonePe, Paytm)\n✅ Debit / Credit card\n✅ Net banking\n\nAll orders are pre-paid — we'll share a secure payment link after confirming your order.`
     );
   }
   if (/faq|help|info|question|know/.test(t)) return sendFAQ(to);
@@ -802,12 +803,12 @@ async function routeInteractive(to, interactive, name) {
     case 'faq_shelf':
       return wa.sendText(
         to,
-        `⏳ Munchingo cookies stay fresh for *30 days* from the bake date.\n\nBest enjoyed fresh — store in a cool, dry place out of direct sunlight.`
+        `⏳ Munchingo cookies stay fresh for *90 days* from the bake date.\n\nBest enjoyed fresh — store in a cool, dry place out of direct sunlight.`
       );
     case 'faq_payment':
       return wa.sendText(
         to,
-        `💳 *Payment options:*\n\n✅ UPI (Google Pay, PhonePe, Paytm)\n✅ Debit / Credit card\n✅ Net banking\n✅ Cash on Delivery (select pincodes)\n\nWe'll share a secure payment link after confirming your order.`
+        `💳 *Payment options:*\n\n✅ UPI (Google Pay, PhonePe, Paytm)\n✅ Debit / Credit card\n✅ Net banking\n\nAll orders are pre-paid — we'll share a secure payment link after confirming your order.`
       );
 
     default:

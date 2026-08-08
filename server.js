@@ -253,6 +253,44 @@ app.post('/razorpay-webhook', async (req, res) => {
 });
 
 
+// ── Daily packing-list digest (GET) ───────────────────────────────────────────
+// Triggered once a day by a scheduled GitHub Actions workflow (see
+// .github/workflows/daily-digest.yml) rather than an in-process cron, since
+// this service runs on Render's free tier and can spin down between requests
+// — a timer inside the process isn't guaranteed to fire at a wall-clock time.
+// Protected by a shared secret (DIGEST_SECRET) rather than left open, since it
+// reads and emails every customer's name/phone/address for the window.
+app.get('/internal/daily-digest', async (req, res) => {
+  const secret = process.env.DIGEST_SECRET;
+  if (!secret) {
+    console.warn('[DIGEST] DIGEST_SECRET not set — refusing to run');
+    return res.sendStatus(503);
+  }
+  const provided = req.query.secret || '';
+  const expectedBuf = Buffer.from(secret);
+  const providedBuf = Buffer.from(String(provided));
+  const matches = expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
+  if (!matches) return res.sendStatus(403);
+
+  try {
+    const { getOrdersPaidSince } = require('./utils/database');
+    const { sendDailyDigestEmail } = require('./utils/mailer');
+
+    const until = new Date();
+    const since = new Date(until.getTime() - 24 * 60 * 60 * 1000);
+    const orders = await getOrdersPaidSince(since.toISOString(), until.toISOString());
+
+    const windowLabel = until.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' });
+    await sendDailyDigestEmail({ orders, windowLabel });
+
+    res.json({ ok: true, orders: orders.length });
+  } catch (err) {
+    console.error('[DIGEST] Failed to send daily digest:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Munchingo WhatsApp Webhook', ts: new Date().toISOString() });
