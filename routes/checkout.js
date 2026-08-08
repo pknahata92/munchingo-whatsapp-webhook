@@ -6,6 +6,7 @@ const router = express.Router();
 // Reuse the REAL, already-deployed modules — do not duplicate them.
 const { createPaymentLink } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('../utils/database');
+const { sendOrderEmail } = require('../utils/mailer');
 
 // Helpers
 function generateOrderId() {
@@ -83,6 +84,13 @@ router.post('/api/checkout', async (req, res) => {
               customerPhone,
       });
           await updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl });
+
+      // 3. Notify the owner by email (mirrors handlers/messageHandler.js's WhatsApp order flow)
+      try {
+        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total, timestamp });
+      } catch (err) {
+        console.error('[MAILER] Failed to send order notification:', err.message);
+      }
 
       console.log(`[CHECKOUT] Order ${orderId} created via website, payment link issued`);
           res.json({ ok: true, orderId, paymentUrl: paymentLinkUrl });

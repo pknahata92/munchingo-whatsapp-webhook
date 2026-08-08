@@ -6,6 +6,27 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-08 -- Claude session (CLAUDE.md Phase 2: owner-notification email + .env.example)
+
+Added the missing owner-notification email for website checkout orders (bug #2
+in CLAUDE.md's known-bugs table): routes/checkout.js now imports
+utils/mailer.js's sendOrderEmail() and calls it right after the payment link
+is created and saved, wrapped in try/catch so a mailer failure can't break
+checkout (mirrors the exact pattern already used in
+handlers/messageHandler.js's handleOrderMessage()). File: routes/checkout.js.
+
+Rewrote .env.example to list all 13 real env vars the code actually reads
+(previously only had 5 -- WHATSAPP_TOKEN, PHONE_NUMBER_ID, WABA_ID, CATALOG_ID,
+VERIFY_TOKEN, PORT). Added the Razorpay (3), Supabase (2), Resend (2), and
+SITE_ORIGIN vars, grouped by which utils/ module reads them. File: .env.example.
+
+Did not touch server.js, handlers/, or any other utils/ file. Did not push --
+per CLAUDE.md Section 5.1 rule 6, waiting on Prashant's explicit go-ahead
+immediately before `git push origin main` since this redeploys the live
+production WhatsApp bot with no staging environment.
+
+====================================================================
+
 2026-08-08 -- Claude session B (website checkout integration)
 
 Hardened utils/razorpay.js verifyWebhookSignature(). It threw an uncaught exception on a missing or malformed signature header, which crashed the whole Node process (website checkout AND the WhatsApp bot both went down until Render auto-restarted). Now wrapped in try/catch, returns false instead of throwing. File: utils/razorpay.js.
