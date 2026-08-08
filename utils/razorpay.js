@@ -89,17 +89,24 @@ async function expirePaymentLink(linkId) {
  */
 function verifyWebhookSignature(rawBody, signature) {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-  if (!secret) return false;
+  if (!secret || !signature || !rawBody) return false;
 
-  const expected = crypto
+  try {
+    const expected = crypto
     .createHmac('sha256', secret)
     .update(rawBody)
     .digest('hex');
 
-  return crypto.timingSafeEqual(
-    Buffer.from(expected, 'hex'),
-    Buffer.from(signature,  'hex')
-  );
+    const expectedBuf = Buffer.from(expected, 'hex');
+    const signatureBuf = Buffer.from(signature, 'hex');
+    if (expectedBuf.length !== signatureBuf.length) return false;
+
+    return crypto.timingSafeEqual(expectedBuf, signatureBuf);
+  } catch (err) {
+    // Malformed signature header, non-hex string, etc. — reject, don't crash.
+    console.warn('[RAZORPAY] Webhook signature verification error:', err.message);
+    return false;
+  }
 }
 
 module.exports = { createPaymentLink, expirePaymentLink, verifyWebhookSignature };
