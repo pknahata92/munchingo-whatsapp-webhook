@@ -2,8 +2,6 @@
 const { createClient } = require('@supabase/supabase-js');
 
 // ── Lazy client — only initialised on first DB call ───────────────────────────
-// This prevents a startup crash if SUPABASE_URL / SUPABASE_ANON_KEY
-// haven't been added to the environment yet.
 let _supabase = null;
 function db() {
   if (!_supabase) {
@@ -83,7 +81,22 @@ async function markOrderPaid(orderId, paymentId) {
 }
 
 /**
- * Return the most recent order for a customer that is still waiting for an address.
+ * Cancel an active order (pending_address or pending_payment).
+ * Returns true on success.
+ */
+async function cancelOrder(orderId) {
+  const { error } = await db()
+    .from('orders')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .eq('order_id', orderId);
+
+  if (error) { console.error('[DB] cancelOrder error:', error.message); return false; }
+  console.log(`[DB] Order ${orderId} cancelled`);
+  return true;
+}
+
+/**
+ * Most recent order waiting for delivery address.
  */
 async function getRecentPendingOrder(customerPhone) {
   const { data, error } = await db()
@@ -95,13 +108,57 @@ async function getRecentPendingOrder(customerPhone) {
     .limit(1)
     .maybeSingle();
 
-  if (error) {
-    console.error('[DB] getRecentPendingOrder error:', error.message);
-    return null;
-  }
+  if (error) { console.error('[DB] getRecentPendingOrder error:', error.message); return null; }
   return data;
 }
 
+/**
+ * Most recent order waiting for payment (address already collected).
+ */
+async function getRecentPendingPaymentOrder(customerPhone) {
+  const { data, error } = await db()
+    .from('orders')
+    .select('*')
+    .eq('customer_phone', customerPhone)
+    .eq('status', 'pending_payment')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) { console.error('[DB] getRecentPendingPaymentOrder error:', error.message); return null; }
+  return data;
+}
+
+/**
+ * Return the N most recent orders for a customer (all statuses).
+ * Used for the order-status enquiry flow.
+ */
+async function getRecentOrders(customerPhone, limit = 3) {
+  const { data, error } = await db()
+    .from('orders')
+    .select('*')
+    .eq('customer_phone', customerPhone)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) { console.error('[DB] getRecentOrders error:', error.message); return []; }
+  return data || [];
+}
+
+/**
+ * Lookup order by Razorpay payment link ID.
+ * Used when handling payment_link.expired webhook events.
+ */
+async function getOrderByPaymentLinkId(paymentLinkId) {
+  const { data, error } = await db()
+    .from('orders')
+    .select('*')
+    .eq('payment_link_id', paymentLinkId)
+    .maybeSingle();
+
+  if (error) { console.error('[DB] getOrderByPaymentLinkId error:', error.message); return null; }
+  return data;
+}
 
 /**
  * Fetch a single order by order_id. Returns null if not found.
@@ -112,6 +169,7 @@ async function getOrder(orderId) {
     .select('*')
     .eq('order_id', orderId)
     .maybeSingle();
+
   if (error) { console.error('[DB] getOrder error:', error.message); return null; }
   return data;
 }
@@ -121,6 +179,10 @@ module.exports = {
   updateOrderAddress,
   updateOrderPaymentLink,
   markOrderPaid,
+  cancelOrder,
   getRecentPendingOrder,
+  getRecentPendingPaymentOrder,
+  getRecentOrders,
+  getOrderByPaymentLinkId,
   getOrder,
 };

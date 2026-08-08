@@ -4,7 +4,7 @@ const crypto = require('crypto');
 
 /**
  * Create a Razorpay Payment Link for a Munchingo order.
- * Returns { id, short_url } from Razorpay.
+ * Returns { id, url } where url is the short payment link.
  */
 async function createPaymentLink({ orderId, amount, customerPhone, customerName }) {
   const keyId     = process.env.RAZORPAY_KEY_ID;
@@ -33,9 +33,9 @@ async function createPaymentLink({ orderId, amount, customerPhone, customerName 
       contact: phone,
     },
     notify: {
-      sms:       false,   // We send via WhatsApp ourselves
-      email:     false,
-      whatsapp:  false,
+      sms:      false,   // We send via WhatsApp ourselves
+      email:    false,
+      whatsapp: false,
     },
     reminder_enable: false,
     expire_by:       expireBy,
@@ -57,7 +57,34 @@ async function createPaymentLink({ orderId, amount, customerPhone, customerName 
 }
 
 /**
- * Verify a Razorpay webhook signature.
+ * Cancel (expire) a Razorpay payment link so it can no longer be paid.
+ * Called when a customer cancels an order.
+ * Returns true on success, false if the API call fails.
+ */
+async function expirePaymentLink(linkId) {
+  const keyId     = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+  try {
+    await axios.post(
+      `https://api.razorpay.com/v1/payment_links/${linkId}/cancel`,
+      {},
+      {
+        auth: { username: keyId, password: keySecret },
+        timeout: 10000,
+      }
+    );
+    console.log(`[RAZORPAY] Payment link ${linkId} cancelled`);
+    return true;
+  } catch (err) {
+    // Link may already be expired or paid — log but don't crash
+    console.error('[RAZORPAY] expirePaymentLink error:', err.response?.data?.description || err.message);
+    return false;
+  }
+}
+
+/**
+ * Verify a Razorpay webhook signature using HMAC-SHA256.
  * Returns true if the signature is valid.
  */
 function verifyWebhookSignature(rawBody, signature) {
@@ -75,4 +102,4 @@ function verifyWebhookSignature(rawBody, signature) {
   );
 }
 
-module.exports = { createPaymentLink, verifyWebhookSignature };
+module.exports = { createPaymentLink, expirePaymentLink, verifyWebhookSignature };
