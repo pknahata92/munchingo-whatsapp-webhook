@@ -47,6 +47,31 @@ async function sendTemplate(to, templateName, languageCode, bodyParams) {
   });
 }
 
+// ── Flow message (structured form, replaces free-text collection) ─────────────
+async function sendFlow(to, { flowId, bodyText, ctaText, screenId, headerText }) {
+  return sendMessage({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive: {
+      type: 'flow',
+      ...(headerText ? { header: { type: 'text', text: headerText } } : {}),
+      body: { text: bodyText },
+      action: {
+        name: 'flow',
+        parameters: {
+          flow_message_version: '3',
+          flow_id: flowId,
+          flow_cta: ctaText,
+          flow_action: 'navigate',
+          flow_action_payload: { screen: screenId, data: {} },
+        },
+      },
+    },
+  });
+}
+
 // ── Plain text ────────────────────────────────────────────────────────────────
 async function sendText(to, text) {
   return sendMessage({
@@ -154,6 +179,7 @@ async function sendImage(to, imageUrl, caption) {
 
 module.exports = {
   sendTemplate,
+  sendFlow,
   sendText,
   sendButtons,
   sendList,

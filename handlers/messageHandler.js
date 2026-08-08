@@ -1,7 +1,7 @@
 'use strict';
 
 const wa = require('../utils/whatsapp');
-const { sendOrderEmail } = require('../utils/mailer');
+const { sendOrderEmail, sendFeedbackAlert } = require('../utils/mailer');
 const {
   saveOrder,
   updateOrderAddress,
@@ -13,6 +13,12 @@ const {
   getRecentOrders,
 } = require('../utils/database');
 const { createPaymentLink, expirePaymentLink } = require('../utils/razorpay');
+
+// WhatsApp Flow that collects delivery details as a structured form instead of
+// free text (published in WhatsApp Manager > Flows > Delivery Details).
+const DELIVERY_FLOW_ID = '1699615387965702';
+// Standalone feedback flow, sent on request or after delivery.
+const FEEDBACK_FLOW_ID = '1743198853381814';
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -497,14 +503,26 @@ async function handleOrderMessage(to, order, contactName) {
       `Just one more step — we need your delivery address! 📍`
   );
 
-  // 3. Ask for delivery address (and, optionally, an email for an order confirmation)
-  await wa.sendText(
-    to,
-    `📍 *Please reply with your delivery address:*\n\n` +
-      `Include flat/house no., area/locality, city, and pincode.\n\n` +
-      `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_\n\n` +
-      `Want an email confirmation too? Add your email on a new line — totally optional.`
-  );
+  // 3. Ask for delivery address via the structured Flow form. Falls back to
+  // free text automatically -- if the customer just types their address
+  // instead of tapping the flow button, step 3 of routeText() still catches it.
+  try {
+    await wa.sendFlow(to, {
+      flowId: DELIVERY_FLOW_ID,
+      bodyText: `Just one more step — tap below to share your delivery address for order #${orderId}. 📍`,
+      ctaText: 'Enter delivery details',
+      screenId: 'WELCOME',
+    });
+  } catch (err) {
+    console.error('[WA] Failed to send delivery flow, falling back to text prompt:', err.message);
+    await wa.sendText(
+      to,
+      `📍 *Please reply with your delivery address:*\n\n` +
+        `Include flat/house no., area/locality, city, and pincode.\n\n` +
+        `_Example: 42, Shanti Nagar, Koramangala, Bengaluru 560034_\n\n` +
+        `Want an email confirmation too? Add your email on a new line — totally optional.`
+    );
+  }
 
   // 4. Send email notification
   console.log('[ORDER]', { orderId, customer: to, name, total, timestamp });
@@ -512,6 +530,51 @@ async function handleOrderMessage(to, order, contactName) {
     await sendOrderEmail({ orderId, customerPhone: to, customerName: name, items: enrichedItems, total, timestamp });
   } catch (err) {
     console.error('[MAILER] Failed to send order notification:', err.message);
+  }
+}
+
+// ── Shared by both the Flow form and the free-text fallback: saves the
+// address/email, then generates and sends the payment link ───────────────────
+async function completeAddressCollection(to, pendingOrder, address, email) {
+  await updateOrderAddress(pendingOrder.order_id, address);
+  if (email) {
+    try {
+      await updateOrderEmail(pendingOrder.order_id, email);
+    } catch (err) {
+      console.error('[DB] Failed to save email:', err.message);
+    }
+  }
+
+  await wa.sendText(
+    to,
+    `✅ *Address saved!*\n\n` +
+      `📍 ${address}` +
+      (email ? `\n✉️ Confirmation will be sent to ${email}` : '') +
+      `\n\nGenerating your payment link... 🔗`
+  );
+
+  try {
+    const { id: paymentLinkId, url: paymentLinkUrl } = await createPaymentLink({
+      orderId:       pendingOrder.order_id,
+      amount:        pendingOrder.total,
+      customerPhone: to,
+      customerName:  pendingOrder.customer_name,
+    });
+    await updateOrderPaymentLink(pendingOrder.order_id, { paymentLinkId, paymentLinkUrl });
+    await wa.sendText(
+      to,
+      `💳 *Pay for your Munchingo Order*\n\n` +
+        `*Order #${pendingOrder.order_id}* — ₹${pendingOrder.total}\n\n` +
+        `👉 ${paymentLinkUrl}\n\n` +
+        `Link valid for 24 hours. We'll confirm & ship once payment is received! 🍪`
+    );
+  } catch (err) {
+    console.error('[RAZORPAY] Failed to create payment link:', err.message);
+    await wa.sendText(
+      to,
+      `✅ Address saved! We'll share your payment link shortly.\n\n` +
+        `If you don't hear from us in 10 minutes, reply *resend link* and we'll generate a fresh one.`
+    );
   }
 }
 
@@ -528,6 +591,18 @@ async function routeText(to, text, name) {
   // Order status
   if (/\bstatus\b|track.*order|order.*status|where.*order|my order/.test(t)) {
     return sendOrderStatus(to);
+  }
+  // Feedback
+  if (/\bfeedback\b|\breview\b|rate.*(order|experience|us)/.test(t)) {
+    if (!FEEDBACK_FLOW_ID) {
+      return wa.sendText(to, `🙏 We'd love your feedback! Reply here with a quick note and we'll pass it straight to the team.`);
+    }
+    return wa.sendFlow(to, {
+      flowId: FEEDBACK_FLOW_ID,
+      bodyText: `We'd love to hear how we did! 🍪`,
+      ctaText: 'Share feedback',
+      screenId: 'FEEDBACK',
+    });
   }
   // Cancellation
   if (/\bcancel\b/.test(t)) {
@@ -579,46 +654,7 @@ async function routeText(to, text, name) {
         return;
       }
 
-      await updateOrderAddress(pendingOrder.order_id, address);
-      if (email) {
-        try {
-          await updateOrderEmail(pendingOrder.order_id, email);
-        } catch (err) {
-          console.error('[DB] Failed to save email:', err.message);
-        }
-      }
-
-      await wa.sendText(
-        to,
-        `✅ *Address saved!*\n\n` +
-          `📍 ${address}` +
-          (email ? `\n✉️ Confirmation will be sent to ${email}` : '') +
-          `\n\nGenerating your payment link... 🔗`
-      );
-
-      try {
-        const { id: paymentLinkId, url: paymentLinkUrl } = await createPaymentLink({
-          orderId:       pendingOrder.order_id,
-          amount:        pendingOrder.total,
-          customerPhone: to,
-          customerName:  pendingOrder.customer_name,
-        });
-        await updateOrderPaymentLink(pendingOrder.order_id, { paymentLinkId, paymentLinkUrl });
-        await wa.sendText(
-          to,
-          `💳 *Pay for your Munchingo Order*\n\n` +
-            `*Order #${pendingOrder.order_id}* — ₹${pendingOrder.total}\n\n` +
-            `👉 ${paymentLinkUrl}\n\n` +
-            `Link valid for 24 hours. We'll confirm & ship once payment is received! 🍪`
-        );
-      } catch (err) {
-        console.error('[RAZORPAY] Failed to create payment link:', err.message);
-        await wa.sendText(
-          to,
-          `✅ Address saved! We'll share your payment link shortly.\n\n` +
-            `If you don't hear from us in 10 minutes, reply *resend link* and we'll generate a fresh one.`
-        );
-      }
+      await completeAddressCollection(to, pendingOrder, address, email);
       return;
     }
   } catch (err) {
@@ -658,9 +694,64 @@ async function routeText(to, text, name) {
   );
 }
 
-// ── Route interactive replies (button & list) ─────────────────────────────────
+// ── Handle a completed WhatsApp Flow submission ────────────────────────────────
+// Flows all land here regardless of which one was filled out (WhatsApp doesn't
+// tell us which flow in nfm_reply.name -- it's always "flow"), so we dispatch
+// on which fields the response actually contains.
+async function routeFlowReply(to, nfmReply, name) {
+  let data;
+  try {
+    data = JSON.parse(nfmReply?.response_json || '{}');
+  } catch (err) {
+    console.error('[FLOW] Failed to parse response_json:', err.message);
+    return;
+  }
+
+  // Delivery Details flow
+  if (data.address_line) {
+    const address = [data.full_name, data.address_line, data.city, data.state, data.pincode]
+      .filter(Boolean)
+      .join(', ');
+    const email = data.email || null;
+
+    try {
+      const pendingOrder = await getRecentPendingOrder(to);
+      if (!pendingOrder) {
+        await wa.sendText(
+          to,
+          `Thanks! I couldn't find an order waiting for an address right now — if you're still expecting one, reply *status* to check.`
+        );
+        return;
+      }
+      await completeAddressCollection(to, pendingOrder, address, email);
+    } catch (err) {
+      console.error('[FLOW] Failed to complete address collection:', err.message);
+    }
+    return;
+  }
+
+  // Feedback flow
+  if (data.rating) {
+    console.log('[FEEDBACK]', { customer: to, name, rating: data.rating, comments: data.comments });
+    try {
+      await sendFeedbackAlert({ customerPhone: to, customerName: name, rating: data.rating, comments: data.comments });
+    } catch (err) {
+      console.error('[MAILER] Failed to send feedback alert:', err.message);
+    }
+    await wa.sendText(to, `🙏 *Thank you for the feedback!* It genuinely helps us get better.`);
+    return;
+  }
+
+  console.log('[FLOW] Unrecognized flow reply payload:', JSON.stringify(data));
+}
+
+// ── Route interactive replies (button, list & Flow submissions) ───────────────
 async function routeInteractive(to, interactive, name) {
   const type = interactive.type;
+
+  if (type === 'nfm_reply') {
+    return routeFlowReply(to, interactive.nfm_reply, name);
+  }
 
   let buttonId;
   if (type === 'button_reply')    buttonId = interactive.button_reply?.id;

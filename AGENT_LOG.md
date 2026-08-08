@@ -6,6 +6,63 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (WhatsApp Flows: delivery details + feedback)
+
+Prashant asked to replace free-text delivery-address collection with a
+proper WhatsApp Flow, and to use Flows "to max capability" -- welcome
+screen, delivery details, feedback. Built and published two Flows in
+WhatsApp Manager (via Claude in Chrome, editing Flow JSON directly through
+the Monaco editor's model API since simulated keystrokes triggered the
+editor's bracket auto-close and corrupted the JSON):
+
+- "Delivery Details" (flow ID 1699615387965702), two screens:
+  WELCOME (context + Continue button) -> DELIVERY_DETAILS (full name,
+  address line, city, state, pincode, optional email -- all TextInput,
+  wrapped in a Form component so values pass through via ${form.*} into
+  the completion payload). Published.
+- "Feedback" (flow ID 1743198853381814), one screen: rating
+  (RadioButtonsGroup: Excellent/Good/Okay/Poor) + optional comments
+  (TextArea). Published.
+
+Note: WhatsApp Manager's Flows publishing prerequisites (message quality /
+business verification, mentioned in the empty-state banner) turned out not
+to block this account -- both Flows published immediately with no gate.
+
+Backend changes (utils/whatsapp.js, handlers/messageHandler.js,
+utils/mailer.js):
+- utils/whatsapp.js: new sendFlow(to, {flowId, bodyText, ctaText, screenId,
+  headerText}) -- sends a `type: interactive, interactive.type: flow`
+  message per the Cloud API flow-message spec.
+- handlers/messageHandler.js: handleOrderMessage() now sends the Delivery
+  Details flow instead of the free-text address prompt, with a try/catch
+  fallback to the old free-text prompt if the flow send fails for any
+  reason (e.g. flow gets unpublished later). The free-text address
+  collection path in routeText() is left in place as a second fallback --
+  if a customer just types their address instead of using the flow, it
+  still works exactly as before.
+- Extracted the address-save + payment-link generation logic (previously
+  inline in routeText()) into a new completeAddressCollection() helper, now
+  shared between the free-text path and the new Flow-completion path.
+- New routeFlowReply(to, nfmReply, name), called from routeInteractive()
+  whenever interactive.type === 'nfm_reply' (WhatsApp's message type for a
+  completed Flow submission). WhatsApp doesn't indicate which flow was
+  filled out in nfm_reply.name (always "flow"), so this dispatches based on
+  which fields are present in the parsed response_json: address_line ->
+  address collection, rating -> feedback.
+- "feedback"/"review"/"rate ..." keyword in routeText() now sends the
+  Feedback flow.
+- utils/mailer.js: new sendFeedbackAlert({customerPhone, customerName,
+  rating, comments}) -- emails NOTIFY_EMAIL, mirrors the existing
+  sendHumanHandoffAlert pattern. Feedback is not yet persisted to Supabase
+  (no table for it) -- email is the only record for now; flagged as a
+  possible follow-up if Prashant wants historical feedback data.
+
+Not yet live-tested end-to-end (Delivery Details flow's WELCOME->
+DELIVERY_DETAILS navigation and the nfm_reply webhook handling specifically)
+-- the original free-text order flow WAS tested live this session before
+these changes (order MNG-BFVZ-0808). Recommend Prashant place one more real
+test order through the flow before considering this fully verified.
+
 2026-08-09 -- Claude session (Supabase RLS gap closed)
 
 Prashant asked for a website security check. Checking the `orders` table in
