@@ -4,9 +4,21 @@ require('dotenv').config();
 const express = require('express');
 const handler = require('./handlers/messageHandler');
 const wa      = require('./utils/whatsapp');
+const checkoutRoutes = require('./routes/checkout');
 
 const app = express();
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+
+// CORS - the checkout page on munchingo.com calls this backend from the browser.
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', process.env.SITE_ORIGIN || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+app.use(checkoutRoutes);
 
 const PORT         = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'munchingo_webhook_secret_2026';
