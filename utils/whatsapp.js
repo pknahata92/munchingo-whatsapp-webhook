@@ -48,7 +48,7 @@ async function sendTemplate(to, templateName, languageCode, bodyParams) {
 }
 
 // ── Flow message (structured form, replaces free-text collection) ─────────────
-async function sendFlow(to, { flowId, bodyText, ctaText, screenId, headerText }) {
+async function sendFlow(to, { flowId, bodyText, ctaText, screenId, headerText, data }) {
   return sendMessage({
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -65,7 +65,10 @@ async function sendFlow(to, { flowId, bodyText, ctaText, screenId, headerText })
           flow_id: flowId,
           flow_cta: ctaText,
           flow_action: 'navigate',
-          flow_action_payload: { screen: screenId, data: {} },
+          // The API rejects flow_action_payload.data:{} outright ("must be of
+          // type dynamic_object") -- only include it when there's real data
+          // to prefill the screen with.
+          flow_action_payload: { screen: screenId, ...(data && Object.keys(data).length ? { data } : {}) },
         },
       },
     },

@@ -6,6 +6,30 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (fix: Flow send was failing, not a template issue)
+
+Prashant tested a real order after the previous entry's deploy and got the
+old free-text address prompt instead of the new Flow popup. Root cause was
+NOT what it looked like (Flow needing a message template) -- confirmed via
+Render logs, the actual error was:
+
+  [WA] Send error: {"message":"(#131009) Parameter value is not valid",
+  "code":131009,...,"details":"Parameter data in flow_action_payload for
+  CTA flow must be of type dynamic_object."}
+
+utils/whatsapp.js:sendFlow() was sending `flow_action_payload: { screen,
+data: {} }` -- an explicit empty object for `data`. The Cloud API rejects
+that outright; it wants the key omitted entirely when there's nothing to
+prefill, not present-but-empty. Fixed: `data` is now only included in the
+payload when a non-empty object is actually passed in. handleOrderMessage()
+and the feedback-trigger call site don't pass `data` at all, so both now
+send a clean `{screen: "..."}` payload with no `data` key.
+
+The try/catch fallback (added in the same commit as the original bug) did
+its job correctly here -- the customer still got a working free-text
+prompt instead of silence, which is exactly why that fallback was worth
+adding up front.
+
 2026-08-09 -- Claude session (WhatsApp Flows: delivery details + feedback)
 
 Prashant asked to replace free-text delivery-address collection with a
