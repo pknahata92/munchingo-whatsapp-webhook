@@ -121,6 +121,40 @@ async function sendFeedbackAlert({ customerPhone, customerName, rating, comments
   console.log(`[MAILER] Feedback alert sent for ${customerPhone}`);
 }
 
+async function sendBulkInquiryAlert({ customerPhone, customerName, company_name, contact_name, quantity, needed_by, budget, notes }) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#6B3A2A;padding:22px 26px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">&#127873; New corporate gifting inquiry</h2>
+      </div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
+          <tr><td style="padding:4px 0;color:#888;width:130px;">Company</td><td style="padding:4px 0;font-weight:600;">${company_name}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Contact</td><td style="padding:4px 0;">${contact_name || customerName || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Quantity</td><td style="padding:4px 0;">${quantity}</td></tr>
+          ${needed_by ? `<tr><td style="padding:4px 0;color:#888;">Needed by</td><td style="padding:4px 0;">${needed_by}</td></tr>` : ''}
+          ${budget ? `<tr><td style="padding:4px 0;color:#888;">Budget</td><td style="padding:4px 0;">${budget}</td></tr>` : ''}
+          ${notes ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Notes</td><td style="padding:4px 0;">${notes}</td></tr>` : ''}
+        </table>
+        <p style="margin:0;font-size:13px;color:#999;">
+          Reply directly on WhatsApp: <a href="https://wa.me/${customerPhone}">+${customerPhone}</a>
+        </p>
+      </div>
+    </div>
+  `;
+
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [process.env.NOTIFY_EMAIL],
+    subject: `Corporate gifting inquiry — ${company_name}`,
+    html,
+  });
+
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Bulk inquiry alert sent for ${customerPhone}`);
+}
+
 async function sendCustomerConfirmationEmail({ email, orderId, customerName, items, total, timestamp }) {
   const itemRows = items
     .map(
@@ -183,4 +217,4 @@ async function sendCustomerConfirmationEmail({ email, orderId, customerName, ite
   console.log(`[MAILER] Customer confirmation sent for #${orderId}`);
 }
 
-module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert };
+module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert };

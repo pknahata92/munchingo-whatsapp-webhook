@@ -1,7 +1,7 @@
 'use strict';
 
 const wa = require('../utils/whatsapp');
-const { sendOrderEmail, sendFeedbackAlert } = require('../utils/mailer');
+const { sendOrderEmail, sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
 const {
   saveOrder,
   updateOrderAddress,
@@ -19,6 +19,8 @@ const { createPaymentLink, expirePaymentLink } = require('../utils/razorpay');
 const DELIVERY_FLOW_ID = '1699615387965702';
 // Standalone feedback flow, sent on request or after delivery.
 const FEEDBACK_FLOW_ID = '1743198853381814';
+// Corporate/bulk gifting lead-capture flow.
+const BULK_GIFTING_FLOW_ID = '1066239432999546';
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -240,8 +242,8 @@ async function sendBulkOrderInfo(to) {
       `100+ packs — Custom quote\n\n` +
       `Reach out and we'll get back with a quote within 24 hours! 🍪`,
     [
-      { id: 'btn_contact',  title: '📞 Get a Quote' },
-      { id: 'btn_products', title: '🛒 Browse Products' },
+      { id: 'btn_bulk_flow', title: '📝 Request a Quote' },
+      { id: 'btn_products',  title: '🛒 Browse Products' },
     ]
   );
 }
@@ -742,6 +744,21 @@ async function routeFlowReply(to, nfmReply, name) {
     return;
   }
 
+  // Corporate/bulk gifting inquiry flow
+  if (data.company_name) {
+    console.log('[BULK INQUIRY]', { customer: to, name, ...data });
+    try {
+      await sendBulkInquiryAlert({ customerPhone: to, customerName: name, ...data });
+    } catch (err) {
+      console.error('[MAILER] Failed to send bulk inquiry alert:', err.message);
+    }
+    await wa.sendText(
+      to,
+      `🎁 *Thanks, ${data.contact_name || name}!* We've got your gifting inquiry and will get back with a quote within 24 hours.`
+    );
+    return;
+  }
+
   console.log('[FLOW] Unrecognized flow reply payload:', JSON.stringify(data));
 }
 
@@ -766,6 +783,13 @@ async function routeInteractive(to, interactive, name) {
         to,
         `📞 *Reach us directly:*\n\nEmail: hello@munchingo.com\nWebsite: www.munchingo.com\n\nWe typically reply within a few hours. 🍪`
       );
+    case 'btn_bulk_flow':
+      return wa.sendFlow(to, {
+        flowId: BULK_GIFTING_FLOW_ID,
+        bodyText: `Tap below to tell us what you need — we'll get back with a quote within 24 hours. 🎁`,
+        ctaText: 'Request a quote',
+        screenId: 'GIFTING_INQUIRY',
+      });
 
     case 'faq_ingredients': return sendIngredients(to);
     case 'faq_allergens':   return sendAllergenInfo(to);
