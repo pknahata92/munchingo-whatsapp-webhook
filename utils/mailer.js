@@ -230,6 +230,39 @@ async function sendCustomerConfirmationEmail({ email, orderId, customerName, ite
   console.log(`[MAILER] Customer confirmation sent for #${orderId}`);
 }
 
+async function sendContactFormEmail({ name, email, orderNumber, message }) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#6B3A2A;padding:22px 26px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">&#9993; New contact form message</h2>
+      </div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Name</td><td style="padding:4px 0;font-weight:600;">${name}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Email</td><td style="padding:4px 0;"><a href="mailto:${email}">${email}</a></td></tr>
+          ${orderNumber ? `<tr><td style="padding:4px 0;color:#888;">Order #</td><td style="padding:4px 0;">${orderNumber}</td></tr>` : ''}
+        </table>
+        <p style="margin:0 0 4px;color:#888;font-size:13px;">Message</p>
+        <p style="margin:0;font-size:14px;white-space:pre-wrap;">${message}</p>
+        <p style="margin:20px 0 0;font-size:13px;color:#999;">
+          Reply directly to this email to respond to ${name}.
+        </p>
+      </div>
+    </div>
+  `;
+
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [process.env.NOTIFY_EMAIL],
+    replyTo: email,
+    subject: `Contact form: ${name}${orderNumber ? ` (Order #${orderNumber})` : ''}`,
+    html,
+  });
+
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Contact form email sent from ${email}`);
+}
+
 function formatAddress(order) {
   const addr = order.delivery_address;
   if (!addr) return '(no address on file)';
@@ -301,4 +334,4 @@ async function sendDailyDigestEmail({ orders, windowLabel }) {
   console.log(`[MAILER] Daily digest sent — ${orders.length} orders`);
 }
 
-module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail };
+module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail };

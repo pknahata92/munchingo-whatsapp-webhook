@@ -6,6 +6,36 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (contact form now emails instead of WhatsApp)
+
+Prashant flagged that he can't monitor the WhatsApp bot's raw conversations
+(no phone/browser access to that inbox -- separately confirmed WhatsApp
+Coexistence isn't available for this number since it was registered
+directly to Cloud API, never linked to the consumer app; tried both the
+phone-app route and Meta Business Suite's browser Inbox, both require the
+number to already be on the WhatsApp Business app first). Investigated
+scope and found the real problem wasn't the core cart->WhatsApp ordering
+flow (fully automated, doesn't need monitoring) but specifically
+contact.html's contact FORM: it collected name/email/order#/message then
+just re-opened WhatsApp with that text stuffed into a wa.me link -- which
+the bot's routeText() has no reliable way to route to a human (would hit
+the generic fallback unless it happened to match a keyword like "human").
+Customers filling that form had no real guarantee Prashant would ever see
+it. Scoped fix, confirmed with Prashant: leave the core ordering flow and
+general "Talk to Us" WhatsApp links alone, fix only this form.
+
+- utils/mailer.js: new sendContactFormEmail({name, email, orderNumber,
+  message}) -- emails NOTIFY_EMAIL with replyTo set to the customer's
+  email, same pattern as sendBulkInquiryAlert/sendHumanHandoffAlert.
+- routes/checkout.js: new POST /api/contact, rate-limited (5/min/IP, same
+  as checkout), validates required fields + email format.
+
+Website side (munchingo-website repo): contact.html's form now POSTs to
+this endpoint via fetch instead of window.open()-ing a wa.me link, shows a
+proper inline success/error message, resets on success. Fixed a stale
+placeholder ("MG-1042") that didn't match the real MNG-XXXX-DDMM order ID
+format while in there.
+
 2026-08-09 -- Claude session (₹599 minimum order value)
 
 Prashant's new policy: ₹599 minimum order value nationally; single-box

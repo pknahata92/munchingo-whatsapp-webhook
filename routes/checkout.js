@@ -6,7 +6,7 @@ const router = express.Router();
 // Reuse the REAL, already-deployed modules — do not duplicate them.
 const { createPaymentLink } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('../utils/database');
-const { sendOrderEmail } = require('../utils/mailer');
+const { sendOrderEmail, sendContactFormEmail } = require('../utils/mailer');
 const { priceForSlug, isAvailable } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 
@@ -144,6 +144,40 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
     } catch (err) {
           console.error('[CHECKOUT] Error:', err.message);
           res.status(500).json({ ok: false, error: 'Something went wrong creating your order. Please try again or message us on WhatsApp.' });
+    }
+});
+
+// POST /api/contact
+// Body: { name, email, orderNumber, message }
+// contact.html's contact form used to just re-open WhatsApp with the message
+// stuffed into free text - which the bot has no reliable way to route to a
+// human (it'd hit routeText()'s generic fallback unless it happened to match
+// a keyword). This actually emails the owner instead, same pattern as the
+// other *Alert mailer functions.
+// Max 5 submissions per IP per minute - same generous-but-not-open ceiling
+// as checkout.
+router.post('/api/contact', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
+    try {
+          const { name, email, orderNumber, message } = req.body;
+
+      if (!name || !email || !message) {
+              return res.status(400).json({ ok: false, error: 'Missing required fields: name, email, message' });
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+              return res.status(400).json({ ok: false, error: 'Please enter a valid email address.' });
+      }
+
+      await sendContactFormEmail({
+              name: String(name).slice(0, 200),
+              email: String(email).slice(0, 200),
+              orderNumber: orderNumber ? String(orderNumber).slice(0, 50) : null,
+              message: String(message).slice(0, 5000),
+      });
+
+      res.json({ ok: true });
+    } catch (err) {
+          console.error('[CONTACT] Error:', err.message);
+          res.status(500).json({ ok: false, error: 'Something went wrong sending your message. Please try again or email us directly at info.munchingo@gmail.com.' });
     }
 });
 
