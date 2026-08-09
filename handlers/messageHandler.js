@@ -128,7 +128,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
-      `Minimum order: 1 pack (from ₹279)\n` +
+      `Minimum order value: ₹599 for delivery\n` +
       `Delivery across India 🇮🇳`,
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
@@ -453,6 +453,11 @@ async function sendFAQ(to) {
   );
 }
 
+// Minimum order value for the automated catalog/checkout flow. Below this,
+// an order is only fulfilled hyperlocally/manually by Prashant directly, not
+// through the bot.
+const MIN_ORDER_VALUE = 599;
+
 // ── Handle a WhatsApp checkout order ─────────────────────────────────────────
 async function handleOrderMessage(to, order, contactName) {
   const name  = contactName || 'there';
@@ -470,6 +475,19 @@ async function handleOrderMessage(to, order, contactName) {
     .join('\n');
 
   const total = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+
+  if (total < MIN_ORDER_VALUE) {
+    await wa.sendButtons(
+      to,
+      `📦 Your order comes to *₹${total}*, just under our *₹${MIN_ORDER_VALUE} minimum order value* for delivery.\n\n` +
+        `Add a bit more to your cart, or reply *human* if you'd like to arrange a single-box order directly with our team.`,
+      [
+        { id: 'btn_products', title: '🛒 Add More' },
+        { id: 'btn_contact',  title: '📞 Talk to Us' },
+      ]
+    );
+    return;
+  }
 
   // 1. Save to Supabase FIRST. If this fails, the customer must not be told
   // to reply with an address for an order that doesn't exist -- their next

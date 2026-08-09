@@ -10,6 +10,11 @@ const { sendOrderEmail } = require('../utils/mailer');
 const { priceForSlug, isAvailable } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 
+// Minimum order value for the automated (nationwide courier) checkout.
+// Single-box orders are only fulfilled hyperlocally/manually, not through
+// this system - see the check in POST /api/checkout below.
+const MIN_ORDER_VALUE = 599;
+
 // Helpers
 function generateOrderId() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -89,6 +94,17 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       // Recompute the total server-side from real catalog prices - never trust
       // the client's submitted total (see normaliseItems for why).
       const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+
+      // Minimum order value for the automated (nationwide courier) checkout.
+      // Single-box / below-MOV orders are fulfilled manually/hyperlocally by
+      // Prashant directly, outside this system entirely - not something the
+      // automated flow accepts.
+      if (realTotal < MIN_ORDER_VALUE) {
+        return res.status(400).json({
+          ok: false,
+          error: `Minimum order value is ₹${MIN_ORDER_VALUE} for delivery. Please add more to your cart, or message us on WhatsApp directly for a single-box order.`,
+        });
+      }
 
       const orderId = generateOrderId();
           const timestamp = new Date().toISOString();

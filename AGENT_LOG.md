@@ -6,6 +6,34 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (₹599 minimum order value)
+
+Prashant's new policy: ₹599 minimum order value nationally; single-box
+orders only via hyperlocal delivery. Clarified with him that hyperlocal is
+fully manual (he fulfills it by hand outside this system, no pincode/address
+detection needed), which simplifies this to: the automated checkout (website
++ WhatsApp) just needs a hard ₹599 floor, no exceptions, no below-MOV
+shipping-fee logic. COD (also requested) explicitly deferred -- there's no
+COD code path anywhere and he said to skip building it for now.
+
+- routes/checkout.js: new MIN_ORDER_VALUE = 599 constant; rejects the order
+  with a clear message before any DB write if the server-recomputed total
+  is under it.
+- handlers/messageHandler.js: same check in handleOrderMessage() (the
+  native WhatsApp catalog 'order' message handler) before saveOrder --
+  sends a button message nudging them to add more or reply "human" for a
+  manual single-box order. Also fixed sendOrderInstructions()'s stale
+  "Minimum order: 1 pack (from ₹279)" line, which now directly contradicted
+  this policy.
+
+Website side (munchingo-website repo): checkout.html disables the Pay
+button and shows an inline "add ₹X more" note below ₹599 (client-side
+pre-check only, backend above is what actually enforces it); cart.html
+shows the same nudge before the customer even heads to WhatsApp. Verified
+in-browser: below-599 cart correctly disables/notes on both pages, and
+calling renderSummary() again after raising the cart above 599 correctly
+re-enables the button and shows the real total.
+
 2026-08-09 -- Claude session (website stock/sold-out flag)
 
 Follow-up to the ordering-experience audit: the website's checkout
