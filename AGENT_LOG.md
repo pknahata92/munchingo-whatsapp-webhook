@@ -6,6 +6,39 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-09 -- Claude session (website stock/sold-out flag)
+
+Follow-up to the ordering-experience audit: the website's checkout
+(routes/checkout.js + utils/catalog.js) had zero stock concept -- a
+customer could pay for a flavour that's actually out of stock, since
+utils/catalog.js is a static price table with no availability check at all.
+Confirmed with Prashant this is website-only: WhatsApp's native catalog
+ordering flow already reflects stock status set in Meta Commerce Manager
+(separate system, CATALOG_ID), so nothing needed there.
+
+- utils/catalog.js: new SOLD_OUT_SLUGS array (empty by default) + new
+  isAvailable(slug) export. Handles gift sets correctly: Full Range needs
+  all 4 base flavours in stock, Trio needs whichever 3 flavour tokens are
+  encoded in its slug suffix (matched via hyphen-bounded regex since
+  "lite-sugar" itself contains a hyphen -- verified this doesn't
+  false-positive/negative with a manual test). To mark a flavour sold out:
+  add its slug here and redeploy; remove to restock.
+- routes/checkout.js: normaliseItems() now returns {items} or {error}
+  instead of null-or-array, so a sold-out item gets a specific customer-
+  facing message ("X is currently sold out") instead of the generic
+  "item not recognised" error. This is the check that actually blocks a
+  tampered/stale request -- the website UI (separate repo) only controls
+  what's shown before that.
+
+Website side (munchingo-website repo, not this one): js/cart.js got a
+matching SOLD_OUT_SLUGS list (must be kept in sync with this one) that
+greys out Add-to-Bag buttons and disables the specific flavour checkbox in
+gifting.html's Trio picker. Verified in-browser with a temporary test copy
+(Kesari marked sold out): checkbox correctly disabled+unchecked, button
+correctly shows "Sold Out" and is disabled, Full Range set button also
+correctly blocked. Test files deleted after verification, nothing left in
+the repo.
+
 2026-08-09 -- Claude session (GST display + daily packing digest + audit fixes)
 
 GST (GSTIN 06AIIPN5005C2ZP, 5% rate on HSN 1905 post the Sept 2025 GST 2.0

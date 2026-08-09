@@ -7,7 +7,7 @@ const router = express.Router();
 const { createPaymentLink } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('../utils/database');
 const { sendOrderEmail } = require('../utils/mailer');
-const { priceForSlug } = require('../utils/catalog');
+const { priceForSlug, isAvailable } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 
 // Helpers
@@ -29,21 +29,27 @@ function generateOrderId() {
 // slug, never trusted from the client's submitted price/total - a customer
 // could otherwise tamper with the POST body (devtools, curl) and pay
 // whatever amount they choose for real products.
-// Returns null if any item's slug isn't a recognised product.
+//
+// Returns { items } on success. Returns { error } if any slug isn't
+// recognised, or is recognised but currently marked sold out in
+// utils/catalog.js — either way, nothing is saved/charged.
 function normaliseItems(cartItems) {
-    const items = (cartItems || []).map((c) => {
-          const realPrice = priceForSlug(c.slug);
-          if (realPrice == null) return null;
-          return {
-                productName: c.name,
-                quantity: c.qty,
-                item_price: realPrice,
-                unit: c.unit,
-                slug: c.slug,
-          };
-    });
-    if (items.some((i) => i === null)) return null;
-    return items;
+    for (const c of (cartItems || [])) {
+          if (priceForSlug(c.slug) == null) {
+                return { error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' };
+          }
+          if (!isAvailable(c.slug)) {
+                return { error: `Sorry, "${c.name}" is currently sold out. Please remove it from your cart and try again.` };
+          }
+    }
+    const items = cartItems.map((c) => ({
+          productName: c.name,
+          quantity: c.qty,
+          item_price: priceForSlug(c.slug),
+          unit: c.unit,
+          slug: c.slug,
+    }));
+    return { items };
 }
 
 function normalisePhone(rawPhone) {
@@ -75,9 +81,9 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
                   return res.status(400).json({ ok: false, error: 'Phone number looks invalid - include a 10-digit number' });
           }
 
-      const enrichedItems = normaliseItems(items);
-          if (!enrichedItems) {
-                  return res.status(400).json({ ok: false, error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' });
+      const { items: enrichedItems, error: itemsError } = normaliseItems(items);
+          if (itemsError) {
+                  return res.status(400).json({ ok: false, error: itemsError });
           }
 
       // Recompute the total server-side from real catalog prices - never trust
