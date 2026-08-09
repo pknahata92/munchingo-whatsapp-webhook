@@ -21,6 +21,11 @@ const DELIVERY_FLOW_ID = '1699615387965702';
 const FEEDBACK_FLOW_ID = '1743198853381814';
 // Corporate/bulk gifting lead-capture flow.
 const BULK_GIFTING_FLOW_ID = '1066239432999546';
+// Minimum order value for the automated catalog/checkout flow. Below this,
+// an order is only fulfilled hyperlocally/manually by Prashant directly, not
+// through the bot. Referenced in the pre-catalog nudge (sendProductList) and
+// enforced for real in handleOrderMessage.
+const MIN_ORDER_VALUE = 599;
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -114,7 +119,7 @@ async function sendWelcome(to, name) {
 async function sendProductList(to) {
   await wa.sendCatalog(
     to,
-    '🍪 Our pure desi ghee atta cookies — starting at ₹279 for a 250g pack.\n\nTap a product to add it to your cart!',
+    `🍪 Our pure desi ghee atta cookies — starting at ₹279 for a 250g pack.\n\nTap a product to add it to your cart! *Minimum order value is ₹${MIN_ORDER_VALUE} for delivery.*`,
     '91slwpjdqq'
   );
 }
@@ -452,11 +457,6 @@ async function sendFAQ(to) {
     ]
   );
 }
-
-// Minimum order value for the automated catalog/checkout flow. Below this,
-// an order is only fulfilled hyperlocally/manually by Prashant directly, not
-// through the bot.
-const MIN_ORDER_VALUE = 599;
 
 // ── Handle a WhatsApp checkout order ─────────────────────────────────────────
 async function handleOrderMessage(to, order, contactName) {

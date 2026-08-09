@@ -6,6 +6,24 @@ RULE: before editing server.js, routes/, handlers/, or utils/, read this file to
 
 ====================================================================
 
+2026-08-10 -- Claude session (MOV nudge before catalog browse)
+
+Prashant asked whether the ₹599 minimum could be enforced while a customer
+is still adding items in WhatsApp's native catalog UI, not just after they
+submit. Explained the real constraint: that catalog/cart UI is entirely
+client-side inside WhatsApp itself — the webhook gets no events for
+add/remove-from-cart, only the final submitted order, so there's no way to
+validate or block in real time without abandoning the native catalog for a
+custom Flow (a much bigger change, explicitly not chosen). Agreed instead to
+reinforce the ₹599 minimum earlier, right before they start browsing.
+
+- handlers/messageHandler.js: moved MIN_ORDER_VALUE to the top of the file
+  next to the other module-level constants (was declared once, oddly, right
+  before handleOrderMessage — now a single declaration, referenced from two
+  places). sendProductList()'s catalog-browse message now states the ₹599
+  minimum inline, so it's seen before the customer opens the catalog, not
+  just as a rejection after they submit.
+
 2026-08-09 -- Claude session (contact form now emails instead of WhatsApp)
 
 Prashant flagged that he can't monitor the WhatsApp bot's raw conversations
