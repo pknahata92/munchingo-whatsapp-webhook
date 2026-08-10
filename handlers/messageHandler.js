@@ -143,20 +143,24 @@ async function sendOrderInstructions(to) {
 }
 
 // ── Ingredients ───────────────────────────────────────────────────────────────
+// Per-SKU ingredient lists, sourced from Munchingo_Product_Guide.pdf (verified
+// source of truth — see CLAUDE.md Section 3). Ingredients genuinely differ by
+// SKU (Ajwain has salt not cardamom; Lite-sugar has no sugar/glucose at all),
+// so this can't be a single shared "same base" claim.
 async function sendIngredients(to) {
   await wa.sendText(
     to,
-    `🌾 *What's in a Munchingo cookie?*\n\n` +
-      `✅ 100% whole wheat atta\n` +
-      `✅ Pure desi ghee (no refined oils)\n` +
-      `✅ Natural cane sugar\n` +
-      `✅ No artificial flavours or preservatives\n` +
-      `✅ No maida / refined flour\n\n` +
-      `Each variant uses the same clean base — only the flavour changes:\n` +
-      `• *Original* — pure & buttery with cardamom\n` +
-      `• *Kesari* — saffron & cardamom\n` +
-      `• *Lite-Sugar* — reduced sugar, same love ❤️\n` +
-      `• *Ajwain* — carom seeds, great for digestion 🌿`
+    `🌾 *What's in Munchingo atta cookies?*\n\n` +
+      `✅ Whole wheat atta — the biggest ingredient in every pack\n` +
+      `✅ Pure desi ghee — no palm oil, no refined oils\n` +
+      `✅ No maida / refined flour\n` +
+      `✅ No trans fat\n\n` +
+      `Full ingredient list per flavour:\n` +
+      `• *Original* — whole wheat atta, sugar, desi cow ghee, milk solids, glucose, raising agent, cardamom\n` +
+      `• *Kesari* — same as Original, plus real saffron (kesar)\n` +
+      `• *Lite-Sugar* — whole wheat atta, desi cow ghee, sweetener (maltitol), milk solids, cardamom, raising agent — *no added sugar*\n` +
+      `• *Ajwain* — whole wheat atta, desi cow ghee, sugar, milk solids, glucose, salt, raising agent, ajwain (carom seed)\n\n` +
+      `Ask me "allergens" for allergen details.`
   );
 }
 
@@ -167,14 +171,15 @@ async function sendAllergenInfo(to) {
     `⚠️ *Allergen Information:*\n\n` +
       `Our cookies *contain:*\n` +
       `• *Wheat* (whole wheat atta) — *contains gluten*\n` +
-      `• *Dairy* (pure desi ghee)\n\n` +
+      `• *Dairy* (milk solids, desi ghee)\n\n` +
+      `⚠️ *Made in a facility that also processes tree nuts and other spices* — not guaranteed nut-free.\n\n` +
       `Our cookies do *NOT* contain:\n` +
-      `❌ Nuts or peanuts\n` +
       `❌ Eggs\n` +
       `❌ Soy\n` +
       `❌ Artificial colours or flavours\n\n` +
-      `⚠️ *Not suitable for:* gluten intolerance / coeliac disease, or dairy/lactose intolerance.\n\n` +
-      `Manufactured in a facility that handles wheat and dairy. If you have severe allergies, please consult before ordering.`
+      `⚠️ *Not suitable for:* gluten intolerance / coeliac disease, dairy/lactose intolerance, or tree nut allergies.\n\n` +
+      `Note: Lite-Sugar contains polyols (maltitol) — excess consumption may have a laxative effect.\n\n` +
+      `If you have severe allergies, please consult before ordering.`
   );
 }
 
