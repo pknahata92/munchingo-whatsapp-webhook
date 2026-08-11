@@ -42,9 +42,26 @@ function verifyMetaSignature(rawBody, signatureHeader) {
 const app = express();
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
-// CORS - the checkout page on munchingo.com calls this backend from the browser.
+// CORS - the checkout/contact pages call this backend from the browser, from
+// either munchingo.com or www.munchingo.com (Cloudflare Pages serves both,
+// it doesn't redirect www -> apex). SITE_ORIGIN being a single hardcoded
+// value here meant www visitors got a mismatched Access-Control-Allow-Origin
+// header and every fetch() silently failed with "Failed to fetch" - fixed by
+// allow-listing both known hosts and reflecting back whichever one matches.
+const SITE_ORIGIN = process.env.SITE_ORIGIN || 'https://munchingo.com';
+const ALLOWED_ORIGINS = new Set([
+  SITE_ORIGIN,
+  SITE_ORIGIN.replace('https://', 'https://www.'),
+]);
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', process.env.SITE_ORIGIN || '*');
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else if (!process.env.SITE_ORIGIN) {
+    // No SITE_ORIGIN configured at all (e.g. a fresh env) - fail open rather
+    // than silently blocking every request, matching the old default.
+    res.header('Access-Control-Allow-Origin', '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);

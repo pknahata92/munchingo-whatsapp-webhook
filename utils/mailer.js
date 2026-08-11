@@ -270,8 +270,29 @@ function formatAddress(order) {
 }
 
 async function sendDailyDigestEmail({ orders, windowLabel }) {
+  // Always send, even with zero orders — a "no orders today" email that
+  // reliably arrives every morning is also the simplest proof the digest
+  // pipeline itself is alive. Skipping on empty made a real pipeline outage
+  // indistinguishable from a genuinely slow day (see CLAUDE.md 2026-08-11).
   if (!orders.length) {
-    console.log('[MAILER] Daily digest: no newly-paid orders, skipping send');
+    const { error } = await resend.emails.send({
+      from: 'Munchingo Orders <orders@munchingo.com>',
+      to: [process.env.NOTIFY_EMAIL],
+      subject: `Daily packing list — 0 orders`,
+      html: `
+        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+          <div style="background:#6B3A2A;padding:22px 26px;">
+            <h2 style="color:#fff;margin:0;font-size:20px;">&#128230; Munchingo Daily Packing List</h2>
+            <p style="color:#f5deb3;margin:6px 0 0;font-size:14px;">${windowLabel} &middot; 0 orders</p>
+          </div>
+          <div style="padding:22px 26px;background:#fffaf6;">
+            <p style="font-size:14px;color:#444;margin:0;">No orders turned <strong>paid</strong> in the last 24 hours. Nothing to pack today.</p>
+          </div>
+        </div>
+      `,
+    });
+    if (error) throw new Error(error.message);
+    console.log('[MAILER] Daily digest sent — 0 orders');
     return;
   }
 
