@@ -50,7 +50,7 @@ const PRODUCTS = [
   {
     id: 'lite-sugar-atta-cookie',
     retailerId: 'vf5p90bcy5',
-    name: 'Munchingo Atta Lite-Sugar',
+    name: 'Munchingo Atta Sugar-Lite',
     mrp: 375,
     price: 319,
     emoji: '💛',
@@ -158,7 +158,7 @@ async function sendIngredients(to) {
       `Full ingredient list per flavour:\n` +
       `• *Original* — whole wheat atta, sugar, desi cow ghee, milk solids, glucose, raising agent, cardamom\n` +
       `• *Kesari* — same as Original, plus real saffron (kesar)\n` +
-      `• *Lite-Sugar* — whole wheat atta, desi cow ghee, sweetener (maltitol), milk solids, cardamom, raising agent — *no added sugar*\n` +
+      `• *Sugar-Lite* — whole wheat atta, desi cow ghee, sweetener (maltitol), milk solids, cardamom, raising agent — *no added sugar*\n` +
       `• *Ajwain* — whole wheat atta, desi cow ghee, sugar, milk solids, glucose, salt, raising agent, ajwain (carom seed)\n\n` +
       `Ask me "allergens" for allergen details.`
   );
@@ -178,7 +178,7 @@ async function sendAllergenInfo(to) {
       `❌ Soy\n` +
       `❌ Artificial colours or flavours\n\n` +
       `⚠️ *Not suitable for:* gluten intolerance / coeliac disease, dairy/lactose intolerance, or tree nut allergies.\n\n` +
-      `Note: Lite-Sugar contains polyols (maltitol) — excess consumption may have a laxative effect.\n\n` +
+      `Note: Sugar-Lite contains polyols (maltitol) — excess consumption may have a laxative effect.\n\n` +
       `If you have severe allergies, please consult before ordering.`
   );
 }
