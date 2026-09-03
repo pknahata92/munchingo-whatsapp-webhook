@@ -33,8 +33,8 @@ const PRODUCTS = [
     id: 'original-atta-cookie',
     retailerId: '91slwpjdqq',
     name: 'Munchingo Atta Original',
-    mrp: 330,
-    price: 279,
+    mrp: 300,
+    price: 259,
     emoji: '🍪',
     description: 'Cardamom-kissed. The one we started with. Slow-baked to a warm gold, with just enough sweetness to know it\'s a cookie.',
   },
@@ -42,8 +42,8 @@ const PRODUCTS = [
     id: 'kesari-atta-cookie',
     retailerId: 'w2w5ynf2m5',
     name: 'Munchingo Atta Kesari',
-    mrp: 375,
-    price: 319,
+    mrp: 350,
+    price: 299,
     emoji: '🌸',
     description: 'Real saffron, hand-mixed into every batch. What you serve when someone visits and you want to impress them.',
   },
@@ -51,8 +51,8 @@ const PRODUCTS = [
     id: 'lite-sugar-atta-cookie',
     retailerId: 'vf5p90bcy5',
     name: 'Munchingo Atta Sugar-Lite',
-    mrp: 375,
-    price: 319,
+    mrp: 350,
+    price: 299,
     emoji: '💛',
     description: '95% less sugar than our Original. Sweetened with maltitol. For the person who reads the back of the pack first.',
   },
@@ -60,8 +60,8 @@ const PRODUCTS = [
     id: 'ajwain-atta-cookie',
     retailerId: '97q9r5q5q3',
     name: 'Munchingo Atta Ajwain',
-    mrp: 330,
-    price: 279,
+    mrp: 300,
+    price: 259,
     emoji: '🌿',
     description: 'Ajwain-forward, less sweet, more aromatic. Best with strong chai and a slow evening.',
   },
@@ -119,7 +119,7 @@ async function sendWelcome(to, name) {
 async function sendProductList(to) {
   await wa.sendCatalog(
     to,
-    `🍪 Our pure desi ghee atta cookies — starting at ₹279 for a 250g pack.\n\nTap a product to add it to your cart! *Minimum order value is ₹${MIN_ORDER_VALUE} for delivery.*`,
+    `🍪 Our pure desi ghee atta cookies — starting at ₹259 for a 250g pack.\n\nTap a product to add it to your cart! *Minimum order value is ₹${MIN_ORDER_VALUE} for delivery.*`,
     '91slwpjdqq'
   );
 }
