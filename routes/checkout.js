@@ -9,11 +9,21 @@ const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('../ut
 const { sendOrderEmail, sendContactFormEmail } = require('../utils/mailer');
 const { priceForSlug, isAvailable } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
+const { validateCoupon, recordCouponRedemption } = require('../utils/coupons');
+const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
+
+// "Subscribe & Save" — flat discount on every renewal (see
+// subscriptions_migration.sql for why this is a "generate a fresh payment
+// link each cycle" model, not true autopay). A subscribing order always
+// gets this discount instead of any coupon code — the two are mutually
+// exclusive by design, to avoid compounding-discount margin risk.
+const SUBSCRIPTION_DISCOUNT_PCT = 8;
+const SUBSCRIPTION_FREQUENCY_DAYS = 30;
 
 // Minimum order value for the automated (nationwide courier) checkout.
 // Single-box orders are only fulfilled hyperlocally/manually, not through
 // this system - see the check in POST /api/checkout below.
-const MIN_ORDER_VALUE = 599;
+const MIN_ORDER_VALUE = 499;
 
 // Helpers
 function generateOrderId() {
@@ -75,7 +85,7 @@ function normalisePhone(rawPhone) {
 // (who submits once), tight enough to blunt scripted abuse.
 router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
-          const { name, phone, address, email, items, total } = req.body;
+          const { name, phone, address, email, items, total, couponCode, subscribe } = req.body;
 
       if (!name || !phone || !address || !Array.isArray(items) || !items.length || !total) {
               return res.status(400).json({ ok: false, error: 'Missing required fields: name, phone, address, items, total' });
@@ -106,6 +116,37 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
         });
       }
 
+      // "Subscribe & Save" requires an email on file — it's the only reliable
+      // channel for renewal reminders (see subscriptions_migration.sql).
+      const trimmedEmail = (email || '').trim();
+      if (subscribe && !trimmedEmail) {
+        return res.status(400).json({ ok: false, error: 'An email address is required to subscribe — that\'s how we\'ll notify you each month your box is ready.' });
+      }
+
+      // Coupon (optional) — re-validated here even if the client already
+      // called /api/validate-coupon, since that earlier "valid" response is
+      // never trusted on its own (a cap could have filled up, a code could
+      // have expired, in the time between the two calls). Validated against
+      // realTotal, the server-computed pre-discount total, not the client's.
+      // Mutually exclusive with Subscribe & Save — a subscribing order always
+      // gets the flat subscription discount instead, never both stacked.
+      let finalTotal = realTotal;
+      let discountAmount = 0;
+      let appliedCouponCode = null;
+      if (subscribe) {
+        discountAmount = Math.round(realTotal * (SUBSCRIPTION_DISCOUNT_PCT / 100));
+        finalTotal = realTotal - discountAmount;
+      } else if (couponCode) {
+        const cartSlugs = enrichedItems.map((i) => i.slug);
+        const couponResult = await validateCoupon(couponCode, { cartSlugs, realTotal, customerPhone });
+        if (!couponResult.ok) {
+          return res.status(400).json({ ok: false, error: couponResult.error });
+        }
+        finalTotal = couponResult.finalTotal;
+        discountAmount = couponResult.discountAmount;
+        appliedCouponCode = couponResult.coupon.code;
+      }
+
       const orderId = generateOrderId();
           const timestamp = new Date().toISOString();
 
@@ -114,27 +155,63 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
               orderId,
               customerPhone,
               customerName: name,
-              customerEmail: (email || '').trim() || null,
+              customerEmail: trimmedEmail || null,
               items: enrichedItems,
-              total: realTotal,
+              total: finalTotal,
               currency: 'INR',
               timestamp,
+              couponCode: appliedCouponCode,
+              discountAmount,
       });
           await updateOrderAddress(orderId, address);
 
       // 2. Create Razorpay Payment Link via the EXISTING utils/razorpay.js
       //    (real createPaymentLink returns { id, url }, takes amount in rupees)
+      // Charges finalTotal (post-discount), not realTotal.
       const { id: paymentLinkId, url: paymentLinkUrl } = await createPaymentLink({
               orderId,
-              amount: realTotal,
+              amount: finalTotal,
               customerName: name,
               customerPhone,
       });
           await updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl });
 
+      // 2b. Record the coupon redemption now that the order is actually
+      //     committed — not at the earlier validate-only check.
+      if (appliedCouponCode) {
+        await recordCouponRedemption({ code: appliedCouponCode, customerPhone, orderId, discountAmount });
+      }
+
+      // 2c. Set up the recurring record for "Subscribe & Save". This first
+      //     order is charged exactly like any other (finalTotal above already
+      //     has the subscription discount baked in) — the subscription row
+      //     only governs cycle 2 onward, picked up by the daily renewal cron.
+      if (subscribe) {
+        try {
+          const subscriptionItems = enrichedItems.map((i) => ({ slug: i.slug, name: i.productName, unit: i.unit, quantity: i.quantity }));
+          const subscription = await createSubscription({
+            customerPhone,
+            customerName: name,
+            customerEmail: trimmedEmail,
+            deliveryAddress: address,
+            items: subscriptionItems,
+            discountPct: SUBSCRIPTION_DISCOUNT_PCT,
+            frequencyDays: SUBSCRIPTION_FREQUENCY_DAYS,
+            firstOrderId: orderId,
+          });
+          await attachSubscriptionToOrder(orderId, subscription.id);
+        } catch (err) {
+          // Don't fail the whole checkout over this — the customer's actual
+          // order and payment link are already committed at this point.
+          // Worth Prashant seeing in the logs and setting up manually if it
+          // ever happens, but not worth losing a real sale over.
+          console.error('[CHECKOUT] Failed to create subscription record:', err.message);
+        }
+      }
+
       // 3. Notify the owner by email (mirrors handlers/messageHandler.js's WhatsApp order flow)
       try {
-        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total: realTotal, timestamp });
+        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total: finalTotal, timestamp });
       } catch (err) {
         console.error('[MAILER] Failed to send order notification:', err.message);
       }
@@ -144,6 +221,38 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
     } catch (err) {
           console.error('[CHECKOUT] Error:', err.message);
           res.status(500).json({ ok: false, error: 'Something went wrong creating your order. Please try again or message us on WhatsApp.' });
+    }
+});
+
+// POST /api/validate-coupon
+// Body: { code, phone, items: [{name,price,qty,unit,slug}] }
+// Live "Apply" check from checkout.html — lets the customer see the
+// discount before submitting the full order. This result is NOT trusted at
+// final checkout; POST /api/checkout re-validates the code itself. Phone is
+// optional here (the customer may not have typed it yet when they hit
+// Apply) — the per-customer usage cap is skipped in that case and enforced
+// for real at final submission instead.
+router.post('/api/validate-coupon', rateLimit({ windowMs: 60_000, max: 10 }), async (req, res) => {
+    try {
+          const { code, phone, items } = req.body;
+      if (!code || !Array.isArray(items) || !items.length) {
+              return res.status(400).json({ ok: false, error: 'Missing required fields: code, items' });
+      }
+
+      const { items: enrichedItems, error: itemsError } = normaliseItems(items);
+          if (itemsError) return res.status(400).json({ ok: false, error: itemsError });
+
+      const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+      const cartSlugs = enrichedItems.map((i) => i.slug);
+      const customerPhone = phone ? normalisePhone(phone) : null;
+
+      const result = await validateCoupon(code, { cartSlugs, realTotal, customerPhone });
+      if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
+
+      res.json({ ok: true, discountAmount: result.discountAmount, finalTotal: result.finalTotal });
+    } catch (err) {
+          console.error('[VALIDATE-COUPON] Error:', err.message);
+          res.status(500).json({ ok: false, error: 'Could not check that code right now. Please try again.' });
     }
 });
 

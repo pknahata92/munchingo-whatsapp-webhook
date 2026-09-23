@@ -1,0 +1,15 @@
+name: Subscribe & Save — daily renewal
+
+on:
+  schedule:
+    # 08:30 IST = 03:00 UTC, every day — right after the 08:00 daily digest.
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  trigger-renewals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call subscription renewal endpoint
+        run: |
+          curl -sS -f "https://munchingo-whatsapp-webhook.onrender.com/internal/subscription-renewals?secret=${{ secrets.DIGEST_SECRET }}"

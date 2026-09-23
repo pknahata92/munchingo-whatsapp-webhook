@@ -13,6 +13,7 @@ const {
   getRecentOrders,
 } = require('../utils/database');
 const { createPaymentLink, expirePaymentLink } = require('../utils/razorpay');
+const { getSubscriptionByPhone, setSubscriptionStatus, resumeSubscription } = require('../utils/subscriptions');
 
 // WhatsApp Flow that collects delivery details as a structured form instead of
 // free text (published in WhatsApp Manager > Flows > Delivery Details).
@@ -25,7 +26,7 @@ const BULK_GIFTING_FLOW_ID = '1066239432999546';
 // an order is only fulfilled hyperlocally/manually by Prashant directly, not
 // through the bot. Referenced in the pre-catalog nudge (sendProductList) and
 // enforced for real in handleOrderMessage.
-const MIN_ORDER_VALUE = 599;
+const MIN_ORDER_VALUE = 499;
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -133,7 +134,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
-      `Minimum order value: ₹599 for delivery\n` +
+      `Minimum order value: ₹${MIN_ORDER_VALUE} for delivery\n` +
       `Delivery across India 🇮🇳`,
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
@@ -190,7 +191,7 @@ async function sendShippingInfo(to) {
     `🚚 *Munchingo delivers across India!*\n\n` +
       `📍 We ship to all major cities & tier-2 towns\n` +
       `⏱️ Standard delivery: 3–5 business days\n` +
-      `💰 Free delivery on orders above ₹599\n` +
+      `✅ No separate delivery charge — price is all-inclusive (₹${MIN_ORDER_VALUE} minimum order value)\n` +
       `📦 Orders are packed fresh & sealed securely\n\n` +
       `Questions about your area? Just ask!`,
     [
@@ -203,12 +204,12 @@ async function sendShippingInfo(to) {
 // ── Price list ────────────────────────────────────────────────────────────────
 async function sendPriceList(to) {
   const lines = PRODUCTS.map(
-    (p) => `${p.emoji} *${p.name}*\n   ~~₹${p.mrp}~~ → *₹${p.price}* (250g pack, ~60 pcs)`
+    (p) => `${p.emoji} *${p.name}*\n   ~~₹${p.mrp}~~ → *₹${p.price}* (250g pack)`
   ).join('\n\n');
 
   await wa.sendButtons(
     to,
-    `💰 *Munchingo Pricing:*\n\n${lines}\n\n🚚 Free delivery on orders ₹599+\n_Prices inclusive of 5% GST (GSTIN 06AIIPN5005C2ZP)_`,
+    `💰 *Munchingo Pricing:*\n\n${lines}\n\n✅ No separate delivery charge — price is all-inclusive (₹${MIN_ORDER_VALUE} minimum order value)\n_Prices inclusive of 5% GST (GSTIN 06AIIPN5005C2ZP)_`,
     [
       { id: 'btn_products', title: '🛒 Shop Now' },
       { id: 'btn_order',    title: '📦 How to Order' },
@@ -328,6 +329,32 @@ async function sendOrderStatus(to) {
   } catch (err) {
     console.error('[STATUS] Error fetching orders:', err.message);
     await wa.sendText(to, `Sorry, couldn't fetch your orders right now. Please try again in a moment.`);
+  }
+}
+
+// ── Subscribe & Save management (pause / resume / cancel) ─────────────────────
+// Checked BEFORE the generic order-cancel keyword below, and only fires on
+// specific "...subscription" phrasing — a bare "cancel" still means cancel
+// an order, exactly as before, so this never hijacks that existing intent.
+async function handleSubscriptionCommand(to, action) {
+  const sub = await getSubscriptionByPhone(to);
+  if (!sub) {
+    return wa.sendText(to, `You don't have an active Munchingo subscription on this number.`);
+  }
+
+  if (action === 'pause') {
+    if (sub.status === 'paused') return wa.sendText(to, `Your subscription is already paused. Reply RESUME SUBSCRIPTION anytime to start it again.`);
+    await setSubscriptionStatus(sub.id, 'paused');
+    return wa.sendText(to, `⏸️ Your Munchingo subscription is paused — no more renewal charges until you resume it. Reply RESUME SUBSCRIPTION anytime.`);
+  }
+  if (action === 'resume') {
+    if (sub.status === 'active') return wa.sendText(to, `Your subscription is already active.`);
+    await resumeSubscription(sub.id, sub.frequency_days);
+    return wa.sendText(to, `▶️ Your Munchingo subscription is active again — your next box will renew in ${sub.frequency_days} days.`);
+  }
+  if (action === 'cancel') {
+    await setSubscriptionStatus(sub.id, 'cancelled');
+    return wa.sendText(to, `Your Munchingo subscription has been cancelled — no further renewals. You can always start a new one from the website. 🍪`);
   }
 }
 
@@ -614,6 +641,18 @@ async function routeText(to, text, name) {
   }
 
   // ── 2. Explicit commands — always take priority over address collection ────
+  // Subscribe & Save management — checked first and only on specific
+  // "...subscription" phrasing, so it never intercepts a bare "cancel"
+  // (which still means cancel an order, handled further below).
+  if (/pause.*subscription|subscription.*pause/.test(t)) {
+    return handleSubscriptionCommand(to, 'pause');
+  }
+  if (/resume.*subscription|subscription.*resume|restart.*subscription/.test(t)) {
+    return handleSubscriptionCommand(to, 'resume');
+  }
+  if (/cancel.*subscription|subscription.*cancel|stop.*subscription/.test(t)) {
+    return handleSubscriptionCommand(to, 'cancel');
+  }
   // Order status
   if (/\bstatus\b|track.*order|order.*status|where.*order|my order/.test(t)) {
     return sendOrderStatus(to);
@@ -689,9 +728,14 @@ async function routeText(to, text, name) {
   }
 
   // ── 4. Standard keyword routing ───────────────────────────────────────────
-  if (/product|catalog|catalogue|show|browse|cookie|atta/.test(t))           return sendProductList(to);
+  // "cookie"/"atta" deliberately excluded from the browse-intent regex below —
+  // they're generic product-name words that also show up in ingredient
+  // questions ("what's in your cookies?"), and used to win here since this
+  // check ran first, showing the catalog instead of actually answering the
+  // question. product/catalog/catalogue/show/browse are unambiguous browse intent.
+  if (/product|catalog|catalogue|show|browse/.test(t))                       return sendProductList(to);
   if (/order|buy|purchase|cart|checkout|want/.test(t))                        return sendOrderInstructions(to);
-  if (/ingredient|recipe|inside|ghee|maida|wheat|sugar|made of/.test(t))     return sendIngredients(to);
+  if (/ingredient|recipe|inside|ghee|maida|wheat|sugar|made of|what.?s in/.test(t)) return sendIngredients(to);
   if (/ship|deliver|delivery|city|area|india|pin|pincode/.test(t))            return sendShippingInfo(to);
   if (/price|cost|rate|how much|₹|rs\.?/.test(t))                             return sendPriceList(to);
   if (/shelf|expiry|expire|last|fresh|store/.test(t)) {

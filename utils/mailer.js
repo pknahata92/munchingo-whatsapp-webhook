@@ -230,6 +230,75 @@ async function sendCustomerConfirmationEmail({ email, orderId, customerName, ite
   console.log(`[MAILER] Customer confirmation sent for #${orderId}`);
 }
 
+/**
+ * "Subscribe & Save" renewal reminder — sent each cycle by the
+ * /internal/subscription-renewals cron alongside a best-effort WhatsApp
+ * text. This is the RELIABLE channel for renewals (see subscriptions_
+ * migration.sql's comment on why WhatsApp alone can't be trusted here).
+ */
+async function sendSubscriptionRenewalEmail({ email, customerName, orderId, items, discountPct, total, paymentUrl }) {
+  const itemRows = items
+    .map(
+      (item) =>
+        `<tr>
+          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${item.productName}</td>
+          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:center;">${item.quantity}</td>
+          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:right;">&#8377;${item.item_price * item.quantity}</td>
+        </tr>`
+    )
+    .join('');
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#0B2D50;padding:22px 26px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">&#127850; Your Munchingo box is ready, ${customerName}!</h2>
+        <p style="color:#CEAD5E;margin:6px 0 0;font-size:14px;">Subscribe &amp; Save — ${discountPct}% off, order #${orderId}</p>
+      </div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <p style="margin:0 0 16px;font-size:14px;color:#555;">
+          It's time for your next Munchingo delivery. Tap below to pay and we'll pack it fresh and ship within 1-2 business days.
+        </p>
+
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:4px;">
+          <thead>
+            <tr style="background:#f5e6d8;">
+              <th style="padding:9px 14px;text-align:left;border-bottom:2px solid #e0d0c0;">Product</th>
+              <th style="padding:9px 14px;text-align:center;border-bottom:2px solid #e0d0c0;">Qty</th>
+              <th style="padding:9px 14px;text-align:right;border-bottom:2px solid #e0d0c0;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>${itemRows}</tbody>
+          <tfoot>
+            <tr style="background:#f5e6d8;">
+              <td colspan="2" style="padding:10px 14px;font-weight:700;font-size:15px;">Total (after ${discountPct}% subscriber discount)</td>
+              <td style="padding:10px 14px;font-weight:700;font-size:15px;text-align:right;">&#8377;${total}</td>
+            </tr>
+          </tfoot>
+        </table>
+        ${gstBreakupHtml(total)}
+
+        <div style="text-align:center;margin:24px 0 4px;">
+          <a href="${paymentUrl}" style="display:inline-block;background:#CEAD5E;color:#0B2D50;font-weight:700;padding:12px 28px;border-radius:6px;text-decoration:none;font-size:15px;">Pay ₹${total} to confirm</a>
+        </div>
+
+        <p style="margin:20px 0 0;font-size:13px;color:#999;">
+          Delivering to a different address this time, or want to skip/pause/cancel this subscription? Just reply to this email or WhatsApp us at +91 99889 92024.
+        </p>
+      </div>
+    </div>
+  `;
+
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [email],
+    subject: `Your Munchingo subscription box is ready — #${orderId}`,
+    html,
+  });
+
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Subscription renewal email sent for #${orderId}`);
+}
+
 async function sendContactFormEmail({ name, email, orderNumber, message }) {
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
@@ -355,4 +424,4 @@ async function sendDailyDigestEmail({ orders, windowLabel }) {
   console.log(`[MAILER] Daily digest sent — ${orders.length} orders`);
 }
 
-module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail };
+module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail };

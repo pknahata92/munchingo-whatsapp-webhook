@@ -308,6 +308,146 @@ app.get('/internal/daily-digest', async (req, res) => {
 });
 
 
+// ── "Subscribe & Save" daily renewal (GET) ────────────────────────────────────
+// Same reasoning and protection pattern as /internal/daily-digest above:
+// triggered by a scheduled GitHub Actions workflow (not an in-process timer,
+// since Render's free tier can spin the service down), reuses DIGEST_SECRET
+// rather than adding a new Render env var for a second internal cron.
+//
+// For each subscription due today: recompute prices live from
+// utils/catalog.js (so a price change or a since-sold-out item is always
+// caught, never a stale stored price), generate a fresh Razorpay payment
+// link, create a normal `orders` row tagged with subscription_id, and
+// notify the customer — email (reliable) always, WhatsApp text (best-effort
+// only, see subscriptions_migration.sql) also attempted. This is
+// "Subscribe & Remind", not true autopay: the customer still taps to pay.
+app.get('/internal/subscription-renewals', async (req, res) => {
+  const secret = process.env.DIGEST_SECRET;
+  if (!secret) {
+    console.warn('[SUBSCRIPTIONS] DIGEST_SECRET not set — refusing to run');
+    return res.sendStatus(503);
+  }
+  const provided = req.query.secret || '';
+  const expectedBuf = Buffer.from(secret);
+  const providedBuf = Buffer.from(String(provided));
+  const matches = expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
+  if (!matches) return res.sendStatus(403);
+
+  const { getDueSubscriptions, markRenewalProcessed, attachSubscriptionToOrder } = require('./utils/subscriptions');
+  const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('./utils/database');
+  const { createPaymentLink } = require('./utils/razorpay');
+  const { priceForSlug, isAvailable } = require('./utils/catalog');
+  const { sendSubscriptionRenewalEmail, sendHumanHandoffAlert } = require('./utils/mailer');
+
+  function generateRenewalOrderId() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const rand = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    return `MNG-${rand}-${dd}${mm}`;
+  }
+
+  const due = await getDueSubscriptions();
+  const results = [];
+
+  for (const sub of due) {
+    try {
+      // Recompute every item's price + availability fresh — never trust
+      // what was true when the customer first subscribed.
+      const soldOut = sub.items.find((i) => !isAvailable(i.slug));
+      if (soldOut) {
+        console.warn(`[SUBSCRIPTIONS] Subscription ${sub.id} skipped — "${soldOut.name}" is sold out. Will retry tomorrow.`);
+        try {
+          await sendHumanHandoffAlert({
+            customerPhone: sub.customer_phone,
+            customerName: sub.customer_name,
+            message: `Subscription #${sub.id} renewal skipped — "${soldOut.name}" is currently sold out. Retries automatically tomorrow; reach out manually if this needs sorting sooner.`,
+          });
+        } catch (alertErr) {
+          console.error('[SUBSCRIPTIONS] Failed to send sold-out alert:', alertErr.message);
+        }
+        results.push({ id: sub.id, ok: false, reason: 'sold_out' });
+        continue; // next_order_date NOT advanced — retries tomorrow
+      }
+
+      const enrichedItems = sub.items.map((i) => ({
+        productName: i.name,
+        quantity: i.quantity,
+        item_price: priceForSlug(i.slug),
+        unit: i.unit,
+        slug: i.slug,
+      }));
+      const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+      const discountAmount = Math.round(realTotal * (sub.discount_pct / 100));
+      const finalTotal = realTotal - discountAmount;
+
+      const orderId = generateRenewalOrderId();
+      const timestamp = new Date().toISOString();
+
+      await saveOrder({
+        orderId,
+        customerPhone: sub.customer_phone,
+        customerName: sub.customer_name,
+        customerEmail: sub.customer_email,
+        items: enrichedItems,
+        total: finalTotal,
+        currency: 'INR',
+        timestamp,
+        couponCode: null,
+        discountAmount,
+      });
+      await updateOrderAddress(orderId, sub.delivery_address);
+
+      const { id: paymentLinkId, url: paymentLinkUrl } = await createPaymentLink({
+        orderId,
+        amount: finalTotal,
+        customerName: sub.customer_name,
+        customerPhone: sub.customer_phone,
+      });
+      await updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl });
+      await attachSubscriptionToOrder(orderId, sub.id);
+
+      // Email is the reliable channel here — always send it.
+      try {
+        await sendSubscriptionRenewalEmail({
+          email: sub.customer_email,
+          customerName: sub.customer_name,
+          orderId,
+          items: enrichedItems,
+          discountPct: sub.discount_pct,
+          total: finalTotal,
+          paymentUrl: paymentLinkUrl,
+        });
+      } catch (mailErr) {
+        console.error(`[SUBSCRIPTIONS] Renewal email failed for ${orderId}:`, mailErr.message);
+      }
+
+      // WhatsApp is best-effort on top — will silently fail to deliver for
+      // most customers outside a 24h session window until a proper
+      // Meta-approved template exists for this message (see migration
+      // comment). Wrapped so that failure never breaks the renewal itself.
+      try {
+        await wa.sendText(
+          sub.customer_phone,
+          `🍪 Your Munchingo subscription box is ready! Order #${orderId} — ₹${finalTotal} (${sub.discount_pct}% subscriber discount applied). We've also emailed you the payment link. Reply CANCEL SUBSCRIPTION or PAUSE SUBSCRIPTION anytime to manage it.`
+        );
+      } catch (waErr) {
+        console.error(`[SUBSCRIPTIONS] Renewal WhatsApp text failed for ${orderId}:`, waErr.message);
+      }
+
+      await markRenewalProcessed(sub.id, { orderId, frequencyDays: sub.frequency_days });
+      results.push({ id: sub.id, orderId, ok: true });
+    } catch (err) {
+      console.error(`[SUBSCRIPTIONS] Renewal failed for subscription ${sub.id}:`, err.message);
+      results.push({ id: sub.id, ok: false, error: err.message });
+    }
+  }
+
+  res.json({ ok: true, due: due.length, results });
+});
+
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Munchingo WhatsApp Webhook', ts: new Date().toISOString() });
