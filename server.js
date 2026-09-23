@@ -74,9 +74,14 @@ const PORT         = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'munchingo_webhook_secret_2026';
 
 
-// ── Payment success redirect (GET) ────────────────────────────────────────────
-// Razorpay redirects the customer's browser here after payment.
-// The actual order confirmation is handled by the POST /razorpay-webhook.
+// ── Payment success redirect (GET) — legacy fallback, no longer primary ──────
+// utils/razorpay.js now points callback_url at the real branded confirmation
+// page (munchingo.com/order-confirmed.html), which reads the webhook-verified
+// order status from GET /api/order/:orderId. This route is kept only in case
+// an already-created (pre-change) payment link still has the old callback_url
+// baked in, and can be removed once those have all expired (links expire
+// after 24h — see createPaymentLink). The actual order confirmation has
+// always been handled by the POST /razorpay-webhook, not this redirect.
 app.get('/payment-success', (req, res) => {
   const SITE_URL = process.env.SITE_ORIGIN || 'https://munchingo.com';
   res.send(`<!DOCTYPE html>

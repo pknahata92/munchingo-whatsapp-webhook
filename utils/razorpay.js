@@ -39,7 +39,10 @@ async function createPaymentLink({ orderId, amount, customerPhone, customerName 
     },
     reminder_enable: false,
     expire_by:       expireBy,
-    callback_url:    `https://munchingo-whatsapp-webhook.onrender.com/payment-success`,
+    // Points at the real branded confirmation page on the website, not the
+    // backend's own plain-HTML fallback (kept below at GET /payment-success
+    // for now, but no longer the primary path — see order-confirmed.html).
+    callback_url:    `https://munchingo.com/order-confirmed.html`,
     callback_method: 'get',
   };
 

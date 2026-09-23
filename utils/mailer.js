@@ -14,7 +14,7 @@ function gstBreakupHtml(total) {
   return `<p style="margin:10px 0 0;font-size:12px;color:#999;">Price inclusive of GST (5%): &#8377;${gstAmount} &middot; GSTIN: ${GSTIN}</p>`;
 }
 
-async function sendOrderEmail({ orderId, customerPhone, customerName, items, total, timestamp }) {
+async function sendOrderEmail({ orderId, customerPhone, customerName, items, total, timestamp, giftNote }) {
   const itemRows = items
     .map(
       (item) =>
@@ -38,6 +38,7 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
           <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
           <tr><td style="padding:4px 0;color:#888;">Time</td><td style="padding:4px 0;">${new Date(timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td></tr>
         </table>
+        ${giftNote ? `<div style="background:#FBEFE8;border:1px solid #B7673E;border-radius:6px;padding:.7rem 1rem;font-size:13px;margin-bottom:16px;"><strong>🎁 Gift note:</strong> ${giftNote}</div>` : ''}
 
         <table style="width:100%;border-collapse:collapse;font-size:14px;">
           <thead>
@@ -391,6 +392,7 @@ async function sendDailyDigestEmail({ orders, windowLabel }) {
           <strong>${o.customer_name || 'Unknown'}</strong> · +${o.customer_phone}<br>
           ${itemLines}<br>
           <span style="color:#888;">Ship to:</span> ${formatAddress(o)}
+          ${o.gift_note ? `<br><span style="color:#B7673E;">🎁 ${o.gift_note}</span>` : ''}
         </div>
       </div>`;
   }).join('');

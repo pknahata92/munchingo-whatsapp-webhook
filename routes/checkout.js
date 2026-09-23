@@ -5,7 +5,7 @@ const router = express.Router();
 
 // Reuse the REAL, already-deployed modules — do not duplicate them.
 const { createPaymentLink } = require('../utils/razorpay');
-const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('../utils/database');
+const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('../utils/database');
 const { sendOrderEmail, sendContactFormEmail } = require('../utils/mailer');
 const { priceForSlug, isAvailable } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
@@ -85,7 +85,7 @@ function normalisePhone(rawPhone) {
 // (who submits once), tight enough to blunt scripted abuse.
 router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
-          const { name, phone, address, email, items, total, couponCode, subscribe } = req.body;
+          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote } = req.body;
 
       if (!name || !phone || !address || !Array.isArray(items) || !items.length || !total) {
               return res.status(400).json({ ok: false, error: 'Missing required fields: name, phone, address, items, total' });
@@ -162,6 +162,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
               timestamp,
               couponCode: appliedCouponCode,
               discountAmount,
+              giftNote: (giftNote || '').trim() || null,
       });
           await updateOrderAddress(orderId, address);
 
@@ -211,7 +212,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
 
       // 3. Notify the owner by email (mirrors handlers/messageHandler.js's WhatsApp order flow)
       try {
-        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total: finalTotal, timestamp });
+        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total: finalTotal, timestamp, giftNote: (giftNote || '').trim() || null });
       } catch (err) {
         console.error('[MAILER] Failed to send order notification:', err.message);
       }
@@ -287,6 +288,43 @@ router.post('/api/contact', rateLimit({ windowMs: 60_000, max: 5 }), async (req,
     } catch (err) {
           console.error('[CONTACT] Error:', err.message);
           res.status(500).json({ ok: false, error: 'Something went wrong sending your message. Please try again or email us directly at info.munchingo@gmail.com.' });
+    }
+});
+
+// GET /api/order/:orderId
+// Powers order-confirmed.html — the real branded confirmation page, which
+// polls this for the order's actual status rather than trusting Razorpay's
+// callback redirect on its own (the callback can arrive before the webhook
+// that actually marks the order paid; this endpoint always reflects the
+// webhook-verified status in the database, the real source of truth).
+// Deliberately returns only what a confirmation page needs to render —
+// never phone, email, or internal payment/link IDs — so this stays safe to
+// call from the browser with nothing but an order ID in the URL. orderId's
+// own format (MNG-<4 random chars>-DDMM) is the access control here; rate
+// limited the same as the other public endpoints against enumeration.
+router.get('/api/order/:orderId', rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
+    try {
+          const order = await getOrder(String(req.params.orderId || '').slice(0, 40));
+      if (!order) {
+              return res.status(404).json({ ok: false, error: 'Order not found.' });
+      }
+
+      res.json({
+              ok: true,
+              orderId: order.order_id,
+              status: order.status,
+              customerName: order.customer_name,
+              items: (order.items || []).map((i) => ({
+                      name: i.productName || i.product_retailer_id,
+                      quantity: i.quantity,
+                      price: i.item_price,
+              })),
+              total: order.total,
+              createdAt: order.created_at,
+      });
+    } catch (err) {
+          console.error('[ORDER] Lookup error:', err.message);
+          res.status(500).json({ ok: false, error: 'Could not look up that order right now.' });
     }
 });
 

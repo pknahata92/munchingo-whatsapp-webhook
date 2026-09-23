@@ -20,7 +20,7 @@ function db() {
  * Persist a new order. Status = 'pending_address' so the bot
  * knows to collect delivery info next.
  */
-async function saveOrder({ orderId, customerPhone, customerName, customerEmail, items, total, currency, timestamp, couponCode, discountAmount }) {
+async function saveOrder({ orderId, customerPhone, customerName, customerEmail, items, total, currency, timestamp, couponCode, discountAmount, giftNote }) {
   const { data, error } = await db()
     .from('orders')
     .insert({
@@ -35,6 +35,7 @@ async function saveOrder({ orderId, customerPhone, customerName, customerEmail, 
       created_at: timestamp,
       coupon_code:     couponCode || null,
       discount_amount: discountAmount || null,
+      gift_note:       giftNote || null,
     })
     .select()
     .single();
