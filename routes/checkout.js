@@ -4,12 +4,12 @@ const express = require('express');
 const router = express.Router();
 
 // Reuse the REAL, already-deployed modules — do not duplicate them.
-const { createPaymentLink } = require('../utils/razorpay');
+const { createPaymentLink, orderIdFromReference } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('../utils/database');
 const { sendOrderEmail, sendContactFormEmail } = require('../utils/mailer');
 const { priceForSlug, isAvailable } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
-const { validateCoupon, recordCouponRedemption } = require('../utils/coupons');
+const { validateCoupon } = require('../utils/coupons');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
 
 // "Subscribe & Save" — flat discount on every renewal (see
@@ -50,6 +50,10 @@ function generateOrderId() {
 // utils/catalog.js — either way, nothing is saved/charged.
 function normaliseItems(cartItems) {
     for (const c of (cartItems || [])) {
+          // A negative or fractional qty on one line would discount the others.
+          if (!Number.isInteger(c.qty) || c.qty < 1 || c.qty > 50) {
+                return { error: 'One or more item quantities look invalid. Please refresh your cart and try again.' };
+          }
           if (priceForSlug(c.slug) == null) {
                 return { error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' };
           }
@@ -177,11 +181,8 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       });
           await updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl });
 
-      // 2b. Record the coupon redemption now that the order is actually
-      //     committed — not at the earlier validate-only check.
-      if (appliedCouponCode) {
-        await recordCouponRedemption({ code: appliedCouponCode, customerPhone, orderId, discountAmount });
-      }
+      // Coupon redemption is recorded in the payment_link.paid webhook, so
+      // abandoned orders don't consume a use.
 
       // 2c. Set up the recurring record for "Subscribe & Save". This first
       //     order is charged exactly like any other (finalTotal above already
@@ -304,7 +305,7 @@ router.post('/api/contact', rateLimit({ windowMs: 60_000, max: 5 }), async (req,
 // limited the same as the other public endpoints against enumeration.
 router.get('/api/order/:orderId', rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
     try {
-          const order = await getOrder(String(req.params.orderId || '').slice(0, 40));
+          const order = await getOrder(orderIdFromReference(String(req.params.orderId || '').slice(0, 40)));
       if (!order) {
               return res.status(404).json({ ok: false, error: 'Order not found.' });
       }

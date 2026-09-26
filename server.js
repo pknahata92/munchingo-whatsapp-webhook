@@ -139,7 +139,7 @@ app.post('/razorpay-webhook', async (req, res) => {
     if (event.event === 'payment_link.paid') {
       const pl        = event.payload.payment_link.entity;
       const payment   = event.payload.payment.entity;
-      const orderId   = pl.reference_id;
+      const orderId   = require('./utils/razorpay').orderIdFromReference(pl.reference_id);
       const paymentId = payment.id;
       const phone     = pl.customer?.contact?.replace(/^\+/, '');
 
@@ -154,6 +154,20 @@ app.post('/razorpay-webhook', async (req, res) => {
 
       await markOrderPaid(orderId, paymentId);
       console.log(`[RAZORPAY] Order ${orderId} paid — paymentId: ${paymentId}`);
+
+      if (existing?.coupon_code) {
+        try {
+          const { recordCouponRedemption } = require('./utils/coupons');
+          await recordCouponRedemption({
+            code:           existing.coupon_code,
+            customerPhone:  existing.customer_phone,
+            orderId,
+            discountAmount: existing.discount_amount,
+          });
+        } catch (err) {
+          console.error('[COUPONS] Failed to record redemption on payment:', err.message);
+        }
+      }
 
       if (phone) {
         // Uses the approved "munchingo_order_confirmed" template instead of free text --
@@ -194,49 +208,35 @@ app.post('/razorpay-webhook', async (req, res) => {
     }
 
     // ── payment_link.expired ──────────────────────────────────────────────────
-    // Customer didn't pay within 24 hours — auto-generate a fresh link.
+    // One notice, no new link. Auto-regenerating here looped forever (each new
+    // link expires 24h later and fires this again). A fresh link only comes
+    // from the customer replying "resend link".
     if (event.event === 'payment_link.expired') {
       const pl      = event.payload.payment_link.entity;
-      const orderId = pl.reference_id;
+      const { orderIdFromReference } = require('./utils/razorpay');
+      const orderId = orderIdFromReference(pl.reference_id);
       const phone   = pl.customer?.contact?.replace(/^\+/, '');
 
-      const { getOrder, updateOrderPaymentLink } = require('./utils/database');
-      const { createPaymentLink }                 = require('./utils/razorpay');
+      const { getOrder } = require('./utils/database');
 
       const existing = await getOrder(orderId);
       if (!existing || existing.status !== 'pending_payment') {
         console.log(`[RAZORPAY] payment_link.expired for ${orderId} — status: ${existing?.status}, skipping`);
         return;
       }
+      if (existing.payment_link_id && existing.payment_link_id !== pl.id) {
+        console.log(`[RAZORPAY] payment_link.expired for ${orderId} — superseded link ${pl.id}, skipping`);
+        return;
+      }
 
-      console.log(`[RAZORPAY] Link expired for ${orderId} — generating new link`);
+      console.log(`[RAZORPAY] Link expired for ${orderId} — notifying customer once`);
 
       if (phone) {
-        try {
-          const { id: newLinkId, url: newLinkUrl } = await createPaymentLink({
-            orderId,
-            amount:        existing.total,
-            customerPhone: phone,
-            customerName:  existing.customer_name,
-          });
-          await updateOrderPaymentLink(orderId, { paymentLinkId: newLinkId, paymentLinkUrl: newLinkUrl });
-
-          await wa.sendText(
-            phone,
-            `⏰ *Your payment link expired.*\n\n` +
-              `No worries — here's a fresh one for order *#${orderId}* (₹${existing.total}):\n\n` +
-              `👉 ${newLinkUrl}\n\n` +
-              `Valid for 24 hours. Let us know if you need any help! 🍪`
-          );
-        } catch (err) {
-          console.error('[RAZORPAY] Failed to regenerate expired link:', err.message);
-          // Link generation failed — tell the customer to ask for a new one manually
-          await wa.sendText(
-            phone,
-            `⚠️ Your payment link for order *#${orderId}* has expired.\n\n` +
-              `Reply *resend link* to get a fresh one, or contact us at hello@munchingo.com. 🍪`
-          );
-        }
+        await wa.sendText(
+          phone,
+          `⏰ Your payment link for order *#${orderId}* (₹${existing.total}) has expired.\n\n` +
+            `Still want it? Reply *resend link* within 7 days and we'll send a fresh one. 🍪`
+        );
       }
       return;
     }
@@ -338,8 +338,8 @@ app.get('/internal/subscription-renewals', async (req, res) => {
   const matches = expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
   if (!matches) return res.sendStatus(403);
 
-  const { getDueSubscriptions, markRenewalProcessed, attachSubscriptionToOrder } = require('./utils/subscriptions');
-  const { saveOrder, updateOrderAddress, updateOrderPaymentLink } = require('./utils/database');
+  const { getDueSubscriptions, markRenewalProcessed, attachSubscriptionToOrder, setSubscriptionStatus } = require('./utils/subscriptions');
+  const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('./utils/database');
   const { createPaymentLink } = require('./utils/razorpay');
   const { priceForSlug, isAvailable } = require('./utils/catalog');
   const { sendSubscriptionRenewalEmail, sendHumanHandoffAlert } = require('./utils/mailer');
@@ -358,6 +358,17 @@ app.get('/internal/subscription-renewals', async (req, res) => {
 
   for (const sub of due) {
     try {
+      // Subscriptions are created at checkout, before payment. If the last
+      // cycle (including the very first order) was never paid, lapse it
+      // rather than billing someone who never became a customer.
+      const lastOrder = sub.last_order_id ? await getOrder(sub.last_order_id) : null;
+      if (!lastOrder || lastOrder.status !== 'paid') {
+        await setSubscriptionStatus(sub.id, 'cancelled');
+        console.log(`[SUBSCRIPTIONS] Subscription ${sub.id} lapsed — last order ${sub.last_order_id} status: ${lastOrder?.status}`);
+        results.push({ id: sub.id, ok: false, reason: 'last_order_unpaid' });
+        continue;
+      }
+
       // Recompute every item's price + availability fresh — never trust
       // what was true when the customer first subscribed.
       const soldOut = sub.items.find((i) => !isAvailable(i.slug));
@@ -478,6 +489,7 @@ app.get('/webhook', (req, res) => {
 
 
 // ── Incoming messages (POST) ──────────────────────────────────────────────────
+const seenMessageIds = new Set();
 app.post('/webhook', async (req, res) => {
   if (!verifyMetaSignature(req.rawBody, req.headers['x-hub-signature-256'])) {
     console.warn('[WEBHOOK] Signature mismatch — ignoring request');
@@ -518,6 +530,15 @@ app.post('/webhook', async (req, res) => {
     const msgId       = message.id;
     const type        = message.type;
     const contactName = contacts?.[0]?.profile?.name || '';
+
+    // Meta re-delivers when a response is slow (e.g. a cold start), which
+    // would otherwise create a duplicate order from one catalog checkout.
+    if (seenMessageIds.has(msgId)) {
+      console.log(`[Webhook] Duplicate delivery of ${msgId} — ignoring`);
+      return;
+    }
+    seenMessageIds.add(msgId);
+    if (seenMessageIds.size > 1000) seenMessageIds.delete(seenMessageIds.values().next().value);
 
     console.log(`[Message] from=${from} type=${type} name="${contactName}"`);
 

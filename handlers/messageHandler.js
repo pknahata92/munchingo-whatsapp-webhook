@@ -417,24 +417,28 @@ async function resendPaymentLink(to, name) {
       );
     }
 
-    // We already have a stored link — just resend it
-    if (order.payment_link_url) {
+    // Don't revive stale orders at whatever price they were placed at.
+    const ageDays = (Date.now() - new Date(order.created_at).getTime()) / 86_400_000;
+    if (ageDays > 7) {
+      if (order.payment_link_id) await expirePaymentLink(order.payment_link_id);
+      await cancelOrder(order.order_id);
       return wa.sendText(
         to,
-        `💳 *Your Payment Link:*\n\n` +
-          `*Order #${order.order_id}* — ₹${order.total}\n\n` +
-          `👉 ${order.payment_link_url}\n\n` +
-          `Pay securely via UPI, card, or net banking. 🍪`
+        `Order *#${order.order_id}* has lapsed, so we've closed it.\n\n` +
+          `Reply *order* or visit munchingo.com to place a fresh one at today's prices. 🍪`
       );
     }
 
-    // No stored link — generate a fresh one
+    // Stored links may already be expired, so always issue a new one and
+    // retire the old so only one payable link exists per order.
+    if (order.payment_link_id) await expirePaymentLink(order.payment_link_id);
     await wa.sendText(to, `🔗 Generating a fresh payment link for you...`);
     const { id: paymentLinkId, url: paymentLinkUrl } = await createPaymentLink({
       orderId:       order.order_id,
       amount:        order.total,
       customerPhone: to,
       customerName:  order.customer_name || name,
+      regenerated:   Boolean(order.payment_link_id),
     });
     await updateOrderPaymentLink(order.order_id, { paymentLinkId, paymentLinkUrl });
     await wa.sendText(

@@ -6,7 +6,14 @@ const crypto = require('crypto');
  * Create a Razorpay Payment Link for a Munchingo order.
  * Returns { id, url } where url is the short payment link.
  */
-async function createPaymentLink({ orderId, amount, customerPhone, customerName }) {
+// Razorpay rejects a reference_id already used by another payment link, so
+// regenerated links get a suffix ("MNG-AB12-2309_k3x9"). The first link keeps
+// the bare order ID so links created before this change still resolve.
+function orderIdFromReference(referenceId) {
+  return String(referenceId || '').split('_')[0];
+}
+
+async function createPaymentLink({ orderId, amount, customerPhone, customerName, regenerated = false }) {
   const keyId     = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -27,7 +34,7 @@ async function createPaymentLink({ orderId, amount, customerPhone, customerName 
     amount:       amountPaise,
     currency:     'INR',
     description:  `Munchingo Order ${orderId}`,
-    reference_id: orderId,
+    reference_id: regenerated ? `${orderId}_${Date.now().toString(36)}` : orderId,
     customer: {
       name:    customerName || 'Munchingo Customer',
       contact: phone,
@@ -112,4 +119,4 @@ function verifyWebhookSignature(rawBody, signature) {
   }
 }
 
-module.exports = { createPaymentLink, expirePaymentLink, verifyWebhookSignature };
+module.exports = { createPaymentLink, expirePaymentLink, verifyWebhookSignature, orderIdFromReference };
