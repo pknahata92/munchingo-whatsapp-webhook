@@ -7,7 +7,7 @@ const router = express.Router();
 const { createPaymentLink, orderIdFromReference } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('../utils/database');
 const { sendOrderEmail, sendContactFormEmail } = require('../utils/mailer');
-const { priceForSlug, isAvailable } = require('../utils/catalog');
+const { priceForSlug, isAvailable, nameForSlug } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 const { validateCoupon } = require('../utils/coupons');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
@@ -45,6 +45,12 @@ function generateOrderId() {
 // could otherwise tamper with the POST body (devtools, curl) and pay
 // whatever amount they choose for real products.
 //
+// SECURITY: productName is likewise looked up server-side by slug, never
+// taken from the client's submitted name - that name later gets dropped,
+// unescaped, into the owner's order-notification email and the branded
+// order-confirmed.html page, so trusting it would let a crafted checkout
+// POST inject markup/script into both.
+//
 // Returns { items } on success. Returns { error } if any slug isn't
 // recognised, or is recognised but currently marked sold out in
 // utils/catalog.js — either way, nothing is saved/charged.
@@ -58,11 +64,11 @@ function normaliseItems(cartItems) {
                 return { error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' };
           }
           if (!isAvailable(c.slug)) {
-                return { error: `Sorry, "${c.name}" is currently sold out. Please remove it from your cart and try again.` };
+                return { error: `Sorry, "${nameForSlug(c.slug)}" is currently sold out. Please remove it from your cart and try again.` };
           }
     }
     const items = cartItems.map((c) => ({
-          productName: c.name,
+          productName: nameForSlug(c.slug),
           quantity: c.qty,
           item_price: priceForSlug(c.slug),
           unit: c.unit,

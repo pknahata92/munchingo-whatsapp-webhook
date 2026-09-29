@@ -9,6 +9,18 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const GST_RATE = 0.05;
 const GSTIN = '06AIIPN5005C2ZP';
 
+// Every field below that originates from a customer (name, address, gift
+// note, item name, feedback comments, etc.) is untrusted and must be
+// escaped before landing in one of these HTML email bodies — otherwise a
+// crafted value could inject markup/scripts into an email opened by the
+// owner or the customer. Numbers (price, qty, rating-as-enum) are not
+// escaped since they're never attacker-controlled strings.
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 function gstBreakupHtml(total) {
   const gstAmount = Math.round(total - total / (1 + GST_RATE));
   return `<p style="margin:10px 0 0;font-size:12px;color:#999;">Price inclusive of GST (5%): &#8377;${gstAmount} &middot; GSTIN: ${GSTIN}</p>`;
@@ -19,7 +31,7 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
     .map(
       (item) =>
         `<tr>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${item.productName || item.product_retailer_id}</td>
+          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${escapeHtml(item.productName || item.product_retailer_id)}</td>
           <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:center;">${item.quantity}</td>
           <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:right;">&#8377;${item.item_price * item.quantity}</td>
         </tr>`
@@ -34,11 +46,11 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
-          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${customerName}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(customerName)}</td></tr>
           <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
           <tr><td style="padding:4px 0;color:#888;">Time</td><td style="padding:4px 0;">${new Date(timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td></tr>
         </table>
-        ${giftNote ? `<div style="background:#FBEFE8;border:1px solid #B7673E;border-radius:6px;padding:.7rem 1rem;font-size:13px;margin-bottom:16px;"><strong>🎁 Gift note:</strong> ${giftNote}</div>` : ''}
+        ${giftNote ? `<div style="background:#FBEFE8;border:1px solid #B7673E;border-radius:6px;padding:.7rem 1rem;font-size:13px;margin-bottom:16px;"><strong>🎁 Gift note:</strong> ${escapeHtml(giftNote)}</div>` : ''}
 
         <table style="width:100%;border-collapse:collapse;font-size:14px;">
           <thead>
@@ -84,9 +96,9 @@ async function sendHumanHandoffAlert({ customerPhone, customerName, message }) {
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
-          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${customerName || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(customerName) || 'Unknown'}</td></tr>
           <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
-          ${message ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Message</td><td style="padding:4px 0;">${message}</td></tr>` : ''}
+          ${message ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Message</td><td style="padding:4px 0;">${escapeHtml(message)}</td></tr>` : ''}
         </table>
         <p style="margin:0;font-size:13px;color:#999;">
           Reply directly on WhatsApp: <a href="https://wa.me/${customerPhone}">+${customerPhone}</a>
@@ -114,10 +126,10 @@ async function sendFeedbackAlert({ customerPhone, customerName, rating, comments
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
-          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${customerName || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(customerName) || 'Unknown'}</td></tr>
           <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
-          <tr><td style="padding:4px 0;color:#888;">Rating</td><td style="padding:4px 0;font-weight:600;">${rating}</td></tr>
-          ${comments ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Comments</td><td style="padding:4px 0;">${comments}</td></tr>` : ''}
+          <tr><td style="padding:4px 0;color:#888;">Rating</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(rating)}</td></tr>
+          ${comments ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Comments</td><td style="padding:4px 0;">${escapeHtml(comments)}</td></tr>` : ''}
         </table>
       </div>
     </div>
@@ -142,13 +154,13 @@ async function sendBulkInquiryAlert({ customerPhone, customerName, company_name,
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
-          <tr><td style="padding:4px 0;color:#888;width:130px;">Company</td><td style="padding:4px 0;font-weight:600;">${company_name}</td></tr>
-          <tr><td style="padding:4px 0;color:#888;">Contact</td><td style="padding:4px 0;">${contact_name || customerName || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;width:130px;">Company</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(company_name)}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Contact</td><td style="padding:4px 0;">${escapeHtml(contact_name || customerName) || 'Unknown'}</td></tr>
           <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
-          <tr><td style="padding:4px 0;color:#888;">Quantity</td><td style="padding:4px 0;">${quantity}</td></tr>
-          ${needed_by ? `<tr><td style="padding:4px 0;color:#888;">Needed by</td><td style="padding:4px 0;">${needed_by}</td></tr>` : ''}
-          ${budget ? `<tr><td style="padding:4px 0;color:#888;">Budget</td><td style="padding:4px 0;">${budget}</td></tr>` : ''}
-          ${notes ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Notes</td><td style="padding:4px 0;">${notes}</td></tr>` : ''}
+          <tr><td style="padding:4px 0;color:#888;">Quantity</td><td style="padding:4px 0;">${escapeHtml(quantity)}</td></tr>
+          ${needed_by ? `<tr><td style="padding:4px 0;color:#888;">Needed by</td><td style="padding:4px 0;">${escapeHtml(needed_by)}</td></tr>` : ''}
+          ${budget ? `<tr><td style="padding:4px 0;color:#888;">Budget</td><td style="padding:4px 0;">${escapeHtml(budget)}</td></tr>` : ''}
+          ${notes ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Notes</td><td style="padding:4px 0;">${escapeHtml(notes)}</td></tr>` : ''}
         </table>
         <p style="margin:0;font-size:13px;color:#999;">
           Reply directly on WhatsApp: <a href="https://wa.me/${customerPhone}">+${customerPhone}</a>
@@ -173,7 +185,7 @@ async function sendCustomerConfirmationEmail({ email, orderId, customerName, ite
     .map(
       (item) =>
         `<tr>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${item.productName || item.product_retailer_id}</td>
+          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${escapeHtml(item.productName || item.product_retailer_id)}</td>
           <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:center;">${item.quantity}</td>
           <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:right;">&#8377;${item.item_price * item.quantity}</td>
         </tr>`
@@ -183,7 +195,7 @@ async function sendCustomerConfirmationEmail({ email, orderId, customerName, ite
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
       <div style="background:#6B3A2A;padding:22px 26px;">
-        <h2 style="color:#fff;margin:0;font-size:20px;">&#127850; Thanks for your order, ${customerName}!</h2>
+        <h2 style="color:#fff;margin:0;font-size:20px;">&#127850; Thanks for your order, ${escapeHtml(customerName)}!</h2>
         <p style="color:#f5deb3;margin:6px 0 0;font-size:14px;">Order #${orderId}</p>
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
@@ -242,7 +254,7 @@ async function sendSubscriptionRenewalEmail({ email, customerName, orderId, item
     .map(
       (item) =>
         `<tr>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${item.productName}</td>
+          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${escapeHtml(item.productName)}</td>
           <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:center;">${item.quantity}</td>
           <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:right;">&#8377;${item.item_price * item.quantity}</td>
         </tr>`
@@ -252,7 +264,7 @@ async function sendSubscriptionRenewalEmail({ email, customerName, orderId, item
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
       <div style="background:#0B2D50;padding:22px 26px;">
-        <h2 style="color:#fff;margin:0;font-size:20px;">&#127850; Your Munchingo box is ready, ${customerName}!</h2>
+        <h2 style="color:#fff;margin:0;font-size:20px;">&#127850; Your Munchingo box is ready, ${escapeHtml(customerName)}!</h2>
         <p style="color:#CEAD5E;margin:6px 0 0;font-size:14px;">Subscribe &amp; Save — ${discountPct}% off, order #${orderId}</p>
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
@@ -308,14 +320,14 @@ async function sendContactFormEmail({ name, email, orderNumber, message }) {
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
-          <tr><td style="padding:4px 0;color:#888;width:110px;">Name</td><td style="padding:4px 0;font-weight:600;">${name}</td></tr>
-          <tr><td style="padding:4px 0;color:#888;">Email</td><td style="padding:4px 0;"><a href="mailto:${email}">${email}</a></td></tr>
-          ${orderNumber ? `<tr><td style="padding:4px 0;color:#888;">Order #</td><td style="padding:4px 0;">${orderNumber}</td></tr>` : ''}
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Name</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(name)}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Email</td><td style="padding:4px 0;"><a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a></td></tr>
+          ${orderNumber ? `<tr><td style="padding:4px 0;color:#888;">Order #</td><td style="padding:4px 0;">${escapeHtml(orderNumber)}</td></tr>` : ''}
         </table>
         <p style="margin:0 0 4px;color:#888;font-size:13px;">Message</p>
-        <p style="margin:0;font-size:14px;white-space:pre-wrap;">${message}</p>
+        <p style="margin:0;font-size:14px;white-space:pre-wrap;">${escapeHtml(message)}</p>
         <p style="margin:20px 0 0;font-size:13px;color:#999;">
-          Reply directly to this email to respond to ${name}.
+          Reply directly to this email to respond to ${escapeHtml(name)}.
         </p>
       </div>
     </div>
@@ -336,7 +348,7 @@ async function sendContactFormEmail({ name, email, orderNumber, message }) {
 function formatAddress(order) {
   const addr = order.delivery_address;
   if (!addr) return '(no address on file)';
-  return typeof addr === 'string' ? addr : (addr.raw || JSON.stringify(addr));
+  return escapeHtml(typeof addr === 'string' ? addr : (addr.raw || JSON.stringify(addr)));
 }
 
 async function sendDailyDigestEmail({ orders, windowLabel }) {
@@ -371,7 +383,7 @@ async function sendDailyDigestEmail({ orders, windowLabel }) {
   const productTotals = {};
   orders.forEach((o) => {
     (o.items || []).forEach((item) => {
-      const key = item.productName || item.product_retailer_id || 'Unknown item';
+      const key = escapeHtml(item.productName || item.product_retailer_id || 'Unknown item');
       productTotals[key] = (productTotals[key] || 0) + Number(item.quantity || 0);
     });
   });
@@ -383,16 +395,16 @@ async function sendDailyDigestEmail({ orders, windowLabel }) {
 
   const orderCards = orders.map((o) => {
     const itemLines = (o.items || [])
-      .map((item) => `${item.productName || item.product_retailer_id} × ${item.quantity}`)
+      .map((item) => `${escapeHtml(item.productName || item.product_retailer_id)} × ${item.quantity}`)
       .join('<br>');
     return `
       <div style="border:1px solid #e0d0c0;border-radius:8px;padding:14px 18px;margin-bottom:12px;">
         <div style="font-weight:700;color:#6B3A2A;margin-bottom:6px;">#${o.order_id} — ₹${o.total}</div>
         <div style="font-size:13px;color:#444;line-height:1.6;">
-          <strong>${o.customer_name || 'Unknown'}</strong> · +${o.customer_phone}<br>
+          <strong>${escapeHtml(o.customer_name) || 'Unknown'}</strong> · +${o.customer_phone}<br>
           ${itemLines}<br>
           <span style="color:#888;">Ship to:</span> ${formatAddress(o)}
-          ${o.gift_note ? `<br><span style="color:#B7673E;">🎁 ${o.gift_note}</span>` : ''}
+          ${o.gift_note ? `<br><span style="color:#B7673E;">🎁 ${escapeHtml(o.gift_note)}</span>` : ''}
         </div>
       </div>`;
   }).join('');

@@ -30,6 +30,20 @@ const SOLD_OUT_SLUGS = [
 
 const BASE_SLUGS = ['atta-original', 'atta-kesari', 'atta-lite-sugar', 'atta-ajwain'];
 
+// Display names, matching what js/cart.js's own Add-to-Bag buttons already
+// show (see gifting.html/index.html's data-name attributes) — a website
+// order's item name should never come from the client, since a crafted
+// POST body could otherwise inject an arbitrary string into the owner's
+// order emails and the branded order-confirmed.html page.
+const NAMES = {
+  'atta-original':   'Atta Original',
+  'atta-kesari':      'Atta Kesari',
+  'atta-lite-sugar':  'Atta Sugar-Lite',
+  'atta-ajwain':      'Atta Ajwain',
+  'full-range-set':   'Full Range Gift Set',
+};
+const TRIO_NAME = 'Trio Gift Set';
+
 /**
  * Look up the real price for a website cart item slug.
  * Returns the price in rupees, or null if the slug isn't recognised.
@@ -37,6 +51,16 @@ const BASE_SLUGS = ['atta-original', 'atta-kesari', 'atta-lite-sugar', 'atta-ajw
 function priceForSlug(slug) {
   if (Object.prototype.hasOwnProperty.call(PRICES, slug)) return PRICES[slug];
   if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) return TRIO_PRICE;
+  return null;
+}
+
+/**
+ * Look up the real display name for a website cart item slug. Returns null
+ * for an unrecognised slug (same recognised set as priceForSlug).
+ */
+function nameForSlug(slug) {
+  if (Object.prototype.hasOwnProperty.call(NAMES, slug)) return NAMES[slug];
+  if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) return TRIO_NAME;
   return null;
 }
 
@@ -59,4 +83,4 @@ function isAvailable(slug) {
   return true; // unrecognised slugs are rejected elsewhere by priceForSlug
 }
 
-module.exports = { priceForSlug, isAvailable };
+module.exports = { priceForSlug, isAvailable, nameForSlug };
