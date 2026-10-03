@@ -1,7 +1,7 @@
 'use strict';
 
 const wa = require('../utils/whatsapp');
-const { getStoredLang, setLang } = require('../utils/langPrefs');
+const { getStoredLang, setLang, HINDI_ENABLED } = require('../utils/langPrefs');
 const { sendOrderEmail, sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
 const {
   saveOrder,
@@ -877,6 +877,7 @@ async function routeInteractive(to, interactive, name) {
   switch (buttonId) {
     case 'lang_en':
     case 'lang_hi': {
+      if (!HINDI_ENABLED()) return sendWelcome(to, name); // stale picker button: stay English
       const chosen = buttonId === 'lang_hi' ? 'hi' : 'en';
       await setLang(to, chosen);
       await wa.sendText(
