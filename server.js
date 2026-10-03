@@ -241,6 +241,34 @@ app.post('/razorpay-webhook', async (req, res) => {
       return;
     }
 
+    // ── refund.processed ─────────────────────────────────────────────
+    // A refund issued from the Razorpay dashboard. Tell the customer, and if it
+    // is a full refund, close the order so it leaves the packing list.
+    if (event.event === 'refund.processed') {
+      const refund    = event.payload.refund.entity;
+      const { getOrderByPaymentId, markOrderRefunded } = require('./utils/database');
+      const { notifyRefund } = require('./utils/refunds');
+
+      const order = await getOrderByPaymentId(refund.payment_id);
+      if (!order) {
+        console.log(`[RAZORPAY] refund.processed for unknown payment ${refund.payment_id} — skipping`);
+        return;
+      }
+
+      const amountRupees = Math.round(Number(refund.amount) / 100);
+      const isFull       = amountRupees >= Number(order.total);
+
+      if (isFull && order.status === 'cancelled') {
+        console.log(`[RAZORPAY] Duplicate full-refund webhook for ${order.order_id} — ignoring`);
+        return;
+      }
+
+      if (isFull) await markOrderRefunded(order.order_id);
+      console.log(`[RAZORPAY] Refund of ₹${amountRupees} processed for ${order.order_id} (${isFull ? 'full' : 'partial'})`);
+      await notifyRefund(order, amountRupees, isFull);
+      return;
+    }
+
     // ── payment.failed ────────────────────────────────────────────────────────
     // Customer attempted payment but it failed (wrong PIN, insufficient funds, etc.)
     if (event.event === 'payment.failed') {

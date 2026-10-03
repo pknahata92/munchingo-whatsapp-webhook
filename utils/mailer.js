@@ -312,6 +312,30 @@ async function sendSubscriptionRenewalEmail({ email, customerName, orderId, item
   console.log(`[MAILER] Subscription renewal email sent for #${orderId}`);
 }
 
+async function sendRefundEmail({ email, customerName, orderId, amount, isFull }) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#6B3A2A;padding:22px 26px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Your Munchingo refund is on its way</h2>
+        <p style="color:#f5deb3;margin:6px 0 0;font-size:14px;">Order #${escapeHtml(orderId)}</p>
+      </div>
+      <div style="padding:22px 26px;background:#fffaf6;font-size:14px;color:#444;line-height:1.6;">
+        <p style="margin:0 0 12px;">Hi ${escapeHtml(customerName) || 'there'},</p>
+        <p style="margin:0 0 12px;">We have refunded <strong>&#8377;${escapeHtml(amount)}</strong> for order #${escapeHtml(orderId)}${isFull ? ', and the order is now cancelled' : ''}.</p>
+        <p style="margin:0 0 12px;">It should reach your original payment method within 5&ndash;7 working days, depending on your bank.</p>
+        <p style="margin:0;color:#888;font-size:13px;">Questions? Reply to this email or WhatsApp us at +91 99889 92024.</p>
+      </div>
+    </div>`;
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [email],
+    subject: `Your Munchingo refund for order #${orderId}`,
+    html,
+  });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Refund email sent for #${orderId}`);
+}
+
 async function sendContactFormEmail({ name, email, orderNumber, message }) {
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
@@ -438,4 +462,4 @@ async function sendDailyDigestEmail({ orders, windowLabel }) {
   console.log(`[MAILER] Daily digest sent — ${orders.length} orders`);
 }
 
-module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail };
+module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };

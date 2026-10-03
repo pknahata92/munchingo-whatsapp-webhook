@@ -266,7 +266,7 @@ async function sendHumanHandoff(to, name, message) {
     `👋 *We'll get a real person to you!*\n\n` +
       `A Munchingo team member will reach out to you shortly on WhatsApp.\n\n` +
       `You can also reach us directly:\n` +
-      `📧 Email: hello@munchingo.com\n` +
+      `📧 Email: info.munchingo@gmail.com\n` +
       `🌐 Website: www.munchingo.com\n\n` +
       `We typically respond within a few hours. Thanks for your patience! 🍪`
   );
@@ -392,7 +392,7 @@ async function handleCancellation(to) {
     );
   } catch (err) {
     console.error('[CANCEL] Error:', err.message);
-    await wa.sendText(to, `Something went wrong while cancelling. Please contact us at hello@munchingo.com.`);
+    await wa.sendText(to, `Something went wrong while cancelling. Please contact us at info.munchingo@gmail.com.`);
   }
 }
 
@@ -452,7 +452,7 @@ async function resendPaymentLink(to, name) {
     console.error('[RESEND] Error:', err.message);
     await wa.sendText(
       to,
-      `Couldn't generate a link right now. Please try again in a moment or contact us at hello@munchingo.com.`
+      `Couldn't generate a link right now. Please try again in a moment or contact us at info.munchingo@gmail.com.`
     );
   }
 }
@@ -853,7 +853,7 @@ async function routeInteractive(to, interactive, name) {
     case 'btn_contact':
       return wa.sendText(
         to,
-        `📞 *Reach us directly:*\n\nEmail: hello@munchingo.com\nWebsite: www.munchingo.com\n\nWe typically reply within a few hours. 🍪`
+        `📞 *Reach us directly:*\n\nEmail: info.munchingo@gmail.com\nWebsite: www.munchingo.com\n\nWe typically reply within a few hours. 🍪`
       );
     case 'btn_bulk_flow':
       return wa.sendFlow(to, {

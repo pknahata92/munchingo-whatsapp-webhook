@@ -217,6 +217,31 @@ async function getOrdersPaidSince(sinceISO, untilISO) {
   return data || [];
 }
 
+async function getOrderByPaymentId(paymentId) {
+  const { data, error } = await db()
+    .from('orders')
+    .select('*')
+    .eq('payment_id', paymentId)
+    .maybeSingle();
+
+  if (error) { console.error('[DB] getOrderByPaymentId error:', error.message); return null; }
+  return data;
+}
+
+/**
+ * A fully refunded paid order becomes 'cancelled' (an existing status, so no
+ * schema/migration dependency) and drops out of the daily packing list.
+ */
+async function markOrderRefunded(orderId) {
+  const { error } = await db()
+    .from('orders')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .eq('order_id', orderId);
+
+  if (error) throw new Error(`Supabase update (refunded) failed: ${error.message}`);
+  console.log(`[DB] Order ${orderId} marked cancelled after full refund`);
+}
+
 module.exports = {
   saveOrder,
   updateOrderAddress,
@@ -229,5 +254,7 @@ module.exports = {
   getRecentOrders,
   getOrderByPaymentLinkId,
   getOrder,
+  getOrderByPaymentId,
+  markOrderRefunded,
   getOrdersPaidSince,
 };
