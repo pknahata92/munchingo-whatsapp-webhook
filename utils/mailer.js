@@ -200,7 +200,7 @@ async function sendCustomerConfirmationEmail({ email, orderId, customerName, ite
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
         <p style="margin:0 0 16px;font-size:14px;color:#555;">
-          Your payment for the order below has been confirmed. We'll pack it fresh and ship within 1-2 business days -- you'll get a tracking update on WhatsApp once it's dispatched.
+          Your payment for the order below has been confirmed. We'll pack your order and ship it from Bikaner, and message you on WhatsApp with an update once it's on its way.
         </p>
 
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px;">
@@ -269,7 +269,7 @@ async function sendSubscriptionRenewalEmail({ email, customerName, orderId, item
       </div>
       <div style="padding:22px 26px;background:#fffaf6;">
         <p style="margin:0 0 16px;font-size:14px;color:#555;">
-          It's time for your next Munchingo delivery. Tap below to pay and we'll pack it fresh and ship within 1-2 business days.
+          It's time for your next Munchingo delivery. Tap below to pay and we'll pack it and ship it from Bikaner.
         </p>
 
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:4px;">

@@ -190,9 +190,9 @@ async function sendShippingInfo(to) {
     to,
     `🚚 *Munchingo delivers across India!*\n\n` +
       `📍 We ship to all major cities & tier-2 towns\n` +
-      `⏱️ Standard delivery: 3–5 business days\n` +
+      `⏱️ Delivery time depends on your location — we'll share an estimate when you order\n` +
       `✅ No separate delivery charge — price is all-inclusive (₹${MIN_ORDER_VALUE} minimum order value)\n` +
-      `📦 Orders are packed fresh & sealed securely\n\n` +
+      `📦 Orders are packed & sealed securely\n\n` +
       `Questions about your area? Just ask!`,
     [
       { id: 'btn_products', title: '🛒 Order Now' },
