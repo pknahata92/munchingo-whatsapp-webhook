@@ -12,6 +12,10 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const SUPPORTED = ['en', 'hi'];
+// Hindi is off until the Hindi templates are approved at Meta: with ENABLE_HINDI unset
+// everyone is English, the picker never shows, and no Hindi message is attempted.
+// Turn on by setting ENABLE_HINDI=true on Render.
+const HINDI_ENABLED = () => process.env.ENABLE_HINDI === 'true';
 const cache = new Map(); // phone -> lang (this process only; DB is the truth)
 let _client = null;
 
@@ -22,6 +26,7 @@ function db() {
 const key = (phone) => String(phone || '').replace(/\D/g, '');
 
 async function getStoredLang(phone) {
+  if (!HINDI_ENABLED()) return 'en';
   const k = key(phone);
   if (!k) return 'en';
   if (cache.has(k)) return cache.get(k);
@@ -42,6 +47,7 @@ async function getLang(phone) {
 }
 
 async function setLang(phone, lang) {
+  if (!HINDI_ENABLED()) return;
   if (!SUPPORTED.includes(lang)) throw new Error(`Unsupported language: ${lang}`);
   const k = key(phone);
   cache.set(k, lang); // honour the choice immediately even if the DB write fails
@@ -55,4 +61,4 @@ async function setLang(phone, lang) {
   }
 }
 
-module.exports = { getStoredLang, getLang, setLang, SUPPORTED };
+module.exports = { HINDI_ENABLED, getStoredLang, getLang, setLang, SUPPORTED };
