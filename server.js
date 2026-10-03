@@ -177,12 +177,25 @@ app.post('/razorpay-webhook', async (req, res) => {
           .map((item) => `${item.quantity}x ${item.productName || item.product_retailer_id}`)
           .join(', ');
         try {
-          await wa.sendTemplate(phone, 'munchingo_order_confirmed', 'en', [
-            existing?.customer_name || 'there',
-            orderId,
-            itemsSummary || 'your order',
-            existing?.total,
-          ]);
+          // v1 (live, English only) promises 24h dispatch + tracking. Once Meta approves
+          // munchingo_order_confirmed_v2 (48h, English + Hindi), set
+          // ORDER_CONFIRMED_TEMPLATE=munchingo_order_confirmed_v2 on Render: the customer's
+          // saved language is then used. Same 4 variables either way.
+          if (process.env.ORDER_CONFIRMED_TEMPLATE === 'munchingo_order_confirmed_v2') {
+            await require('./utils/refundTemplates').sendScenario(phone, 'order_confirmed', {
+              customer_name: existing?.customer_name || 'there',
+              order_id: orderId,
+              items: itemsSummary || 'your order',
+              amount: existing?.total,
+            });
+          } else {
+            await wa.sendTemplate(phone, process.env.ORDER_CONFIRMED_TEMPLATE || 'munchingo_order_confirmed', 'en', [
+              existing?.customer_name || 'there',
+              orderId,
+              itemsSummary || 'your order',
+              existing?.total,
+            ]);
+          }
         } catch (err) {
           console.error('[WA] Failed to send order_confirmed template:', err.message);
         }

@@ -1,6 +1,7 @@
 'use strict';
 
 const wa = require('../utils/whatsapp');
+const { getStoredLang, setLang } = require('../utils/langPrefs');
 const { sendOrderEmail, sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
 const {
   saveOrder,
@@ -103,7 +104,34 @@ function generateOrderId() {
 }
 
 // ── Greet a new / returning user ──────────────────────────────────────────────
+async function sendLanguagePicker(to) {
+  await wa.sendButtons(
+    to,
+    `Welcome to *Munchingo* 🍪\nMunchingo में आपका स्वागत है 🍪\n\nPlease choose your language\nकृपया अपनी भाषा चुनें`,
+    [
+      { id: 'lang_en', title: 'English' },
+      { id: 'lang_hi', title: 'हिन्दी' },
+    ]
+  );
+}
+
 async function sendWelcome(to, name) {
+  // First chat ever: ask English / हिन्दी once. (getStoredLang returns null only
+  // when the lookup worked and there is no saved choice; DB trouble => 'en'.)
+  const stored = await getStoredLang(to);
+  if (stored === null) return sendLanguagePicker(to);
+  if (stored === 'hi') {
+    const hiGreeting = name ? `नमस्ते ${name}! 👋` : 'नमस्ते! 👋';
+    return wa.sendButtons(
+      to,
+      `${hiGreeting} *Munchingo* में आपका स्वागत है — शुद्ध देसी घी के आटे के कुकीज़, प्यार से बने। 🍪\n\nहम आपकी क्या मदद कर सकते हैं?`,
+      [
+        { id: 'btn_products', title: '🛒 उत्पाद देखें' },
+        { id: 'btn_order',    title: '📦 ऑर्डर करें' },
+        { id: 'btn_faq',      title: 'ℹ️ और जानकारी' },
+      ]
+    );
+  }
   const greeting = name ? `Hi ${name}! 👋` : 'Hey there! 👋';
   await wa.sendButtons(
     to,
@@ -847,6 +875,18 @@ async function routeInteractive(to, interactive, name) {
   else if (type === 'list_reply') buttonId = interactive.list_reply?.id;
 
   switch (buttonId) {
+    case 'lang_en':
+    case 'lang_hi': {
+      const chosen = buttonId === 'lang_hi' ? 'hi' : 'en';
+      await setLang(to, chosen);
+      await wa.sendText(
+        to,
+        chosen === 'hi'
+          ? `ठीक है, हम आपसे हिन्दी में बात करेंगे। 🙏\nऑर्डर, रिफंड और डिलीवरी के सभी अपडेट अब हिन्दी में आएँगे।`
+          : `Great — we'll keep things in English. 🙏\nOrder, refund and delivery updates will arrive in English.`
+      );
+      return sendWelcome(to, name);
+    }
     case 'btn_products':    return sendProductList(to);
     case 'btn_order':       return sendOrderInstructions(to);
     case 'btn_faq':         return sendFAQ(to);

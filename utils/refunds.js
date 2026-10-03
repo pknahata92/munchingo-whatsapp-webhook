@@ -2,12 +2,15 @@
 
 const wa = require('./whatsapp');
 const { sendRefundEmail, sendHumanHandoffAlert } = require('./mailer');
+const { sendScenario } = require('./refundTemplates');
+const { getLang } = require('./langPrefs');
 
 /**
- * Tell a customer their refund was processed. Tries WhatsApp (works inside the
- * 24h window), then email (if they gave one). If neither reaches them, emails
- * the owner so the customer can be messaged by hand — free-form WhatsApp text
- * fails outside the 24h window, and no refund template is approved yet.
+ * Tell a customer their refund was processed. Tries the approved WhatsApp
+ * template first (works outside the 24h window), falls back to free text
+ * (works inside it) while the template is still pending/unapproved, then email
+ * (if they gave one). If nothing reaches them, emails the owner so the customer
+ * can be messaged by hand. Templates: utils/refundTemplates.js.
  */
 async function notifyRefund(order, amountRupees, isFull) {
   const name  = order.customer_name || 'there';
@@ -15,6 +18,23 @@ async function notifyRefund(order, amountRupees, isFull) {
   let delivered = false;
 
   if (phone) {
+    try {
+      const lang = await getLang(phone);
+      const reason = lang === 'hi' ? 'आपके ऑर्डर में एक समायोजन' : 'an adjustment to your order';
+      await sendScenario(
+        phone,
+        isFull ? 'refund_full' : 'refund_partial',
+        isFull
+          ? { customer_name: name, order_id: order.order_id, amount: amountRupees }
+          : { customer_name: name, amount: amountRupees, order_id: order.order_id, reason }
+      , lang);
+      delivered = true;
+    } catch (tplErr) {
+      console.warn(`[REFUND] Template not delivered for ${order.order_id} (${tplErr.message}) — trying free text`);
+    }
+  }
+
+  if (phone && !delivered) {
     try {
       await wa.sendText(
         phone,
