@@ -39,6 +39,16 @@ function payload(t) {
 (async () => {
   const problems = validate();
   if (problems.length) { console.error('Validation failed:\n - ' + problems.join('\n - ')); process.exit(1); }
+  if (submit) {
+    const tok = process.env.WHATSAPP_TOKEN || '';
+    const missing = ['WABA_ID', 'WHATSAPP_TOKEN'].filter((k) => !process.env[k]);
+    if (missing.length) { console.error(`Missing in .env: ${missing.join(', ')}`); process.exit(1); }
+    // Meta tokens are one unbroken string (usually starting "EAA"); stray quotes/spaces/newlines are the usual cause of error 190.
+    if (/\s|["']/.test(tok) || !tok.startsWith('EAA')) {
+      console.error('WHATSAPP_TOKEN looks malformed (should start with EAA, no spaces or quotes). Re-copy it into .env.');
+      process.exit(1);
+    }
+  }
   const list = ENTRIES.filter((t) => !only || t.name === only);
   console.log(`${list.length} template(s) (English + Hindi) validated OK${submit ? '' : ' (dry run — pass --submit to send)'}\n`);
 
@@ -52,7 +62,9 @@ function payload(t) {
       );
       console.log(`SUBMITTED ${t.name} (${t.lang}) → id ${r.data.id}, status ${r.data.status}, category ${r.data.category}`);
     } catch (e) {
-      console.error(`FAILED ${t.name} (${t.lang}):`, JSON.stringify(e.response?.data?.error || e.message));
+      const err = e.response?.data?.error || e.message;
+      console.error(`FAILED ${t.name} (${t.lang}):`, JSON.stringify(err));
+      if (err && err.code === 190) { console.error('Auth error — stopping. Fix WHATSAPP_TOKEN (or WABA_ID) and re-run.'); process.exit(1); }
     }
   }
 })();
