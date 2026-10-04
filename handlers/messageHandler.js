@@ -115,6 +115,18 @@ async function sendLanguagePicker(to) {
   );
 }
 
+// Used by the text commands above and by the picker buttons: save the choice and confirm.
+async function changeLanguage(to, name, chosen) {
+  await setLang(to, chosen);
+  await wa.sendText(
+    to,
+    chosen === 'hi'
+      ? `ठीक है, हम आपसे हिन्दी में बात करेंगे। 🙏\nऑर्डर, रिफंड और डिलीवरी के सभी अपडेट अब हिन्दी में आएँगे।\n\nभाषा बदलने के लिए कभी भी *भाषा* या *language* लिखें।`
+      : `Great — we'll keep things in English. 🙏\nOrder, refund and delivery updates will arrive in English.\n\nTo change language anytime, type *language* or *भाषा*.`
+  );
+  return sendWelcome(to, name);
+}
+
 async function sendWelcome(to, name) {
   // First chat ever: ask English / हिन्दी once. (getStoredLang returns null only
   // when the lookup worked and there is no saved choice; DB trouble => 'en'.)
@@ -667,6 +679,14 @@ async function completeAddressCollection(to, pendingOrder, address, email) {
 async function routeText(to, text, name) {
   const t = text.toLowerCase().trim();
 
+  // ── 0. Language change — before greetings, since "hindi" starts with "hi" ──
+  // Whole-message matches only, so an address or note that merely contains one of these words is untouched.
+  if (HINDI_ENABLED()) {
+    if (/^(hindi|हिन्दी|हिंदी|in hindi|hindi me|hindi mein|हिन्दी में|हिंदी में)\s*[.!]?$/.test(t)) return changeLanguage(to, name, 'hi');
+    if (/^(english|इंग्लिश|अंग्रेज़ी|अंग्रेजी|in english)\s*[.!]?$/.test(t))                          return changeLanguage(to, name, 'en');
+    if (/^(language|change language|lang|bhasha|भाषा|भाषा बदलें|भाषा बदलो)\s*[.!?]?$/.test(t))       return sendLanguagePicker(to);
+  }
+
   // ── 1. Greetings (skip all other checks) ──────────────────────────────────
   if (/^(hi|hello|hey|namaste|hola|start|menu)/.test(t)) {
     return sendWelcome(to, name);
@@ -878,15 +898,7 @@ async function routeInteractive(to, interactive, name) {
     case 'lang_en':
     case 'lang_hi': {
       if (!HINDI_ENABLED()) return sendWelcome(to, name); // stale picker button: stay English
-      const chosen = buttonId === 'lang_hi' ? 'hi' : 'en';
-      await setLang(to, chosen);
-      await wa.sendText(
-        to,
-        chosen === 'hi'
-          ? `ठीक है, हम आपसे हिन्दी में बात करेंगे। 🙏\nऑर्डर, रिफंड और डिलीवरी के सभी अपडेट अब हिन्दी में आएँगे।`
-          : `Great — we'll keep things in English. 🙏\nOrder, refund and delivery updates will arrive in English.`
-      );
-      return sendWelcome(to, name);
+      return changeLanguage(to, name, buttonId === 'lang_hi' ? 'hi' : 'en');
     }
     case 'btn_products':    return sendProductList(to);
     case 'btn_order':       return sendOrderInstructions(to);
