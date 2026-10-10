@@ -310,15 +310,20 @@ app.post('/razorpay-webhook', async (req, res) => {
 // reads and emails every customer's name/phone/address for the window.
 app.get('/internal/daily-digest', async (req, res) => {
   const secret = process.env.DIGEST_SECRET;
-  if (!secret) {
-    console.warn('[DIGEST] DIGEST_SECRET not set — refusing to run');
-    return res.sendStatus(503);
-  }
   const provided = req.query.secret || '';
-  const expectedBuf = Buffer.from(secret);
+  const expectedBuf = Buffer.from(secret || '');
   const providedBuf = Buffer.from(String(provided));
-  const matches = expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
-  if (!matches) return res.sendStatus(403);
+  const withSecret = !!secret && expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
+
+  // The scheduled 8:00 AM trigger (Supabase pg_cron) carries no secret, so a bare call is allowed only for
+  // the harmless default: the morning window (7:30 AM to noon IST), no options, and the once-a-day guard below
+  // means it can send at most one email a day, to the owner only. Anything else needs the secret.
+  if (!withSecret) {
+    const ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+    const minutes = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+    const bare = !req.query.secret && !req.query.date && !req.query.force;
+    if (!bare || minutes < 450 || minutes > 720) return res.sendStatus(secret ? 403 : 503);
+  }
 
   try {
     const { getOrdersPaidSince, getInvoicesByOrderIds } = require('./utils/database');
@@ -332,7 +337,7 @@ app.get('/internal/daily-digest', async (req, res) => {
       ? req.query.date
       : new Date(Date.parse(todayIst + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
     const { claimDigestDay, releaseDigestDay } = require('./utils/database');
-    const force = req.query.force === '1' || /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '');
+    const force = withSecret && (req.query.force === '1' || /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || ''));
     if (!force && !(await claimDigestDay(dayIst))) {
       return res.json({ ok: true, day: dayIst, skipped: 'already sent' });
     }

@@ -1,16 +1,15 @@
--- Reliable schedules for Munchingo, run ONCE in the Supabase SQL editor.
--- Why: GitHub's free scheduler runs the 8:00 AM job 6+ hours late (observed 14:00-16:40 IST daily),
--- and the same problem makes the "keep warm" ping unreliable. Supabase's pg_cron runs to the minute.
--- Before running: replace PASTE_DIGEST_SECRET with the DIGEST_SECRET value from Render.
--- 02:30 UTC = 8:00 AM IST (pg_cron uses UTC).
+-- Reliable schedules for Munchingo, run ONCE in the Supabase SQL editor (no secret needed).
+-- Why: GitHub's free scheduler runs the 8:00 AM job 6+ hours late (observed 14:00-16:40 IST daily).
+-- Supabase's pg_cron runs to the minute. 02:30 UTC = 8:00 AM IST (pg_cron uses UTC).
+-- The summary endpoint accepts this bare call only between 7:30 AM and noon IST and sends at most once a day.
 
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
--- 8:00 AM IST daily: summary email of the previous day.
+-- 8:00 AM IST daily: email summary of the previous day.
 select cron.schedule('munchingo-daily-summary', '30 2 * * *', $$
   select net.http_get(
-    url := 'https://munchingo-whatsapp-webhook.onrender.com/internal/daily-digest?secret=PASTE_DIGEST_SECRET',
+    url := 'https://munchingo-whatsapp-webhook.onrender.com/internal/daily-digest',
     timeout_milliseconds := 120000
   );
 $$);
