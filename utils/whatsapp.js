@@ -47,6 +47,38 @@ async function sendTemplate(to, templateName, languageCode, bodyParams) {
   });
 }
 
+
+// ── Upload a file to WhatsApp media (returns the media id) ───────────────────
+async function uploadMedia(buffer, mimeType, filename) {
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mimeType);
+  form.append('file', new Blob([buffer], { type: mimeType }), filename);
+  const res = await axios.post(`${BASE_URL}/${process.env.PHONE_NUMBER_ID}/media`, form, {
+    headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+    maxBodyLength: Infinity,
+  });
+  return res.data.id;
+}
+
+// ── Approved template with a PDF document header (the invoice) ───────────────
+async function sendDocumentTemplate(to, templateName, languageCode, { mediaId, filename }, bodyParams) {
+  return sendMessage({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      components: [
+        { type: 'header', parameters: [{ type: 'document', document: { id: mediaId, filename } }] },
+        { type: 'body', parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })) },
+      ],
+    },
+  });
+}
+
 // ── Flow message (structured form, replaces free-text collection) ─────────────
 async function sendFlow(to, { flowId, bodyText, ctaText, screenId, headerText, data }) {
   return sendMessage({
@@ -182,6 +214,8 @@ async function sendImage(to, imageUrl, caption) {
 
 module.exports = {
   sendTemplate,
+  uploadMedia,
+  sendDocumentTemplate,
   sendFlow,
   sendText,
   sendButtons,

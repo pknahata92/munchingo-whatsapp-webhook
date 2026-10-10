@@ -48,11 +48,11 @@ async function saveOrder({ orderId, customerPhone, customerName, customerEmail, 
 /**
  * Save the customer's delivery address and advance to 'pending_payment'.
  */
-async function updateOrderAddress(orderId, rawAddress) {
+async function updateOrderAddress(orderId, rawAddress, parts) {
   const { error } = await db()
     .from('orders')
     .update({
-      delivery_address: { raw: rawAddress },
+      delivery_address: { raw: rawAddress, ...(parts || {}) },
       status: 'pending_payment',
     })
     .eq('order_id', orderId);
@@ -242,7 +242,50 @@ async function markOrderRefunded(orderId) {
   console.log(`[DB] Order ${orderId} marked cancelled after full refund`);
 }
 
+// ── GST invoices (see invoices_migration.sql) ───────────────────────────────
+async function getInvoiceByOrder(orderId) {
+  const { data, error } = await db().from('invoices').select('*').eq('order_id', orderId).maybeSingle();
+  if (error) throw new Error(`Supabase select (invoice) failed: ${error.message}`);
+  return data;
+}
+
+async function reserveInvoiceNumber(fy) {
+  const { data, error } = await db().rpc('next_invoice_seq', { p_fy: fy });
+  if (error) throw new Error(`Supabase rpc next_invoice_seq failed: ${error.message}`);
+  return data;
+}
+
+async function saveInvoice({ invoice, fy, seq }) {
+  const { data, error } = await db().from('invoices').insert({
+    order_id:      invoice.orderId,
+    invoice_no:    invoice.invoiceNo,
+    fy,
+    seq,
+    issued_at:     invoice.issuedAt,
+    buyer_state:   invoice.buyer.state || null,
+    supply_type:   invoice.supplyType,
+    total_paise:   invoice.totalPaise,
+    taxable_paise: invoice.taxablePaise,
+    cgst_paise:    invoice.cgstPaise,
+    sgst_paise:    invoice.sgstPaise,
+    igst_paise:    invoice.igstPaise,
+    data:          invoice,
+  }).select().single();
+  if (error) throw new Error(`Supabase insert (invoice) failed: ${error.message}`);
+  console.log(`[DB] Invoice ${invoice.invoiceNo} saved for ${invoice.orderId}`);
+  return data;
+}
+
+async function markInvoice(orderId, fields) {
+  const { error } = await db().from('invoices').update(fields).eq('order_id', orderId);
+  if (error) console.error(`[DB] markInvoice(${orderId}) failed:`, error.message);
+}
+
 module.exports = {
+  getInvoiceByOrder,
+  reserveInvoiceNumber,
+  saveInvoice,
+  markInvoice,
   saveOrder,
   updateOrderAddress,
   updateOrderEmail,

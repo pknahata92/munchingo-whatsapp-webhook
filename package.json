@@ -12,6 +12,7 @@
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "pdfkit": "^0.15.2",
     "resend": "^4.0.0"
   },
   "devDependencies": {

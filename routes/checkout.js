@@ -95,7 +95,7 @@ function normalisePhone(rawPhone) {
 // (who submits once), tight enough to blunt scripted abuse.
 router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
-          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote } = req.body;
+          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts } = req.body;
 
       if (!name || !phone || !address || !Array.isArray(items) || !items.length || !total) {
               return res.status(400).json({ ok: false, error: 'Missing required fields: name, phone, address, items, total' });
@@ -174,7 +174,12 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
               discountAmount,
               giftNote: (giftNote || '').trim() || null,
       });
-          await updateOrderAddress(orderId, address);
+          // Structured parts (state drives CGST/SGST vs IGST on the invoice). Strings only, length-capped.
+          const parts = {};
+          for (const k of ['state', 'city', 'pincode']) {
+            if (addressParts && typeof addressParts[k] === 'string') parts[k] = addressParts[k].trim().slice(0, 60);
+          }
+          await updateOrderAddress(orderId, address, parts);
 
       // 2. Create Razorpay Payment Link via the EXISTING utils/razorpay.js
       //    (real createPaymentLink returns { id, url }, takes amount in rupees)

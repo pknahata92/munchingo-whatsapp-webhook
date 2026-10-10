@@ -180,157 +180,58 @@ async function sendBulkInquiryAlert({ customerPhone, customerName, company_name,
   console.log(`[MAILER] Bulk inquiry alert sent for ${customerPhone}`);
 }
 
-async function sendCustomerConfirmationEmail({ email, orderId, customerName, items, total, timestamp }) {
-  const itemRows = items
-    .map(
-      (item) =>
-        `<tr>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${escapeHtml(item.productName || item.product_retailer_id)}</td>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:center;">${item.quantity}</td>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:right;">&#8377;${item.item_price * item.quantity}</td>
-        </tr>`
-    )
-    .join('');
-
-  const html = `
-    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
-      <div style="background:#6B3A2A;padding:22px 26px;">
-        <h2 style="color:#fff;margin:0;font-size:20px;">&#127850; Thanks for your order, ${escapeHtml(customerName)}!</h2>
-        <p style="color:#f5deb3;margin:6px 0 0;font-size:14px;">Order #${orderId}</p>
-      </div>
-      <div style="padding:22px 26px;background:#fffaf6;">
-        <p style="margin:0 0 16px;font-size:14px;color:#555;">
-          Your payment for the order below has been confirmed. We'll pack your order and ship it from Bikaner, and message you on WhatsApp with an update once it's on its way.
-        </p>
-
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:8px;">
-          <tr><td style="padding:4px 0;color:#888;width:110px;">Order date</td><td style="padding:4px 0;">${new Date(timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td></tr>
-        </table>
-
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:12px;">
-          <thead>
-            <tr style="background:#f5e6d8;">
-              <th style="padding:9px 14px;text-align:left;border-bottom:2px solid #e0d0c0;">Product</th>
-              <th style="padding:9px 14px;text-align:center;border-bottom:2px solid #e0d0c0;">Qty</th>
-              <th style="padding:9px 14px;text-align:right;border-bottom:2px solid #e0d0c0;">Amount</th>
-            </tr>
-          </thead>
-          <tbody>${itemRows}</tbody>
-          <tfoot>
-            <tr style="background:#f5e6d8;">
-              <td colspan="2" style="padding:10px 14px;font-weight:700;font-size:15px;">Total</td>
-              <td style="padding:10px 14px;font-weight:700;font-size:15px;text-align:right;">&#8377;${total}</td>
-            </tr>
-          </tfoot>
-        </table>
-        ${gstBreakupHtml(total)}
-
-        <p style="margin:20px 0 0;font-size:13px;color:#999;">
-          Questions about your order? WhatsApp us at +91 99889 92024 or reply to this email.
-        </p>
-      </div>
-    </div>
-  `;
-
-  const { error } = await resend.emails.send({
+// Payment-confirmed email to the customer. `invoice` + `pdf` are optional: if invoice
+// generation failed (or the migration hasn't been run) the email still goes out without them.
+// The owner is BCC'd so the invoice copy lands in the NOTIFY_EMAIL inbox too.
+async function sendCustomerConfirmationEmail({ order, invoice, pdf }) {
+  const t = require('./emailTemplates');
+  const payload = {
     from: 'Munchingo Orders <orders@munchingo.com>',
-    to: [email],
-    subject: `Your Munchingo order #${orderId} is confirmed!`,
-    html,
-  });
-
+    to: [order.customer_email],
+    subject: `Order confirmed: your Munchingo box is on its way to the oven (#${order.order_id})`,
+    html: t.customerConfirmationHtml({ order, invoice }),
+  };
+  if (process.env.NOTIFY_EMAIL) payload.bcc = [process.env.NOTIFY_EMAIL];
+  if (invoice && pdf) payload.attachments = [{ filename: `Munchingo-Invoice-${invoice.invoiceNo.replace(/\//g, '-')}.pdf`, content: pdf.toString('base64') }];
+  const { error } = await resend.emails.send(payload);
   if (error) throw new Error(error.message);
-  console.log(`[MAILER] Customer confirmation sent for #${orderId}`);
+  console.log(`[MAILER] Customer confirmation sent for #${order.order_id}${invoice ? ' with invoice ' + invoice.invoiceNo : ''}`);
 }
 
-/**
- * "Subscribe & Save" renewal reminder — sent each cycle by the
- * /internal/subscription-renewals cron alongside a best-effort WhatsApp
- * text. This is the RELIABLE channel for renewals (see subscriptions_
- * migration.sql's comment on why WhatsApp alone can't be trusted here).
- */
+// Owner heads-up when money actually lands (the checkout-time email fires before payment).
+async function sendOwnerPaidEmail({ order, invoice, pdf }) {
+  const t = require('./emailTemplates');
+  const payload = {
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [process.env.NOTIFY_EMAIL],
+    subject: `Paid: Rs.${invoice ? invoice.totalPaise / 100 : order.total} from ${order.customer_name} (#${order.order_id})`,
+    html: t.ownerPaidHtml({ order, invoice }),
+  };
+  if (invoice && pdf) payload.attachments = [{ filename: `Munchingo-Invoice-${invoice.invoiceNo.replace(/\//g, '-')}.pdf`, content: pdf.toString('base64') }];
+  const { error } = await resend.emails.send(payload);
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Owner payment alert sent for #${order.order_id}`);
+}
+
 async function sendSubscriptionRenewalEmail({ email, customerName, orderId, items, discountPct, total, paymentUrl }) {
-  const itemRows = items
-    .map(
-      (item) =>
-        `<tr>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;">${escapeHtml(item.productName)}</td>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:center;">${item.quantity}</td>
-          <td style="padding:8px 14px;border-bottom:1px solid #f0e6d3;text-align:right;">&#8377;${item.item_price * item.quantity}</td>
-        </tr>`
-    )
-    .join('');
-
-  const html = `
-    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
-      <div style="background:#0B2D50;padding:22px 26px;">
-        <h2 style="color:#fff;margin:0;font-size:20px;">&#127850; Your Munchingo box is ready, ${escapeHtml(customerName)}!</h2>
-        <p style="color:#CEAD5E;margin:6px 0 0;font-size:14px;">Subscribe &amp; Save — ${discountPct}% off, order #${orderId}</p>
-      </div>
-      <div style="padding:22px 26px;background:#fffaf6;">
-        <p style="margin:0 0 16px;font-size:14px;color:#555;">
-          It's time for your next Munchingo delivery. Tap below to pay and we'll pack it and ship it from Bikaner.
-        </p>
-
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:4px;">
-          <thead>
-            <tr style="background:#f5e6d8;">
-              <th style="padding:9px 14px;text-align:left;border-bottom:2px solid #e0d0c0;">Product</th>
-              <th style="padding:9px 14px;text-align:center;border-bottom:2px solid #e0d0c0;">Qty</th>
-              <th style="padding:9px 14px;text-align:right;border-bottom:2px solid #e0d0c0;">Amount</th>
-            </tr>
-          </thead>
-          <tbody>${itemRows}</tbody>
-          <tfoot>
-            <tr style="background:#f5e6d8;">
-              <td colspan="2" style="padding:10px 14px;font-weight:700;font-size:15px;">Total (after ${discountPct}% subscriber discount)</td>
-              <td style="padding:10px 14px;font-weight:700;font-size:15px;text-align:right;">&#8377;${total}</td>
-            </tr>
-          </tfoot>
-        </table>
-        ${gstBreakupHtml(total)}
-
-        <div style="text-align:center;margin:24px 0 4px;">
-          <a href="${paymentUrl}" style="display:inline-block;background:#CEAD5E;color:#0B2D50;font-weight:700;padding:12px 28px;border-radius:6px;text-decoration:none;font-size:15px;">Pay ₹${total} to confirm</a>
-        </div>
-
-        <p style="margin:20px 0 0;font-size:13px;color:#999;">
-          Delivering to a different address this time, or want to skip/pause/cancel this subscription? Just reply to this email or WhatsApp us at +91 99889 92024.
-        </p>
-      </div>
-    </div>
-  `;
-
+  const t = require('./emailTemplates');
   const { error } = await resend.emails.send({
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [email],
-    subject: `Your Munchingo subscription box is ready — #${orderId}`,
-    html,
+    subject: `Your next Munchingo box is ready (#${orderId})`,
+    html: t.subscriptionRenewalHtml({ customerName, orderId, items, discountPct, total, paymentUrl }),
   });
-
   if (error) throw new Error(error.message);
   console.log(`[MAILER] Subscription renewal email sent for #${orderId}`);
 }
 
 async function sendRefundEmail({ email, customerName, orderId, amount, isFull }) {
-  const html = `
-    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
-      <div style="background:#6B3A2A;padding:22px 26px;">
-        <h2 style="color:#fff;margin:0;font-size:20px;">Your Munchingo refund is on its way</h2>
-        <p style="color:#f5deb3;margin:6px 0 0;font-size:14px;">Order #${escapeHtml(orderId)}</p>
-      </div>
-      <div style="padding:22px 26px;background:#fffaf6;font-size:14px;color:#444;line-height:1.6;">
-        <p style="margin:0 0 12px;">Hi ${escapeHtml(customerName) || 'there'},</p>
-        <p style="margin:0 0 12px;">We have refunded <strong>&#8377;${escapeHtml(amount)}</strong> for order #${escapeHtml(orderId)}${isFull ? ', and the order is now cancelled' : ''}.</p>
-        <p style="margin:0 0 12px;">It should reach your original payment method within 5&ndash;7 working days, depending on your bank.</p>
-        <p style="margin:0;color:#888;font-size:13px;">Questions? Reply to this email or WhatsApp us at +91 99889 92024.</p>
-      </div>
-    </div>`;
+  const t = require('./emailTemplates');
   const { error } = await resend.emails.send({
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [email],
     subject: `Your Munchingo refund for order #${orderId}`,
-    html,
+    html: t.refundHtml({ customerName, orderId, amount, isFull }),
   });
   if (error) throw new Error(error.message);
   console.log(`[MAILER] Refund email sent for #${orderId}`);
@@ -462,4 +363,4 @@ async function sendDailyDigestEmail({ orders, windowLabel }) {
   console.log(`[MAILER] Daily digest sent — ${orders.length} orders`);
 }
 
-module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };
+module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };

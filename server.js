@@ -201,21 +201,13 @@ app.post('/razorpay-webhook', async (req, res) => {
         }
       }
 
-      // Customer email confirmation — optional, only sent if the customer gave an email
-      if (existing?.customer_email) {
-        try {
-          const { sendCustomerConfirmationEmail } = require('./utils/mailer');
-          await sendCustomerConfirmationEmail({
-            email:        existing.customer_email,
-            orderId,
-            customerName: existing.customer_name,
-            items:        existing.items,
-            total:        existing.total,
-            timestamp:    existing.created_at,
-          });
-        } catch (err) {
-          console.error('[MAILER] Failed to send customer confirmation:', err.message);
-        }
+      // GST invoice, customer + owner emails (invoice attached), WhatsApp invoice and the
+      // Zoho Books entry. Each step is isolated inside processPaidOrder, so nothing here
+      // can fail the webhook. `existing` was read before markOrderPaid, so add the payment id.
+      if (existing) try {
+        await require('./utils/invoiceFlow').processPaidOrder({ order: { ...existing, payment_id: paymentId }, phone });
+      } catch (err) {
+        console.error('[INVOICE] Unexpected failure after payment:', err.message);
       }
       return;
     }
