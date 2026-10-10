@@ -35,6 +35,10 @@ async function login(email) {
   ok((await call('/stock', s.token)).s === 403, 'staff 403 on GET /stock');
   ok((await call('/team', s.token)).s === 403, 'staff 403 on GET /team');
 
+  ok((await call(`/orders/${A}/issue-invoice`, s.token, {})).s === 403, 'staff 403 on issue-invoice');
+  ok((await call(`/orders/${A}/issue-invoice`, o.token, {})).s === 409, 'issue-invoice refuses when an invoice exists');
+  ok((await call(`/orders/MNG-FFFF-1010/advance`, o.token, { to: 'packed' })).j.ok && (await call(`/orders/MNG-FFFF-1010/advance`, o.token, { to: 'shipped', awb: '  ' })).s === 400, 'shipping needs a tracking number');
+
   // no / bad token
   ok((await call('/orders', null)).s === 401, 'no token 401');
   ok((await call('/orders', s.token + 'x')).s === 401, 'tampered token 401');

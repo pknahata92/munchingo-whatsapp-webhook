@@ -257,7 +257,7 @@ a{color:var(--terra)}
       if (box && state.sel[o.id]) box.checked = true;
       list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
         h('div', {},
-          h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? ' 🎁' : ''), h('span', {}, inr(o.total))),
+          h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? ' 🎁' : '', o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, '⚠ NO INVOICE') : null), h('span', {}, inr(o.total))),
           h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '')),
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));
@@ -374,6 +374,9 @@ a{color:var(--terra)}
         h('button', { class: 'btn ghost small', onclick: function () { fetch('/admin/api/orders/' + encodeURIComponent(o.id) + '/invoice.pdf', { headers: { Authorization: 'Bearer ' + token } }).then(function (r) { return r.ok ? r.blob() : Promise.reject(); }).then(function (b) { window.open(URL.createObjectURL(b), '_blank'); }).catch(function () { toast('Could not open the invoice'); }); } }, 'View invoice PDF'),
         state.role !== 'owner' ? null : h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
 
+    if (o.invoice_missing && o.state !== 'test') p.appendChild(h('div', { class: 'gift', style: 'background:#FDECEA;border-color:var(--red)' }, h('b', { style: 'color:var(--red)' }, '⚠ No invoice was created for this paid order'),
+      h('p', { class: 'muted' }, state.role === 'owner' ? 'The payment went through but the invoice step failed. This creates the invoice and sends it to the customer.' : 'Tell Prashant. It does not stop you packing the order.'),
+      state.role === 'owner' ? h('button', { class: 'btn small', onclick: function (e) { if (confirm('Create the invoice and send it to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/issue-invoice', {}, function (j) { return 'Invoice ' + j.invoiceNo + ' created and sent'; }, e.target); } }, 'Create invoice now') : null));
     if (o.credit_notes.length) p.appendChild(section('Refunds & credit notes', o.credit_notes.map(function (c) { return h('div', { class: 'line' }, h('div', {}, c.no, h('small', {}, c.reason + (c.full ? ' · order closed' : '') + ' · ' + when(c.at))), h('div', {}, inr(c.amount))); })));
 
     var adv = '/admin/api/orders/' + encodeURIComponent(o.id) + '/advance';
@@ -389,7 +392,7 @@ a{color:var(--terra)}
     if (o.state === 'unpaid' && state.role === 'owner') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
       return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';

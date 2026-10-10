@@ -10,7 +10,8 @@
 function rateLimit({ windowMs = 60_000, max = 10 } = {}) {
   const hits = new Map(); // ip -> [timestamps]; one map PER limiter so routes with different windows don't trim each other
   return function (req, res, next) {
-    const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+    // req.ip honours `trust proxy` (set in server.js): the address Render's proxy saw, not a header the caller can fake.
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
     const now = Date.now();
     const windowStart = now - windowMs;
 
@@ -21,6 +22,7 @@ function rateLimit({ windowMs = 60_000, max = 10 } = {}) {
 
     timestamps.push(now);
     hits.set(ip, timestamps);
+    if (hits.size > 5000) for (const [k, v] of hits) if (!v.length || v[v.length - 1] <= windowStart) hits.delete(k);   // keep memory bounded
     next();
   };
 }

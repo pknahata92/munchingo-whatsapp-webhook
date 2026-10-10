@@ -56,7 +56,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
     address: (o.delivery_address && o.delivery_address.raw) || '', gift_note: o.gift_note || '',
     coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
     payment_id: o.payment_id || '', boxes: items.reduce((n, i) => n + i.boxes, 0), items,
-    invoice_no: invoice ? invoice.invoice_no : '', supply: invoice ? invoice.supply_type : '',
+    invoice_missing: !invoice && o.status === 'paid' && !!o.payment_id, invoice_no: invoice ? invoice.invoice_no : '', supply: invoice ? invoice.supply_type : '',
     received: money && money.live && o.payment_id in money.byId ? money.byId[o.payment_id] : (state === 'unpaid' || state === 'cancelled' || state === 'test' ? 0 : Math.max(0, Number(o.total) - rupees(refundedPaise))),
     refunded: rupees(refundedPaise), refundable: rupees(Math.max(0, totalPaise - refundedPaise)),
     credit_notes: creditNotes.map((c) => ({ no: c.credit_note_no, amount: rupees(c.amount_paise), reason: (c.data && c.data.reasonLabel) || c.reason_code || '', at: c.issued_at, full: c.is_full })),
@@ -123,6 +123,18 @@ async function startRefund({ orderId, amountRupees, reasonCode = 'other', note =
   console.log(`[ADMIN] Refund ${refund.id} started for ${orderId}: Rs ${amountPaise / 100} (${reasonCode})`);
   await logEvent(orderId, 'refund_started', actor, { meta: { refundId: refund.id, amountRupees: amountPaise / 100, reason: reasonCode, orderWas: shaped.state } });
   return { refundId: refund.id, amountRupees: amountPaise / 100, reason: reasonOf(reasonCode).label };
+}
+
+// Owner: a paid order whose invoice was never created (the post-payment steps log errors but do not retry).
+// Runs the same steps as the payment webhook (invoice, emails, WhatsApp invoice, Zoho); safe to repeat, an existing invoice is reused.
+async function issueMissingInvoice(orderId, actor) {
+  const { order, invoice } = await getOrderDetail(orderId);
+  if (order.status !== 'paid') throw new AdminError('Only paid orders get an invoice.', 409);
+  if (invoice) throw new AdminError(`This order already has invoice ${invoice.invoice_no}. Use Resend invoice.`, 409);
+  const done = await require('./invoiceFlow').processPaidOrder({ order, phone: order.customer_phone });
+  if (!done || !done.invoice) throw new AdminError('The invoice could not be created. Check the server logs.', 500);
+  await logEvent(orderId, 'invoice_issued', actor, { meta: { invoiceNo: done.invoice.invoiceNo } });
+  return { invoiceNo: done.invoice.invoiceNo };
 }
 
 async function cancelUnpaid(orderId, actor) {
@@ -295,4 +307,4 @@ async function setStock({ slug, available, actor }) {
   return {};
 }
 
-module.exports = { AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

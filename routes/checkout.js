@@ -105,6 +105,9 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
         return res.status(403).json({ ok: false, closed: true, error: CLOSED_MESSAGE });
       }
 
+      if (typeof name !== 'string' || typeof address !== 'string' || name.length > 100 || address.length > 600) {
+        return res.status(400).json({ ok: false, error: 'Name or address looks too long. Please shorten it and try again.' });
+      }
       if (!name || !phone || !address || !Array.isArray(items) || !items.length || !total) {
               return res.status(400).json({ ok: false, error: 'Missing required fields: name, phone, address, items, total' });
       }
@@ -135,7 +138,10 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
 
       // "Subscribe & Save" requires an email on file — it's the only reliable
       // channel for renewal reminders (see subscriptions_migration.sql).
-      const trimmedEmail = (email || '').trim();
+      const trimmedEmail = String(email || '').trim().slice(0, 120);
+      if (trimmedEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmedEmail)) {
+        return res.status(400).json({ ok: false, error: 'That email address does not look right. Please check it.' });
+      }
       // A pre-order's dispatch date and tracking link only reach the customer by email (the 48-hour WhatsApp template is
       // skipped during the pre-order window), so the email is required until dispatch starts.
       if (require('../utils/launch').isPreorder() && !trimmedEmail) {
@@ -184,7 +190,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
               timestamp,
               couponCode: appliedCouponCode,
               discountAmount,
-              giftNote: (giftNote || '').trim() || null,
+              giftNote: String(giftNote || '').trim().slice(0, 300) || null,
       });
           // Structured parts (state drives CGST/SGST vs IGST on the invoice). Strings only, length-capped.
           const parts = {};

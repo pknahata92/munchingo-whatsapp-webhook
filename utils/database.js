@@ -91,17 +91,24 @@ async function updateOrderPaymentLink(orderId, { paymentLinkId, paymentLinkUrl }
 /**
  * Mark an order as paid after Razorpay confirms payment.
  */
+// Returns true only for the call that actually flipped the order to paid. A second, concurrent copy of the same
+// webhook gets false and must stop, otherwise it would reserve a second invoice number (a gap in the GST series)
+// and send everything twice.
 async function markOrderPaid(orderId, paymentId) {
-  const { error } = await db()
+  const { data, error } = await db()
     .from('orders')
     // updated_at is set explicitly (not relying on a DB trigger) because the
     // daily digest's getOrdersPaidSince() filters on this column to build the
     // packing list for orders that just became payable-for-shipping.
     .update({ status: 'paid', payment_id: paymentId, updated_at: new Date().toISOString() })
-    .eq('order_id', orderId);
+    .eq('order_id', orderId)
+    .neq('status', 'paid')
+    .select('order_id');
 
   if (error) throw new Error(`Supabase update (paid) failed: ${error.message}`);
-  console.log(`[DB] Order ${orderId} marked paid`);
+  const changed = (data || []).length > 0;
+  console.log(changed ? `[DB] Order ${orderId} marked paid` : `[DB] Order ${orderId} was already paid`);
+  return changed;
 }
 
 /**

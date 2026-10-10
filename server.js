@@ -40,6 +40,7 @@ function verifyMetaSignature(rawBody, signatureHeader) {
 }
 
 const app = express();
+app.set('trust proxy', 1);   // one proxy hop (Render): req.ip is the real client, used by the rate limiter
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 // Private admin page (login by emailed code; see utils/adminAuth.js and routes/admin.js)
@@ -155,7 +156,10 @@ app.post('/razorpay-webhook', async (req, res) => {
         return;
       }
 
-      await markOrderPaid(orderId, paymentId);
+      if (!(await markOrderPaid(orderId, paymentId))) {
+        console.log(`[RAZORPAY] Concurrent duplicate webhook for ${orderId} - ignoring`);
+        return;
+      }
       console.log(`[RAZORPAY] Order ${orderId} paid — paymentId: ${paymentId}`);
 
       if (existing?.coupon_code) {
