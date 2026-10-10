@@ -134,4 +134,21 @@ async function createRefund({ paymentId, amountPaise, notes }) {
   return res.data;
 }
 
-module.exports = { createRefund, createPaymentLink, expirePaymentLink, verifyWebhookSignature, orderIdFromReference };
+// Every payment Razorpay holds since `fromUnix` (read-only). Used by the admin page so "paid" means money really
+// received (captured minus refunded), not what the database says. Up to 1000 payments.
+async function listPayments(fromUnix) {
+  const out = [];
+  for (let skip = 0; skip < 1000; skip += 100) {
+    const res = await axios.get('https://api.razorpay.com/v1/payments', {
+      params: { from: fromUnix, count: 100, skip },
+      auth: { username: process.env.RAZORPAY_KEY_ID, password: process.env.RAZORPAY_KEY_SECRET },
+      timeout: 8000,
+    });
+    const items = (res.data && res.data.items) || [];
+    out.push(...items);
+    if (items.length < 100) break;
+  }
+  return out;
+}
+
+module.exports = { listPayments, createRefund, createPaymentLink, expirePaymentLink, verifyWebhookSignature, orderIdFromReference };

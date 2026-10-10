@@ -33,7 +33,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .card:hover{border-color:var(--terra)}.card .top{display:flex;justify-content:space-between;gap:8px;font-weight:700}
 .card .meta{color:var(--ink2);font-size:13px;margin-top:2px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
-.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
+.b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:30;overflow:auto}
 .sheet.on{display:block}.panel{background:var(--cream);max-width:640px;margin:0 auto;min-height:100%;padding:16px 16px 40px}
 @media(min-width:700px){.panel{margin:24px auto;min-height:0;border-radius:18px}}
@@ -46,6 +46,18 @@ main{max-width:980px;margin:0 auto;padding:16px}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 18px;border-radius:12px;display:none;z-index:50;max-width:92vw;text-align:center}
 .err{color:var(--red);font-size:13px;margin-top:8px;min-height:18px}.muted{color:var(--ink2);font-size:13px}
 a{color:var(--terra)}
+.money[hidden]{display:none}
+.hdrbtn{padding:6px 12px;min-height:34px;font-size:13px}
+@media(max-width:520px){header{gap:8px;padding:8px 10px}header img{height:30px}header small{display:none}}
+.money{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 14px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:8px;font-size:13px;color:var(--ink2)}.money b{color:var(--ink);font-size:15px}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:6px}
+.step{border:2px solid var(--line);background:var(--paper);border-radius:14px;padding:10px 4px;text-align:center;cursor:pointer;min-height:76px}
+.step b{display:block;font-size:26px;line-height:1.1}.step span{font-size:12px;font-weight:700;letter-spacing:.03em}.step small{display:block;font-size:10px;color:var(--ink2);margin-bottom:2px}
+.step.on{background:var(--navy);border-color:var(--navy);color:#fff}.step.on small{color:#ffffffbb}
+.hint{background:var(--band);border-radius:12px;padding:9px 12px;font-size:13px;margin:0 0 10px}
+.qa{margin-top:8px}.qa .btn{width:100%}
+.more{margin:0 0 8px}.more summary{cursor:pointer;color:var(--terra);font-weight:600;font-size:13px;padding:6px 0}
+.note{font-size:12px;color:var(--amber);margin:-6px 0 10px}
 .pick{display:flex;gap:10px;align-items:flex-start}.pick input{width:22px;min-height:22px;margin-top:3px;flex:none}.pick>div{flex:1;min-width:0}
 .tl{font-size:13px;color:var(--ink2)}.tl div{padding:4px 0;border-bottom:1px solid var(--line)}.tl div:last-child{border:0}.tl b{color:var(--ink)}
 .sw{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.sw:last-child{border:0}
@@ -78,12 +90,16 @@ a{color:var(--terra)}
 <div id="app" hidden>
   <header>
     <img src="/admin/logo.png" alt="Munchingo"><span class="sp"></span><small id="who"></small>
-    <button class="btn ghost small owner" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
+    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
   </header>
   <main>
-    <div class="tiles" id="tiles"></div>
+    <div class="money" id="tiles" hidden></div>
+    <p class="note" id="moneyNote" hidden></p>
+    <div class="flow" id="flow"></div>
+    <div class="hint" id="hint"></div>
     <div class="chips" id="chips"></div>
     <div class="row"><input id="q" placeholder="Search name, phone, address, pincode, order or invoice no."><button class="btn ghost small" id="reload">Refresh</button></div>
+    <details class="more"><summary>More filters, sorting and download</summary>
     <div class="ctl">
       <select id="sort" aria-label="Sort by">
         <option value="new">Newest first</option><option value="old">Oldest first</option>
@@ -98,8 +114,10 @@ a{color:var(--terra)}
       <button class="chip" id="fCoupon" type="button">Coupon used</button>
       <button class="chip" id="fSet" type="button">Gift sets</button>
     </div>
+    <div class="ctl"><button class="btn ghost small" id="csv" type="button">Download CSV</button><button class="btn ghost small" id="reset" type="button">Clear filters</button></div>
     <div class="ctl" id="customDates" hidden><label class="inl">From <input type="date" id="dFrom"></label><label class="inl">To <input type="date" id="dTo"></label></div>
-    <div class="bar"><span id="count"></span><span class="sp"></span><button class="btn ghost small" id="csv">Download CSV</button><button class="btn ghost small" id="reset">Clear filters</button></div>
+    </details>
+    <div class="bar"><span id="count"></span></div>
     <div class="bar" id="bulk" hidden style="flex-wrap:wrap"></div>
     <div id="list"></div>
   </main>
@@ -164,20 +182,25 @@ a{color:var(--terra)}
   $('out').onclick = function () { signOut(false); };
 
   // ── main list ──
-  var FILTERS = [['topack', 'To pack'], ['packed', 'Packed'], ['shipped', 'Shipped'], ['delivered', 'Delivered'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['all', 'All']];
-  var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED' };
+  var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier. Open each order, enter the tracking number and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
+  var FILTERS = [['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
+  var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; state.reasons = j.reasons; $('stockBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; $('stockBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
     load();
   }
   function load() {
     api('/admin/api/summary').then(function (j) { if (j.ok) tiles(j.summary); });
-    api('/admin/api/orders').then(function (j) { if (!j.ok) return toast(j.error || 'Could not load orders'); state.orders = j.orders; render(); });
+    api('/admin/api/orders').then(function (j) { if (!j.ok) return toast(j.error || 'Could not load orders'); state.orders = j.orders; if (j.moneyLive != null) state.moneyLive = j.moneyLive; render(); });
   }
   function tiles(s) {
     var t = $('tiles'); t.textContent = '';
-    [['Orders today', s.today.orders], ['Boxes today', s.today.boxes], ['Sales today', inr(s.today.revenue)], ['To pack', s.topack], ['Packed', s.packed], ['Shipped', s.shipped], ['Delivered', s.delivered], ['Unpaid', s.unpaid]].forEach(function (x) { t.appendChild(h('div', { class: 'tile' }, h('b', {}, x[1]), h('span', {}, x[0]))); });
+    if (state.role !== 'owner') { t.hidden = true; return; }
+    t.hidden = false; state.moneyLive = s.moneyLive;
+    t.appendChild(h('span', {}, 'Today ', h('b', {}, inr(s.today.revenue)), ' · ' + s.today.orders + ' order' + (s.today.orders === 1 ? '' : 's') + ', ' + s.today.boxes + ' boxes'));
+    t.appendChild(h('span', {}, 'Received in total ', h('b', {}, inr(s.receivedTotal))));
+    var n = $('moneyNote'); n.textContent = (s.moneyLive ? '' : 'Razorpay could not be reached, so these figures come from the order records, not from Razorpay.') + (s.test ? (s.moneyLive ? '' : ' ') + s.test + ' test-phase order' + (s.test === 1 ? '' : 's') + ' left out (shown under Test).' : ''); n.hidden = !n.textContent;
   }
   function inRange(o) {
     var d = istDay(o.paid_at || o.created_at), r = state.range;
@@ -206,17 +229,24 @@ a{color:var(--terra)}
     return rows.sort(by[state.sort] || by.new);
   }
   function render() {
+    var cnt = function (st) { return state.orders.filter(function (o) { return o.state === st || (st === 'refunded' && o.state === 'cancelled'); }).length; };
+    var fl = $('flow'); fl.textContent = '';
+    STEPS.forEach(function (f) { fl.appendChild(h('div', { class: 'step' + (state.filter === f[0] ? ' on' : ''), role: 'button', tabindex: '0', onclick: function () { state.filter = f[0]; saveView(); render(); } }, h('small', {}, 'STEP ' + f[1]), h('b', {}, cnt(f[0])), h('span', {}, f[2]))); });
+    var hint = STEPS.filter(function (f) { return f[0] === state.filter; })[0];
+    $('hint').hidden = !hint; if (hint) $('hint').textContent = hint[3];
     var c = $('chips'); c.textContent = '';
     FILTERS.forEach(function (f) {
-      var n = f[0] === 'all' ? state.orders.length : state.orders.filter(function (o) { return o.state === f[0] || (f[0] === 'refunded' && o.state === 'cancelled'); }).length;
+      if (f[0] === 'test' && !cnt('test') && state.filter !== 'test') return;
+      if (state.role !== 'owner' && f[0] !== 'all') return;   // staff only need the four steps
+      var n = f[0] === 'all' ? state.orders.length : cnt(f[0]);
       c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; saveView(); render(); } }, f[1] + ' ' + n));
     });
     var rows = visible();
-    var sum = rows.reduce(function (n, o) { return n + (o.state === 'unpaid' || o.state === 'cancelled' ? 0 : o.total); }, 0);
+    var sum = rows.reduce(function (n, o) { return n + (o.state === 'unpaid' || o.state === 'cancelled' || o.state === 'test' ? 0 : o.received); }, 0);
     var bx = rows.reduce(function (n, o) { return n + o.boxes; }, 0);
     $('count').textContent = '';
     $('count').appendChild(h('b', {}, rows.length + ' order' + (rows.length === 1 ? '' : 's')));
-    $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes · ' + inr(sum) + ' paid'));
+    $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes' + (state.role === 'owner' ? ' · ' + inr(sum) + (state.moneyLive === false ? ' paid (order records)' : ' received') : '')));
     $('sort').value = state.sort; $('range').value = state.range; $('dFrom').value = state.from; $('dTo').value = state.to; $('customDates').hidden = state.range !== 'custom';
     [['fGift', 'gift'], ['fCoupon', 'coupon'], ['fSet', 'set']].forEach(function (x) { $(x[0]).classList.toggle('on', !!state[x[1]]); });
     var list = $('list'); list.textContent = '';
@@ -229,9 +259,23 @@ a{color:var(--terra)}
         h('div', {},
           h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? ' 🎁' : ''), h('span', {}, inr(o.total))),
           h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '')),
-          ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null))));
+          ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
+          quick(o)))));
     });
     bulkBar();
+  }
+
+  // One-tap next step on the card itself (shipping needs a tracking number, so it opens the order).
+  function quick(o) {
+    var map = { topack: ['Mark packed', 'packed'], packed: ['Ship: enter tracking', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
+    if (!m) return null;
+    return h('div', { class: 'qa' }, h('button', { class: 'btn small' + (o.state === 'packed' ? ' ghost' : ''), onclick: function (e) {
+      e.stopPropagation();
+      if (!m[1]) return openOrder(o.id);
+      if (m[1] === 'delivered' && !confirm('Mark ' + o.id + ' as delivered?')) return;
+      e.target.disabled = true;
+      api('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { method: 'POST', body: { to: m[1] } }).then(function (j) { if (!j.ok) { e.target.disabled = false; return toast(j.error || 'Failed', 6000); } toast(o.id + ' ' + m[1]); load(); });
+    } }, m[0]));
   }
 
   // ── bulk actions: pick list, packing slips, mark packed ──
@@ -239,16 +283,16 @@ a{color:var(--terra)}
   function printableIds() { var s = selectedIds(); return s.length ? s : visible().filter(function (o) { return o.state === 'topack' || o.state === 'packed'; }).map(function (o) { return o.id; }); }
   function bulkBar() {
     var b = $('bulk'); b.textContent = '';
-    var vis = visible().filter(function (o) { return o.state === 'topack' || o.state === 'packed'; });
-    if (!vis.length) { b.hidden = true; return; }
+    var vis = visible().filter(function (o) { return o.state === 'topack'; });
+    if (state.filter !== 'topack' || !vis.length) { b.hidden = true; return; }
     b.hidden = false;
     var sel = selectedIds(), n = sel.length;
-    b.appendChild(h('button', { class: 'chip', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length));
+    b.appendChild(h('button', { class: 'chip', style: 'flex:1 1 100%;text-align:center', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length));
     if (n) b.appendChild(h('button', { class: 'chip', onclick: function () { state.sel = {}; render(); } }, 'Clear (' + n + ')'));
-    b.appendChild(h('button', { class: 'btn ghost small', onclick: function () { printSheets('pick'); } }, 'Print pick list' + (n ? ' (' + n + ')' : '')));
-    b.appendChild(h('button', { class: 'btn ghost small', onclick: function () { printSheets('slips'); } }, 'Print slips' + (n ? ' (' + n + ')' : '')));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { printSheets('pick'); } }, '🖨 Pick list' + (n ? ' (' + n + ')' : '')));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { printSheets('slips'); } }, '🖨 Packing slips' + (n ? ' (' + n + ')' : '')));
     var toPack = sel.filter(function (id) { return state.orders.some(function (o) { return o.id === id && o.state === 'topack'; }); });
-    if (toPack.length) b.appendChild(h('button', { class: 'btn small', onclick: function (e) {
+    if (toPack.length) b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 100%;background:var(--green)', onclick: function (e) {
       if (!confirm('Mark ' + toPack.length + ' order' + (toPack.length === 1 ? '' : 's') + ' as packed?')) return;
       e.target.disabled = true;
       api('/admin/api/orders/bulk-pack', { method: 'POST', body: { ids: toPack } }).then(function (j) {
@@ -257,7 +301,7 @@ a{color:var(--terra)}
         toast(j.packed + ' packed' + (bad.length ? ' · ' + bad.length + ' skipped: ' + bad[0].id + ' ' + bad[0].error : ''), 6000);
         state.sel = {}; load();
       });
-    } }, 'Mark ' + toPack.length + ' packed'));
+    } }, '✓ Mark ' + toPack.length + ' packed'));
   }
   var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function printOne(id, kind) { printSheets(kind, [id]); }
@@ -291,11 +335,11 @@ a{color:var(--terra)}
   $('fGift').onclick = change(function () { state.gift = !state.gift; });
   $('fCoupon').onclick = change(function () { state.coupon = !state.coupon; });
   $('fSet').onclick = change(function () { state.set = !state.set; });
-  $('reset').onclick = change(function () { state.filter = 'all'; state.sort = 'new'; state.range = 'all'; state.from = state.to = ''; state.gift = state.coupon = state.set = false; $('q').value = ''; });
+  $('reset').onclick = change(function () { state.filter = 'topack'; state.sort = 'new'; state.range = 'all'; state.from = state.to = ''; state.gift = state.coupon = state.set = false; $('q').value = ''; });
   $('csv').onclick = function () {
     var rows = visible(), q = function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-    var head = ['order', 'status', 'paid_or_created_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_message', 'coupon', 'discount', 'total', 'refunded', 'invoice', 'ship_to', 'courier', 'awb'];
-    var lines = [head].concat(rows.map(function (o) { return [o.id, o.state, new Date(o.paid_at || o.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), o.name, '+' + o.phone, o.email, o.items.map(function (i) { return i.name + ' x' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join('; '), o.boxes, o.gift_note, o.coupon, o.discount, o.total, o.refunded, o.invoice_no, o.address, o.carrier, o.awb]; }));
+    var head = ['order', 'status', 'paid_or_created_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_message', 'coupon', 'discount', 'total', 'received_razorpay', 'refunded', 'invoice', 'ship_to', 'courier', 'awb'];
+    var lines = [head].concat(rows.map(function (o) { return [o.id, o.state, new Date(o.paid_at || o.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), o.name, '+' + o.phone, o.email, o.items.map(function (i) { return i.name + ' x' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join('; '), o.boxes, o.gift_note, o.coupon, o.discount, o.total, o.received, o.refunded, o.invoice_no, o.address, o.carrier, o.awb]; }));
     var blob = new Blob(['\uFEFF' + lines.map(function (r) { return r.map(q).join(','); }).join('\n')], { type: 'text/csv' });
     var a = h('a', { href: URL.createObjectURL(blob), download: 'munchingo-orders-' + dayShift(0) + '.csv' }); document.body.appendChild(a); a.click(); a.remove();
     toast('Downloaded ' + rows.length + ' orders');

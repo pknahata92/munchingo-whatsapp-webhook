@@ -9,8 +9,29 @@ class AdminError extends Error { constructor(msg, status = 400, extra = {}) { su
 
 const rupees = (paise) => Math.round(paise) / 100;
 
+// Money really received, straight from Razorpay: payment_id -> { rupees: captured minus refunded, covers: since }.
+// Cached for 2 minutes and shared by every call. If Razorpay cannot be reached the screen falls back to the database
+// figures and says so (money.live = false) instead of showing wrong numbers as if they were right.
+let rzCache = null;
+async function razorpayMoney(sinceMs) {
+  if (rzCache && Date.now() - rzCache.at < 120_000 && rzCache.since <= sinceMs) return rzCache.p;
+  const p = (async () => {
+    try {
+      const items = await require('./razorpay').listPayments(Math.floor(sinceMs / 1000));
+      const byId = {};
+      items.forEach((x) => { byId[x.id] = (x.status === 'captured' || x.status === 'refunded') ? Math.max(0, (x.amount - (x.amount_refunded || 0))) / 100 : 0; });
+      return { live: true, byId, since: sinceMs };
+    } catch (err) {
+      console.error('[ADMIN] could not read Razorpay payments:', err.response ? JSON.stringify(err.response.data) : err.message);
+      return { live: false, byId: {}, since: sinceMs };
+    }
+  })();
+  rzCache = { at: Date.now(), since: sinceMs, p };
+  return p;
+}
+
 // What the screen needs for one order: status, money, items with gift-set contents, invoice/credit-note links.
-function shapeOrder(o, invoice, creditNotes = []) {
+function shapeOrder(o, invoice, creditNotes = [], money = null) {
   const refundedPaise = creditNotes.reduce((n, c) => n + c.amount_paise, 0);
   const totalPaise = Math.round(Number(o.total) * 100);
   const items = (o.items || []).map((it) => ({ name: it.productName || it.product_retailer_id, qty: it.quantity, unit: it.unit || '', contents: contentsOf(it), price: it.item_price, boxes: boxesIn(it) * (it.quantity || 1) }));
@@ -18,6 +39,7 @@ function shapeOrder(o, invoice, creditNotes = []) {
   if (/^pending/.test(o.status)) state = 'unpaid';
   else if (o.status === 'cancelled' && !o.payment_id) state = 'cancelled';
   else if (o.status === 'cancelled' || (refundedPaise > 0 && refundedPaise >= totalPaise)) state = 'refunded';
+  else if (money && money.live && o.payment_id && o.status === 'paid' && !(o.payment_id in money.byId)) state = 'test';   // paid in the database, unknown to Razorpay: a test-phase order
   else if (o.delivered_at) state = 'delivered';
   else if (o.shipped_at) state = 'shipped';
   else if (o.packed_at) state = 'packed';
@@ -29,6 +51,7 @@ function shapeOrder(o, invoice, creditNotes = []) {
     coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
     payment_id: o.payment_id || '', boxes: items.reduce((n, i) => n + i.boxes, 0), items,
     invoice_no: invoice ? invoice.invoice_no : '', supply: invoice ? invoice.supply_type : '',
+    received: money && money.live && o.payment_id in money.byId ? money.byId[o.payment_id] : (state === 'unpaid' || state === 'cancelled' || state === 'test' ? 0 : Math.max(0, Number(o.total) - rupees(refundedPaise))),
     refunded: rupees(refundedPaise), refundable: rupees(Math.max(0, totalPaise - refundedPaise)),
     credit_notes: creditNotes.map((c) => ({ no: c.credit_note_no, amount: rupees(c.amount_paise), reason: (c.data && c.data.reasonLabel) || c.reason_code || '', at: c.issued_at, full: c.is_full })),
     packed_at: o.packed_at || null, packed_by: o.packed_by || '', delivered_at: o.delivered_at || null, delivered_by: o.delivered_by || '',
@@ -52,9 +75,12 @@ async function loadOrders() {
   const ids = orders.map((o) => o.order_id);
   const invoices = await db.getInvoicesByOrderIds(ids);
   const cns = await db.getCreditNotesByOrderIds(ids);
+  const money = orders.length ? await razorpayMoney(Math.min(...orders.map((o) => Date.parse(o.created_at))) - 86400_000) : null;
   const byOrder = {};
   cns.forEach((c) => { (byOrder[c.order_id] = byOrder[c.order_id] || []).push(c); });
-  return orders.map((o) => shapeOrder(o, invoices[o.order_id], byOrder[o.order_id] || []));
+  const shaped = orders.map((o) => shapeOrder(o, invoices[o.order_id], byOrder[o.order_id] || [], money));
+  shaped.moneyLive = !!(money && money.live);
+  return shaped;
 }
 
 async function getOrderDetail(orderId) {
@@ -203,9 +229,12 @@ async function summary() {
   const IST = 5.5 * 3600 * 1000;
   const today = new Date(Date.now() + IST).toISOString().slice(0, 10);
   const istDay = (iso) => new Date(Date.parse(iso) + IST).toISOString().slice(0, 10);
-  const paidToday = all.filter((o) => o.paid_at && o.state !== 'unpaid' && o.state !== 'cancelled' && istDay(o.paid_at) === today);
+  const paidToday = all.filter((o) => o.paid_at && !['unpaid', 'cancelled', 'test'].includes(o.state) && istDay(o.paid_at) === today);
   return {
-    today: { orders: paidToday.length, boxes: paidToday.reduce((n, o) => n + o.boxes, 0), revenue: paidToday.reduce((n, o) => n + o.total, 0) },
+    today: { orders: paidToday.length, boxes: paidToday.reduce((n, o) => n + o.boxes, 0), revenue: paidToday.reduce((n, o) => n + o.received, 0) },
+    receivedTotal: all.filter((o) => o.state !== 'test').reduce((n, o) => n + o.received, 0),
+    moneyLive: !!all.moneyLive,
+    test: all.filter((o) => o.state === 'test').length,
     topack: all.filter((o) => o.state === 'topack').length,
     unpaid: all.filter((o) => o.state === 'unpaid').length,
     packed: all.filter((o) => o.state === 'packed').length,
