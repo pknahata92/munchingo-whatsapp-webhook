@@ -40,7 +40,7 @@ function verifyMetaSignature(rawBody, signatureHeader) {
 }
 
 const app = express();
-app.set('trust proxy', 1);   // one proxy hop (Render): req.ip is the real client, used by the rate limiter
+app.set('trust proxy', 2);   // two hops in front of us (Cloudflare edge + Render proxy): req.ip is the real client, used by the rate limiter
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 // Private admin page (login by emailed code; see utils/adminAuth.js and routes/admin.js)
