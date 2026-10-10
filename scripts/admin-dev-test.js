@@ -39,6 +39,12 @@ async function login(email) {
   ok((await call(`/orders/${A}/issue-invoice`, o.token, {})).s === 409, 'issue-invoice refuses when an invoice exists');
   ok((await call(`/orders/MNG-FFFF-1010/advance`, o.token, { to: 'packed' })).j.ok && (await call(`/orders/MNG-FFFF-1010/advance`, o.token, { to: 'shipped', awb: '  ' })).s === 400, 'shipping needs a tracking number');
 
+  ok((await call('/orders/MNG-GGGG-1008/address', s.token, { address: 'x' })).s === 400, 'short address rejected');
+  ok((await call('/orders/MNG-GGGG-1008/address', s.token, { address: '12 New Street, Faridabad, Haryana - 121007' })).j.ok, 'staff fixes an address before shipping');
+  const gg = await call('/orders/MNG-GGGG-1008', s.token); ok(gg.j.order.address.startsWith('12 New') && gg.j.order.events.some((e) => e.event === 'address_changed' && e.meta.from), 'old address kept in timeline');
+  ok((await call('/orders/MNG-CCCC-1009/address', s.token, { address: '12 New Street, Faridabad, Haryana - 121007' })).s === 409, 'address locked once shipped');
+  ok((await call('/me', s.token)).j.dispatchFrom, 'dispatch date exposed');
+
   // no / bad token
   ok((await call('/orders', null)).s === 401, 'no token 401');
   ok((await call('/orders', s.token + 'x')).s === 401, 'tampered token 401');

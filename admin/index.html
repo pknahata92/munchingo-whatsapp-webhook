@@ -183,11 +183,11 @@ a{color:var(--terra)}
 
   // ── main list ──
   var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier. Open each order, enter the tracking number and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
-  var FILTERS = [['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
+  var FILTERS = [['attention', '⚠ Needs attention'], ['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; $('stockBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('stockBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
     load();
   }
   function load() {
@@ -216,7 +216,7 @@ a{color:var(--terra)}
   function visible() {
     var q = $('q').value.trim().toLowerCase();
     var rows = state.orders.filter(function (o) {
-      var okState = state.filter === 'all' || o.state === state.filter || (state.filter === 'refunded' && o.state === 'cancelled');
+      var okState = state.filter === 'all' || (state.filter === 'attention' ? (o.needs_attention && o.state !== 'test') : o.state === state.filter) || (state.filter === 'refunded' && o.state === 'cancelled');
       var hay = [o.id, o.name, o.phone, o.invoice_no, o.email, o.address].join(' ').toLowerCase();
       return okState && inRange(o) && (!q || hay.indexOf(q) >= 0)
         && (!state.gift || !!o.gift_note) && (!state.coupon || !!o.coupon)
@@ -233,12 +233,14 @@ a{color:var(--terra)}
     var fl = $('flow'); fl.textContent = '';
     STEPS.forEach(function (f) { fl.appendChild(h('div', { class: 'step' + (state.filter === f[0] ? ' on' : ''), role: 'button', tabindex: '0', onclick: function () { state.filter = f[0]; saveView(); render(); } }, h('small', {}, 'STEP ' + f[1]), h('b', {}, cnt(f[0])), h('span', {}, f[2]))); });
     var hint = STEPS.filter(function (f) { return f[0] === state.filter; })[0];
-    $('hint').hidden = !hint; if (hint) $('hint').textContent = hint[3];
+    var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
+    $('hint').hidden = !hint; if (hint) $('hint').textContent = hint[3] + (pre && (state.filter === 'topack' || state.filter === 'packed') ? '  PRE-ORDER PERIOD: pack now if you like, but do NOT ship before ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '.' : '');
     var c = $('chips'); c.textContent = '';
     FILTERS.forEach(function (f) {
+      if (f[0] === 'attention' && (state.role !== 'owner' || !state.orders.some(function (o) { return o.needs_attention && o.state !== 'test'; }))) return;
       if (f[0] === 'test' && !cnt('test') && state.filter !== 'test') return;
       if (state.role !== 'owner' && f[0] !== 'all') return;   // staff only need the four steps
-      var n = f[0] === 'all' ? state.orders.length : cnt(f[0]);
+      var n = f[0] === 'all' ? state.orders.length : f[0] === 'attention' ? state.orders.filter(function (o) { return o.needs_attention && o.state !== 'test'; }).length : cnt(f[0]);
       c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; saveView(); render(); } }, f[1] + ' ' + n));
     });
     var rows = visible();
@@ -366,10 +368,12 @@ a{color:var(--terra)}
     p.appendChild(section('Order', items));
 
     var addr = h('div', {}, h('div', {}, o.address || '—'), h('div', { class: 'acts' }, o.address ? h('button', { class: 'btn ghost small', onclick: function () { (navigator.clipboard && navigator.clipboard.writeText(o.name + '\n' + o.address + '\n' + o.phone)).then(function () { toast('Address copied'); }); } }, 'Copy label') : null));
+    var canEdit = o.state === 'topack' || o.state === 'packed';
+    if (canEdit) addr.querySelector('.acts').appendChild(h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Correct delivery address (the old one is kept in the timeline):', o.address); if (v != null && v.trim() !== o.address) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/address', { address: v }, 'Address updated'); } }, 'Edit address'));
     p.appendChild(section('Ship to', kv([['Name', o.name], ['Phone', '+' + o.phone]]), addr,
       h('div', { class: 'acts' }, h('a', { class: 'btn small', href: 'https://wa.me/' + encodeURIComponent(o.phone), target: '_blank', rel: 'noopener', style: 'text-decoration:none' }, 'WhatsApp'), h('a', { class: 'btn ghost small', href: 'tel:+' + o.phone, style: 'text-decoration:none' }, 'Call'))));
 
-    p.appendChild(section('Payment & invoice', kv([['Payment', o.payment_id || 'not paid'], ['Invoice', o.invoice_no ? o.invoice_no + ' (' + (o.supply === 'intra' ? 'CGST+SGST' : 'IGST') + ')' : ''], ['Email', o.email || 'none given'], ['Refunded', o.refunded ? inr(o.refunded) : '']]),
+    p.appendChild(section('Payment & invoice', kv([['Payment', o.payment_id || 'not paid'], ['Invoice', o.invoice_no ? o.invoice_no + ' (' + (o.supply === 'intra' ? 'CGST+SGST' : 'IGST') + ')' : ''], ['Email', o.email || 'none given'], ['Refunded', o.refunded ? inr(o.refunded) : ''], ['Sent', o.sent ? 'Email ' + (o.sent.email ? '✓' : (o.email ? '✗ not sent' : '–')) + ' · WhatsApp ' + (o.sent.whatsapp ? '✓' : '✗') + ' · Zoho ' + (o.sent.zoho ? '✓' : '✗') : '']]),
       o.invoice_no ? h('div', { class: 'acts' },
         h('button', { class: 'btn ghost small', onclick: function () { fetch('/admin/api/orders/' + encodeURIComponent(o.id) + '/invoice.pdf', { headers: { Authorization: 'Bearer ' + token } }).then(function (r) { return r.ok ? r.blob() : Promise.reject(); }).then(function (b) { window.open(URL.createObjectURL(b), '_blank'); }).catch(function () { toast('Could not open the invoice'); }); } }, 'View invoice PDF'),
         state.role !== 'owner' ? null : h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
@@ -392,7 +396,7 @@ a{color:var(--terra)}
     if (o.state === 'unpaid' && state.role === 'owner') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
       return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';
@@ -400,10 +404,11 @@ a{color:var(--terra)}
   }
 
   function shipForm(o) {
+    var preNow = state.dispatchFrom && Date.now() < state.dispatchFrom;
     var carrier = h('input', { value: 'Delhivery' }), awb = h('input', { placeholder: 'Tracking / AWB number' });
     return section('Mark shipped', h('label', {}, 'Courier'), carrier, h('label', {}, 'Tracking number'), awb,
       h('p', { class: 'muted' }, o.email ? 'The customer is emailed with a tracking link.' : 'No customer email, so no email is sent.'),
-      h('button', { class: 'btn small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'shipped', carrier: carrier.value, awb: awb.value }, function (j) { return 'Marked shipped' + (j.emailed ? ' · customer emailed' : ''); }, e.target); } }, 'Mark as shipped'));
+      h('button', { class: 'btn small', onclick: function (e) { if (preNow && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return; act('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'shipped', carrier: carrier.value, awb: awb.value }, function (j) { return 'Marked shipped' + (j.emailed ? ' · customer emailed' : ''); }, e.target); } }, 'Mark as shipped'));
   }
 
   function refundForm(o) {

@@ -51,7 +51,7 @@ router.use('/admin/api', auth.requireAdmin);
 const owner = auth.requireOwner;
 const enc = (req) => ({ orderId: req.params.id, actor: req.admin });
 
-router.get('/admin/api/me', (req, res) => res.json({ ok: true, email: req.admin.email, name: req.admin.name, role: req.admin.role, reasons: Object.fromEntries(Object.entries(REASONS).map(([k, v]) => [k, v.label])) }));
+router.get('/admin/api/me', (req, res) => res.json({ ok: true, email: req.admin.email, name: req.admin.name, role: req.admin.role, dispatchFrom: new Date(require('../utils/launch').dispatchFrom()).toISOString(), reasons: Object.fromEntries(Object.entries(REASONS).map(([k, v]) => [k, v.label])) }));
 router.get('/admin/api/summary', wrap(async () => ({ summary: await actions.summary() })));
 router.get('/admin/api/orders', wrap(async () => { const orders = await actions.listOrders(); return { orders, moneyLive: !!orders.moneyLive, truncated: orders.length >= 600 }; }));
 router.get('/admin/api/orders/:id', wrap(async (req) => ({ order: (await actions.getOrderDetail(req.params.id)).shaped })));
@@ -60,6 +60,7 @@ router.get('/admin/api/orders/:id', wrap(async (req) => ({ order: (await actions
 router.post('/admin/api/orders/:id/advance', wrap(async (req) => actions.advance({ ...enc(req), to: (req.body || {}).to, carrier: (req.body || {}).carrier, awb: (req.body || {}).awb })));
 router.post('/admin/api/orders/bulk-pack', wrap(async (req) => actions.bulkPack({ ids: (req.body || {}).ids, actor: req.admin })));
 router.post('/admin/api/picklist', wrap(async (req) => actions.pickList((req.body || {}).ids)));
+router.post('/admin/api/orders/:id/address', wrap(async (req) => actions.saveAddress({ orderId: req.params.id, address: (req.body || {}).address, actor: req.admin })));
 router.post('/admin/api/orders/:id/note', wrap(async (req) => actions.saveNote(req.params.id, (req.body || {}).note, req.admin)));
 
 // Owner only: money, undo, stock, team.
