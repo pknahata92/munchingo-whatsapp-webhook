@@ -356,6 +356,22 @@ a{color:var(--terra)}
   function done(msg) { toast(msg, 4500); load(); openOrder(state.open.id); }
   function act(path, body, okMsg, btn) { if (btn) btn.disabled = true; return api(path, { method: 'POST', body: body || {} }).then(function (j) { if (btn) btn.disabled = false; if (!j.ok) { toast(j.error || 'Something went wrong', 6000); return j; } done(typeof okMsg === 'function' ? okMsg(j) : okMsg); return j; }); }
 
+  // Opens the invoice in a new tab. The tab is opened FIRST (inside the click) because browsers block pop-ups that
+  // open after a download finishes; the PDF is then loaded into it. If the tab is blocked, it downloads instead.
+  function viewInvoice(o, download) {
+    var w = download ? null : window.open('', '_blank');
+    if (w) { try { w.document.write('<p style="font:16px sans-serif;padding:24px">Opening invoice…</p>'); } catch (e) {} }
+    fetch('/admin/api/orders/' + encodeURIComponent(o.id) + '/invoice.pdf', { headers: { Authorization: 'Bearer ' + token } })
+      .then(function (r) { return r.ok ? r.blob() : r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || 'No invoice yet'); }); })
+      .then(function (b) {
+        var url = URL.createObjectURL(b);
+        if (w && !w.closed) { w.location.href = url; return; }
+        var a = h('a', { href: url, download: 'Munchingo-Invoice-' + (o.invoice_no || o.id).replace(/\//g, '-') + '.pdf' });
+        document.body.appendChild(a); a.click(); a.remove();
+        toast(download ? 'Invoice downloaded' : 'Pop-up was blocked, so the invoice was downloaded instead', 5000);
+      })
+      .catch(function (e) { if (w) w.close(); toast('Could not open the invoice: ' + e.message, 6000); });
+  }
   function draw(o) {
     var p = $('panel'); p.textContent = '';
     p.appendChild(h('div', { class: 'row' }, h('div', { style: 'flex:1' }, h('b', { style: 'font-size:18px' }, o.id), h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase())), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
@@ -375,7 +391,8 @@ a{color:var(--terra)}
 
     p.appendChild(section('Payment & invoice', kv([['Payment', o.payment_id || 'not paid'], ['Invoice', o.invoice_no ? o.invoice_no + ' (' + (o.supply === 'intra' ? 'CGST+SGST' : 'IGST') + ')' : ''], ['Email', o.email || 'none given'], ['Refunded', o.refunded ? inr(o.refunded) : ''], ['Sent', o.sent ? 'Email ' + (o.sent.email ? '✓' : (o.email ? '✗ not sent' : '–')) + ' · WhatsApp ' + (o.sent.whatsapp ? '✓' : '✗') + ' · Zoho ' + (o.sent.zoho ? '✓' : '✗') : '']]),
       o.invoice_no ? h('div', { class: 'acts' },
-        h('button', { class: 'btn ghost small', onclick: function () { fetch('/admin/api/orders/' + encodeURIComponent(o.id) + '/invoice.pdf', { headers: { Authorization: 'Bearer ' + token } }).then(function (r) { return r.ok ? r.blob() : Promise.reject(); }).then(function (b) { window.open(URL.createObjectURL(b), '_blank'); }).catch(function () { toast('Could not open the invoice'); }); } }, 'View invoice PDF'),
+        h('button', { class: 'btn ghost small', onclick: function () { viewInvoice(o); } }, 'View invoice PDF'),
+        h('button', { class: 'btn ghost small', onclick: function () { viewInvoice(o, true); } }, 'Download PDF'),
         state.role !== 'owner' ? null : h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
 
     if (o.invoice_missing && o.state !== 'test') p.appendChild(h('div', { class: 'gift', style: 'background:#FDECEA;border-color:var(--red)' }, h('b', { style: 'color:var(--red)' }, '⚠ No invoice was created for this paid order'),
