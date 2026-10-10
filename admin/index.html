@@ -192,7 +192,7 @@ a{color:var(--terra)}
   }
   function load() {
     api('/admin/api/summary').then(function (j) { if (j.ok) tiles(j.summary); });
-    api('/admin/api/orders').then(function (j) { if (!j.ok) return toast(j.error || 'Could not load orders'); state.orders = j.orders; if (j.moneyLive != null) state.moneyLive = j.moneyLive; render(); });
+    api('/admin/api/orders').then(function (j) { if (!j.ok) return toast(j.error || 'Could not load orders'); state.orders = j.orders; if (j.moneyLive != null) state.moneyLive = j.moneyLive; state.truncated = !!j.truncated; render(); });
   }
   function tiles(s) {
     var t = $('tiles'); t.textContent = '';
@@ -246,7 +246,7 @@ a{color:var(--terra)}
     var bx = rows.reduce(function (n, o) { return n + o.boxes; }, 0);
     $('count').textContent = '';
     $('count').appendChild(h('b', {}, rows.length + ' order' + (rows.length === 1 ? '' : 's')));
-    $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes' + (state.role === 'owner' ? ' · ' + inr(sum) + (state.moneyLive === false ? ' paid (order records)' : ' received') : '')));
+    $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes' + (state.truncated ? ' · latest 600 orders only' : '') + (state.role === 'owner' ? ' · ' + inr(sum) + (state.moneyLive === false ? ' paid (order records)' : ' received') : '')));
     $('sort').value = state.sort; $('range').value = state.range; $('dFrom').value = state.from; $('dTo').value = state.to; $('customDates').hidden = state.range !== 'custom';
     [['fGift', 'gift'], ['fCoupon', 'coupon'], ['fSet', 'set']].forEach(function (x) { $(x[0]).classList.toggle('on', !!state[x[1]]); });
     var list = $('list'); list.textContent = '';

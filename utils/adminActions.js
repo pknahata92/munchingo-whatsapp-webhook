@@ -18,16 +18,17 @@ async function razorpayMoney(sinceMs) {
   const p = (async () => {
     try {
       const items = await require('./razorpay').listPayments(Math.floor(sinceMs / 1000));
-      const byId = {}, refundedFull = new Set();
+      const byId = {}, refundedFull = new Set(), paidAt = {};
       items.forEach((x) => {
         if (x.status !== 'captured' && x.status !== 'refunded') return;   // failed / abandoned attempts are not money
         byId[x.id] = Math.max(0, (x.amount - (x.amount_refunded || 0))) / 100;
+        if (x.created_at) paidAt[x.id] = new Date(x.created_at * 1000).toISOString();
         if (x.status === 'refunded' || (x.amount_refunded || 0) >= x.amount) refundedFull.add(x.id);
       });
-      return { live: true, byId, refundedFull, since: sinceMs };
+      return { live: true, byId, refundedFull, paidAt, since: sinceMs };
     } catch (err) {
       console.error('[ADMIN] could not read Razorpay payments:', err.response ? JSON.stringify(err.response.data) : err.message);
-      return { live: false, byId: {}, refundedFull: new Set(), since: sinceMs };
+      return { live: false, byId: {}, refundedFull: new Set(), paidAt: {}, since: sinceMs };
     }
   })();
   rzCache = { at: Date.now(), since: sinceMs, p };
@@ -50,7 +51,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
   else if (o.packed_at) state = 'packed';
   return {
     id: o.order_id, state, status: o.status,
-    created_at: o.created_at, paid_at: o.status === 'paid' || o.payment_id ? o.updated_at : null,
+    created_at: o.created_at, paid_at: o.status === 'paid' || o.payment_id ? ((money && money.paidAt && money.paidAt[o.payment_id]) || o.updated_at) : null,
     name: o.customer_name, phone: o.customer_phone, email: o.customer_email || '',
     address: (o.delivery_address && o.delivery_address.raw) || '', gift_note: o.gift_note || '',
     coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
@@ -174,6 +175,7 @@ async function advance({ orderId, to, actor, carrier = 'Delhivery', awb = '' }) 
   const from = shaped.state;
   if (NEXT[from] !== to) throw new AdminError(from === to || ['packed', 'shipped', 'delivered'].indexOf(from) > ['packed', 'shipped', 'delivered'].indexOf(to)
     ? `Already ${from}.` : `This order is "${from}"; the next step is "${NEXT[from] || 'none'}".`, 409);
+  if (to === 'shipped' && !String(awb || '').trim()) throw new AdminError('Enter the tracking (AWB) number first. The customer is emailed it.');
   const now = new Date().toISOString();
   const by = actor.name || actor.email;
   let fields; let where;

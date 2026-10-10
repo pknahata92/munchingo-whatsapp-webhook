@@ -53,7 +53,7 @@ const enc = (req) => ({ orderId: req.params.id, actor: req.admin });
 
 router.get('/admin/api/me', (req, res) => res.json({ ok: true, email: req.admin.email, name: req.admin.name, role: req.admin.role, reasons: Object.fromEntries(Object.entries(REASONS).map(([k, v]) => [k, v.label])) }));
 router.get('/admin/api/summary', wrap(async () => ({ summary: await actions.summary() })));
-router.get('/admin/api/orders', wrap(async () => { const orders = await actions.listOrders(); return { orders, moneyLive: !!orders.moneyLive }; }));
+router.get('/admin/api/orders', wrap(async () => { const orders = await actions.listOrders(); return { orders, moneyLive: !!orders.moneyLive, truncated: orders.length >= 600 }; }));
 router.get('/admin/api/orders/:id', wrap(async (req) => ({ order: (await actions.getOrderDetail(req.params.id)).shaped })));
 
 // Staff and owner: move an order forward, add notes, print.

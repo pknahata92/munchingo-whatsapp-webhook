@@ -136,6 +136,11 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       // "Subscribe & Save" requires an email on file — it's the only reliable
       // channel for renewal reminders (see subscriptions_migration.sql).
       const trimmedEmail = (email || '').trim();
+      // A pre-order's dispatch date and tracking link only reach the customer by email (the 48-hour WhatsApp template is
+      // skipped during the pre-order window), so the email is required until dispatch starts.
+      if (require('../utils/launch').isPreorder() && !trimmedEmail) {
+        return res.status(400).json({ ok: false, error: 'Please add your email address. Pre-orders are confirmed, and tracking is sent, by email.' });
+      }
       if (subscribe && !trimmedEmail) {
         return res.status(400).json({ ok: false, error: 'An email address is required to subscribe — that\'s how we\'ll notify you each month your box is ready.' });
       }
