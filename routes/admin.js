@@ -67,6 +67,7 @@ router.post('/admin/api/orders/:id/note', wrap(async (req) => actions.saveNote(r
 router.post('/admin/api/orders/:id/refund', owner, wrap(async (req) => ({ refund: await actions.startRefund({ ...req.body, ...enc(req) }) })));
 router.post('/admin/api/orders/:id/cancel', owner, wrap(async (req) => actions.cancelUnpaid(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/issue-invoice', owner, wrap(async (req) => actions.issueMissingInvoice(req.params.id, req.admin)));
+router.post('/admin/api/orders/:id/retry-zoho', owner, wrap(async (req) => actions.retryZoho(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/resend-invoice', owner, wrap(async (req) => actions.resendInvoice(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/undo', owner, wrap(async (req) => actions.undoStep(enc(req))));
 router.get('/admin/api/stock', owner, wrap(async () => ({ stock: await actions.stockList() })));

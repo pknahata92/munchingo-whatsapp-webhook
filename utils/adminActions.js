@@ -56,8 +56,10 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
     address: (o.delivery_address && o.delivery_address.raw) || '', gift_note: o.gift_note || '',
     coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
     payment_id: o.payment_id || '', boxes: items.reduce((n, i) => n + i.boxes, 0), items,
-    sent: invoice ? { email: !!invoice.email_sent_at, whatsapp: !!invoice.wa_sent_at, zoho: !!invoice.zoho_synced_at } : null,
-    needs_attention: o.status === 'paid' && !!o.payment_id && (!invoice || (!!o.customer_email && !invoice.email_sent_at)),
+    sent: invoice ? { email: !!invoice.email_sent_at, whatsapp: !!invoice.wa_sent_at, zoho: !!invoice.zoho_synced_at && creditNotes.every((c) => !!c.zoho_credit_note_id) } : null,
+    needs_attention: !!o.payment_id && o.status !== 'pending_payment' && (
+      (o.status === 'paid' && (!invoice || (!!o.customer_email && !invoice.email_sent_at))) ||
+      (!!invoice && require('./zohoBooks').configured() && (!invoice.zoho_synced_at || creditNotes.some((c) => !c.zoho_credit_note_id)))),
     invoice_missing: !invoice && o.status === 'paid' && !!o.payment_id, invoice_no: invoice ? invoice.invoice_no : '', supply: invoice ? invoice.supply_type : '',
     received: money && money.live && o.payment_id in money.byId ? money.byId[o.payment_id] : (state === 'unpaid' || state === 'cancelled' || state === 'test' ? 0 : Math.max(0, Number(o.total) - rupees(refundedPaise))),
     refunded: rupees(refundedPaise), refundable: rupees(Math.max(0, totalPaise - refundedPaise)),
@@ -150,6 +152,31 @@ async function saveAddress({ orderId, address, actor }) {
   await db.updateOrderFields(orderId, { delivery_address: { ...(order.delivery_address || {}), raw: clean } });
   await logEvent(orderId, 'address_changed', actor, { meta: { from: before, to: clean } });
   return {};
+}
+
+// Owner: send what is missing to Zoho Books (the invoice, then any credit notes) and say what happened.
+async function retryZoho(orderId, actor) {
+  const zoho = require('./zohoBooks');
+  if (!zoho.configured()) throw new AdminError('Zoho Books is not connected on the server.', 409);
+  const { order, invoice } = await getOrderDetail(orderId);
+  if (!invoice) throw new AdminError('This order has no invoice yet. Create the invoice first.', 409);
+  const done = [];
+  let zohoInvoiceId = invoice.zoho_invoice_id;
+  if (!zohoInvoiceId) {
+    const inv = await zoho.syncPaidOrder({ invoice: invoice.data, order });
+    zohoInvoiceId = inv && inv.invoiceId;
+    await db.markInvoice(orderId, { zoho_invoice_id: zohoInvoiceId, zoho_synced_at: new Date().toISOString() });
+    done.push('invoice');
+  }
+  for (const c of await db.getCreditNotesByOrder(orderId)) {
+    if (c.zoho_credit_note_id) continue;
+    const z = await zoho.syncCreditNote({ creditNote: c.data, zohoInvoiceId });
+    await db.markCreditNote(c.credit_note_no, { zoho_credit_note_id: z.creditNoteId, zoho_synced_at: new Date().toISOString() });
+    done.push('credit note ' + c.credit_note_no);
+  }
+  if (!done.length) throw new AdminError('Everything for this order is already in Zoho Books.', 409);
+  await logEvent(orderId, 'zoho_synced', actor, { meta: { sent: done } });
+  return { sent: done };
 }
 
 async function cancelUnpaid(orderId, actor) {
@@ -323,4 +350,4 @@ async function setStock({ slug, available, actor }) {
   return {};
 }
 
-module.exports = { saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

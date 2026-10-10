@@ -381,6 +381,9 @@ a{color:var(--terra)}
     if (o.invoice_missing && o.state !== 'test') p.appendChild(h('div', { class: 'gift', style: 'background:#FDECEA;border-color:var(--red)' }, h('b', { style: 'color:var(--red)' }, '⚠ No invoice was created for this paid order'),
       h('p', { class: 'muted' }, state.role === 'owner' ? 'The payment went through but the invoice step failed. This creates the invoice and sends it to the customer.' : 'Tell Prashant. It does not stop you packing the order.'),
       state.role === 'owner' ? h('button', { class: 'btn small', onclick: function (e) { if (confirm('Create the invoice and send it to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/issue-invoice', {}, function (j) { return 'Invoice ' + j.invoiceNo + ' created and sent'; }, e.target); } }, 'Create invoice now') : null));
+    if (state.role === 'owner' && o.sent && !o.sent.zoho) p.appendChild(h('div', { class: 'gift', style: 'background:#FDF6E8;border-color:var(--amber)' }, h('b', { style: 'color:var(--amber)' }, 'Not fully in Zoho Books yet'),
+      h('p', { class: 'muted' }, 'The invoice or a credit note did not reach Zoho. This sends what is missing.'),
+      h('button', { class: 'btn small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/retry-zoho', {}, function (j) { return 'Sent to Zoho: ' + j.sent.join(', '); }, e.target); } }, 'Retry Zoho sync')));
     if (o.credit_notes.length) p.appendChild(section('Refunds & credit notes', o.credit_notes.map(function (c) { return h('div', { class: 'line' }, h('div', {}, c.no, h('small', {}, c.reason + (c.full ? ' · order closed' : '') + ' · ' + when(c.at))), h('div', {}, inr(c.amount))); })));
 
     var adv = '/admin/api/orders/' + encodeURIComponent(o.id) + '/advance';
@@ -396,7 +399,7 @@ a{color:var(--terra)}
     if (o.state === 'unpaid' && state.role === 'owner') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
       return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';

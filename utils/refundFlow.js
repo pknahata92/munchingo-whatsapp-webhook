@@ -47,7 +47,16 @@ async function processRefund({ order, refund }) {
   if (invoice) {
     issued = await step('credit note', () => issueCreditNote({ invoice: invoice.data, amountPaise, refundId, paymentId: refund.payment_id, reasonCode, reasonNote }));
     if (issued && issued.created) {
-      const z = await step('zoho credit note', () => require('./zohoBooks').syncCreditNote({ creditNote: issued.creditNote }));
+      const z = await step('zoho credit note', async () => {
+        const zoho = require('./zohoBooks');
+        let zohoInvoiceId = invoice.zoho_invoice_id;
+        if (!zohoInvoiceId && zoho.configured()) {   // the invoice never reached Zoho: send it first, the credit note must point at it
+          const inv = await zoho.syncPaidOrder({ invoice: invoice.data, order });
+          zohoInvoiceId = inv && inv.invoiceId;
+          if (zohoInvoiceId) await db.markInvoice(order.order_id, { zoho_invoice_id: zohoInvoiceId, zoho_synced_at: new Date().toISOString() });
+        }
+        return zoho.syncCreditNote({ creditNote: issued.creditNote, zohoInvoiceId });
+      });
       if (z && z.creditNoteId) await db.markCreditNote(issued.creditNote.creditNoteNo, { zoho_credit_note_id: z.creditNoteId, zoho_synced_at: new Date().toISOString() });
     }
   } else {

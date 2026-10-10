@@ -34,6 +34,21 @@ const ITEM_IDS = {
 };
 const itemIds = () => ({ ...ITEM_IDS, ...(process.env.ZOHO_ITEM_IDS ? JSON.parse(process.env.ZOHO_ITEM_IDS) : {}) });
 
+// Orders from the WhatsApp catalogue store names like "Munchingo Atta Original" (and older ones other spellings),
+// the website stores "Atta Original". Match on the flavour/set so both reach the same Zoho item.
+function itemIdFor(name) {
+  const ids = itemIds();
+  if (ids[name]) return ids[name];
+  const n = String(name || '').toLowerCase();
+  const key = /full\s*range/.test(n) ? 'Full Range Gift Set'
+    : /trio/.test(n) ? 'Trio Gift Set'
+    : /ajwain/.test(n) ? 'Atta Ajwain'
+    : /kesari/.test(n) ? 'Atta Kesari'
+    : /(sugar|lite)/.test(n) ? 'Atta Sugar-Lite'
+    : /original/.test(n) ? 'Atta Original' : null;
+  return key ? ids[key] : undefined;
+}
+
 const dc = () => process.env.ZOHO_DC || 'in';
 const accountsUrl = () => `https://accounts.zoho.${dc()}/oauth/v2/token`;
 const apiUrl = () => `https://www.zohoapis.${dc()}/books/v3`;
@@ -110,7 +125,7 @@ async function syncPaidOrder({ invoice, order }) {
   // Line rate is the GST-inclusive net price per unit after discount (is_inclusive_tax = true).
   const ids = itemIds();
   const line_items = invoice.items.map((it) => ({
-    item_id: ids[it.name],
+    item_id: itemIdFor(it.name),
     name: it.name,
     description: `${it.name}${it.unit ? ' (' + it.unit + ')' : ''}${it.contents ? ' - ' + it.contents : ''} - HSN ${invoice.hsn}`,
     rate: +(it.netPaise / it.qty / 100).toFixed(2),
@@ -119,7 +134,7 @@ async function syncPaidOrder({ invoice, order }) {
     ...(taxId ? { tax_id: taxId } : {}),
   }));
 
-  const missing = invoice.items.filter((it) => !ids[it.name]).map((it) => it.name);
+  const missing = invoice.items.filter((it) => !itemIdFor(it.name)).map((it) => it.name);
   if (missing.length) throw new Error('No Zoho item for: ' + missing.join(', ') + ' (add it in Books and ZOHO_ITEM_IDS)');
 
   const inv = await call('post', '/invoices', {
@@ -159,17 +174,16 @@ async function syncPaidOrder({ invoice, order }) {
  * Credit note + refund for a refunded order. Needs the extra OAuth scope ZohoBooks.creditnotes.CREATE
  * (re-run scripts/zoho-get-refresh-token.js with it). Returns null when Zoho isn't configured.
  */
-async function syncCreditNote({ creditNote }) {
+async function syncCreditNote({ creditNote, zohoInvoiceId }) {
   if (!configured()) return null;
-  const ids = itemIds();
   const contactId = await findOrCreateContact(creditNote.buyer);
   const date = new Date(creditNote.issuedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   const taxId = creditNote.supplyType === 'intra' ? process.env.ZOHO_GST_TAX_ID_5 : process.env.ZOHO_IGST_TAX_ID_5;
-  const missing = creditNote.items.filter((it) => it.netPaise > 0 && !ids[it.name]).map((it) => it.name);
+  const missing = creditNote.items.filter((it) => it.netPaise > 0 && !itemIdFor(it.name)).map((it) => it.name);
   if (missing.length) throw new Error('No Zoho item for: ' + missing.join(', '));
 
   const line_items = creditNote.items.filter((it) => it.netPaise > 0).map((it) => ({
-    item_id: ids[it.name],
+    item_id: itemIdFor(it.name),
     name: it.name,
     description: `Refund: ${it.name}${it.contents ? ' - ' + it.contents : ''} (against ${creditNote.invoiceNo}) - HSN ${creditNote.hsn}`,
     rate: +(it.netPaise / 100).toFixed(2),
@@ -178,9 +192,11 @@ async function syncCreditNote({ creditNote }) {
     ...(taxId ? { tax_id: taxId } : {}),
   }));
 
+  // Zoho (India) wants a credit note tied to the invoice it reverses, otherwise: "Select the associated invoice number" (12069).
   const cn = await call('post', '/creditnotes', {
-    params: { ignore_auto_number_generation: true },
+    params: { ignore_auto_number_generation: true, ...(zohoInvoiceId ? { invoice_id: zohoInvoiceId } : {}) },
     data: {
+      ...(zohoInvoiceId ? { invoice_id: zohoInvoiceId } : {}),
       customer_id: contactId,
       creditnote_number: creditNote.creditNoteNo,
       reference_number: creditNote.invoiceNo,
