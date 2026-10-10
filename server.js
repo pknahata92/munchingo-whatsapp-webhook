@@ -40,8 +40,7 @@ function verifyMetaSignature(rawBody, signatureHeader) {
 }
 
 const app = express();
-app.set('trust proxy', 2);   // two hops in front of us (Cloudflare edge + Render proxy): req.ip is the real client, used by the rate limiter
-app.get('/api/_ipdebug', (req, res) => res.json({ xff: req.headers['x-forwarded-for'] || null, ip: req.ip, ips: req.ips, remote: req.socket.remoteAddress }));   // TEMPORARY, removed right after the check
+app.set('trust proxy', 3);   // hops in front of us on Render: loopback + Render proxy + Cloudflare edge; the next address is the real client: req.ip is the real client, used by the rate limiter
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 // Private admin page (login by emailed code; see utils/adminAuth.js and routes/admin.js)
