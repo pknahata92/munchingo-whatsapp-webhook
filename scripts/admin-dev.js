@@ -29,7 +29,7 @@ const orders = [
   mk('MNG-EEEE-1008', 3000, 'cancelled', {}),
 ];
 const invoices = {};
-orders.filter((o) => o.payment_id).forEach((o, i) => { const inv = buildInvoice(o, { invoiceNo: `MUN/26-27/${String(i + 1).padStart(4, '0')}`, issuedAt: new Date(o.created_at) }); invoices[o.order_id] = { order_id: o.order_id, invoice_no: inv.invoiceNo, supply_type: inv.supplyType, total_paise: inv.totalPaise, data: inv }; });
+orders.filter((o) => o.payment_id && o.order_id !== 'MNG-FFFF-1010').forEach((o, i) => { const inv = buildInvoice(o, { invoiceNo: `MUN/26-27/${String(i + 1).padStart(4, '0')}`, issuedAt: new Date(o.created_at) }); invoices[o.order_id] = { order_id: o.order_id, invoice_no: inv.invoiceNo, supply_type: inv.supplyType, total_paise: inv.totalPaise, data: inv }; });
 const cns = [{ order_id: 'MNG-EEEE-1008', credit_note_no: 'CN/26-27/0001', amount_paise: 66500, issued_at: new Date(now - 2900000).toISOString(), is_full: true, reason_code: 'out_of_stock', data: { reasonLabel: 'Out of stock' } }];
 
 stub('utils/database.js', {
@@ -47,14 +47,22 @@ stub('utils/database.js', {
   logOrderEvent: async (ev) => events.push({ ...ev, created_at: new Date().toISOString() }),
   listOrderEvents: async (id) => events.filter((e) => e.order_id === id),
   updateOrderIf: async (id, where, fields) => { const o = orders.find((x) => x.order_id === id); if (Object.entries(where).some(([k, v]) => (v === null ? o[k] != null : o[k] !== v))) return false; Object.assign(o, fields); return true; },
+  reserveInvoiceNumber: async () => 100 + Object.keys(invoices).length,
+  saveInvoice: async ({ invoice, fy, seq }) => { const row = { order_id: invoice.orderId, invoice_no: invoice.invoiceNo, supply_type: invoice.supplyType, total_paise: invoice.totalPaise, data: invoice, fy, seq }; invoices[invoice.orderId] = row; return row; },
+  markInvoice: async (id, f) => { if (invoices[id]) Object.assign(invoices[id], f); },
+  getCreditNotesByOrder: async (id) => cns.filter((c) => c.order_id === id),
+  markCreditNote: async (no, f) => { const c = cns.find((x) => x.credit_note_no === no); if (c) Object.assign(c, f); },
+  markOrderRefunded: async (id) => { orders.find((o) => o.order_id === id).status = 'cancelled'; },
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
 stub('utils/mailer.js', {
   sendAdminCode: async (email, code) => { fs.writeFileSync('/tmp/admin-dev-code-' + email.split('@')[0] + '.txt', code); fs.writeFileSync('/tmp/admin-dev-code.txt', code); console.log('[dev] login code for', email, '=', code); },
   sendShippedEmail: async ({ order }) => console.log('[dev] shipped email ->', order.customer_email),
+  sendOwnerPaidEmail: async () => console.log('[dev] owner email'),
   sendCustomerConfirmationEmail: async ({ order }) => console.log('[dev] invoice email ->', order.customer_email),
 });
+stub('utils/zohoBooks.js', { configured: () => true, syncPaidOrder: async () => ({ invoiceId: 'zoho_inv_dev' }), syncCreditNote: async () => ({ creditNoteId: 'zoho_cn_dev' }) });
 stub('utils/razorpay.js', {
   createRefund: async ({ paymentId, amountPaise, notes }) => { console.log('[dev] Razorpay refund', paymentId, amountPaise, notes); return { id: 'rfnd_dev_' + Date.now(), status: 'processed' }; },
   expirePaymentLink: async () => true,

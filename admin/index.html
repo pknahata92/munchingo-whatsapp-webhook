@@ -356,6 +356,15 @@ a{color:var(--terra)}
   function done(msg) { toast(msg, 4500); load(); openOrder(state.open.id); }
   function act(path, body, okMsg, btn) { if (btn) btn.disabled = true; return api(path, { method: 'POST', body: body || {} }).then(function (j) { if (btn) btn.disabled = false; if (!j.ok) { toast(j.error || 'Something went wrong', 6000); return j; } done(typeof okMsg === 'function' ? okMsg(j) : okMsg); return j; }); }
 
+  // Copy to clipboard; falls back to a hidden textarea where the browser refuses the modern clipboard (or has none).
+  function copyText(text) {
+    function fallback() {
+      var t = h('textarea', { style: 'position:fixed;opacity:0;left:-999px' }); t.value = text; document.body.appendChild(t); t.select();
+      var done = false; try { done = document.execCommand('copy'); } catch (e) {} t.remove();
+      toast(done ? 'Address copied' : 'Could not copy. Select the address and copy it by hand.', done ? 3500 : 6000);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { toast('Address copied'); }, fallback); else fallback();
+  }
   // Opens the invoice in a new tab. The tab is opened FIRST (inside the click) because browsers block pop-ups that
   // open after a download finishes; the PDF is then loaded into it. If the tab is blocked, it downloads instead.
   function viewInvoice(o, download) {
@@ -383,7 +392,7 @@ a{color:var(--terra)}
     items.appendChild(h('div', { class: 'line' }, h('b', {}, 'Total · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es')), h('b', {}, inr(o.total))));
     p.appendChild(section('Order', items));
 
-    var addr = h('div', {}, h('div', {}, o.address || '—'), h('div', { class: 'acts' }, o.address ? h('button', { class: 'btn ghost small', onclick: function () { (navigator.clipboard && navigator.clipboard.writeText(o.name + '\n' + o.address + '\n' + o.phone)).then(function () { toast('Address copied'); }); } }, 'Copy label') : null));
+    var addr = h('div', {}, h('div', {}, o.address || '—'), h('div', { class: 'acts' }, o.address ? h('button', { class: 'btn ghost small', onclick: function () { copyText(o.name + '\n' + o.address + '\n+' + o.phone); } }, 'Copy label') : null));
     var canEdit = o.state === 'topack' || o.state === 'packed';
     if (canEdit) addr.querySelector('.acts').appendChild(h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Correct delivery address (the old one is kept in the timeline):', o.address); if (v != null && v.trim() !== o.address) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/address', { address: v }, 'Address updated'); } }, 'Edit address'));
     p.appendChild(section('Ship to', kv([['Name', o.name], ['Phone', '+' + o.phone]]), addr,
