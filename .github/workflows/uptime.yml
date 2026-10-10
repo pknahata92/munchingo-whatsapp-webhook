@@ -1,0 +1,43 @@
+name: Uptime check
+
+# Checks that the shop, the admin and the backend (including the database behind it) answer correctly.
+# If any check still fails after retries, this run is marked failed and GitHub emails the repo owner
+# ("Run failed: Uptime check"). Make sure email alerts are on under GitHub > Settings > Notifications > Actions.
+# A deploy on Render causes a brief cold start, so each check retries for about a minute before it counts as down.
+
+on:
+  schedule:
+    - cron: '7,27,47 * * * *'   # every 20 minutes, offset so it does not queue with the keep-warm ping
+  workflow_dispatch: {}
+
+concurrency:
+  group: uptime
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run checks
+        run: |
+          fails=0
+          # check <name> <url> <expected HTTP code> <text the body must contain, or empty>
+          check() {
+            name="$1"; url="$2"; want="$3"; needle="$4"; ok=0
+            for try in 1 2 3 4; do
+              code=$(curl -sS -m 40 -o body.txt -w '%{http_code}' "$url" 2>/dev/null || echo 000)
+              if [ "$code" = "$want" ] && { [ -z "$needle" ] || grep -q "$needle" body.txt; }; then ok=1; break; fi
+              sleep 20
+            done
+            if [ "$ok" = 1 ]; then echo "OK    $name"; else echo "DOWN  $name (got HTTP $code, wanted $want${needle:+ containing '$needle'})"; fails=$((fails+1)); fi
+          }
+          check "Shop (munchingo.com)"       "https://munchingo.com/"                                              200 "Munchingo"
+          check "Shop (www)"                 "https://www.munchingo.com/"                                          200 "Munchingo"
+          check "Checkout page"              "https://munchingo.com/checkout"                                      200 "Checkout"
+          check "Admin page"                 "https://admin.munchingo.com/"                                        200 "Munchingo Admin"
+          check "Admin API requires login"   "https://admin.munchingo.com/admin/api/orders"                        401 ""
+          check "Backend health"             "https://munchingo-whatsapp-webhook.onrender.com/"                    200 '"status":"ok"'
+          check "Backend + database (stock)" "https://munchingo-whatsapp-webhook.onrender.com/api/stock"           200 '"ok":true'
+          check "Backend + database (promo)" "https://munchingo-whatsapp-webhook.onrender.com/api/promo/founding"  200 '"ok":true'
+          if [ "$fails" -gt 0 ]; then echo "::error::$fails check(s) failed"; exit 1; fi
