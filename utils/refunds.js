@@ -4,6 +4,7 @@ const wa = require('./whatsapp');
 const { sendRefundEmail, sendHumanHandoffAlert } = require('./mailer');
 const { sendScenario } = require('./refundTemplates');
 const { getLang } = require('./langPrefs');
+const { reasonOf } = require('./refundReasons');
 
 /**
  * Tell a customer their refund was processed. Tries the approved WhatsApp
@@ -12,7 +13,7 @@ const { getLang } = require('./langPrefs');
  * (if they gave one). If nothing reaches them, emails the owner so the customer
  * can be messaged by hand. Templates: utils/refundTemplates.js.
  */
-async function notifyRefund(order, amountRupees, isFull) {
+async function notifyRefund(order, amountRupees, isFull, opts = {}) {
   const name  = order.customer_name || 'there';
   const phone = order.customer_phone;
   let delivered = false;
@@ -20,14 +21,17 @@ async function notifyRefund(order, amountRupees, isFull) {
   if (phone) {
     try {
       const lang = await getLang(phone);
-      const reason = lang === 'hi' ? 'आपके ऑर्डर में एक समायोजन' : 'an adjustment to your order';
-      await sendScenario(
-        phone,
-        isFull ? 'refund_full' : 'refund_partial',
-        isFull
-          ? { customer_name: name, order_id: order.order_id, amount: amountRupees }
-          : { customer_name: name, amount: amountRupees, order_id: order.order_id, reason }
-      , lang);
+      const r = reasonOf(opts.reasonCode);
+      // English gets the specific reason; Hindi keeps the neutral phrase (the Hindi templates are fixed text).
+      const reason = lang === 'hi' ? 'आपके ऑर्डर में एक समायोजन' : r.text;
+      const key = isFull ? r.template : 'refund_partial';
+      const data = {
+        refund_full: { customer_name: name, order_id: order.order_id, amount: amountRupees },
+        cancel_by_us: { customer_name: name, order_id: order.order_id, reason, amount: amountRupees },
+        cancel_by_customer: { customer_name: name, order_id: order.order_id, amount: amountRupees },
+        refund_partial: { customer_name: name, amount: amountRupees, order_id: order.order_id, reason },
+      }[key];
+      await sendScenario(phone, key, data, lang);
       delivered = true;
     } catch (tplErr) {
       console.warn(`[REFUND] Template not delivered for ${order.order_id} (${tplErr.message}) — trying free text`);

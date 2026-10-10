@@ -240,8 +240,25 @@ function ownerPaidHtml({ order, invoice }) {
   </table></td></tr></table></body></html>`;
 }
 
+// ── Owner: refund processed (with credit note) ───────────────────────────────
+function ownerRefundHtml({ order, refund, creditNote }) {
+  const row = (k, v) => `<tr><td style="padding:5px 0;color:#8A7765;width:110px;vertical-align:top;font-family:${FONT};font-size:13px;">${k}</td><td style="padding:5px 0;font-family:${FONT};font-size:13px;color:${C.ink};">${v}</td></tr>`;
+  return `<!doctype html><html><body style="margin:0;background:${C.band};"><table role="presentation" width="100%"><tr><td align="center" style="padding:20px 10px;">
+  <table role="presentation" width="560" style="width:100%;max-width:560px;background:${C.cream};border-radius:14px;overflow:hidden;">
+    <tr><td style="background:#B0413E;padding:20px 26px;font-family:${FONT};color:#fff;"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.9;">Refund ${refund.isFull ? '(full: order closed)' : '(partial)'}</div><div style="font-size:22px;font-weight:700;margin-top:4px;">${inr(refund.amountRupees)} &middot; ${esc(order.order_id)}</div></td></tr>
+    <tr><td style="padding:18px 26px 8px;"><table role="presentation" width="100%">
+      ${row('Reason', esc(refund.reason) + (refund.note ? ' &mdash; ' + esc(refund.note) : ''))}
+      ${row('Customer', esc(order.customer_name) + ' &middot; +' + esc(order.customer_phone))}
+      ${row('Razorpay refund', esc(refund.id))}
+      ${row('Credit note', creditNote ? esc(creditNote.creditNoteNo) + ' &middot; against invoice ' + esc(creditNote.invoiceNo) + ' &middot; PDF attached' : 'not issued (no invoice on file, or the credit_notes table is missing)')}
+      ${creditNote ? row('GST reversed', inrPaise(creditNote.cgstPaise + creditNote.sgstPaise + creditNote.igstPaise) + ' of ' + inrPaise(creditNote.amountPaise) + ' refunded') : ''}
+    </table></td></tr>
+    <tr><td style="padding:8px 26px 24px;font-family:${FONT};font-size:12px;color:#8A7765;line-height:1.7;">The customer has been told by WhatsApp${order.customer_email ? ' and email' : ''}. The credit note and the refund are recorded in Zoho Books automatically.</td></tr>
+  </table></td></tr></table></body></html>`;
+}
+
 // ── Owner: 8:00 AM summary of the previous day ───────────────────────────────
-function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {} }) {
+function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes = [] }) {
   const money = (n) => '&#8377;' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
   const allItems = orders.flatMap((o) => o.items || []);
   const boxes = allItems.reduce((n, i) => n + (Number(i.quantity) || 0) * boxesIn(i), 0);
@@ -263,6 +280,8 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {} }) {
       <span style="color:#8A7765;">Ship to:</span> ${esc(addr)}
       ${o.gift_note ? `<br><span style="color:${C.terra};">&#127873; ${esc(o.gift_note)}</span>` : ''}</div>`;
   }).join('');
+  const refundTotal = creditNotes.reduce((n, c) => n + c.amount_paise, 0) / 100;
+  const refundBlock = creditNotes.length ? `<tr><td style="padding:6px 26px 14px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#B0413E;margin-bottom:6px;">Refunds &middot; ${creditNotes.length} &middot; ${money(refundTotal)}</div>${creditNotes.map((c) => `<div style="font-family:${FONT};font-size:13px;color:${C.ink};padding:6px 0;border-bottom:1px solid ${C.line};">${esc(c.credit_note_no)} &middot; ${esc(c.order_id)} &middot; ${money(c.amount_paise / 100)} &middot; ${esc((c.data && c.data.reasonLabel) || c.reason_code || '')}${c.is_full ? ' &middot; order closed' : ''}</div>`).join('')}</td></tr>` : '';
   return `<!doctype html><html><body style="margin:0;background:${C.band};"><table role="presentation" width="100%"><tr><td align="center" style="padding:20px 10px;">
   <table role="presentation" width="600" style="width:100%;max-width:600px;background:${C.cream};border-radius:14px;overflow:hidden;">
     <tr><td style="background:${C.navy};padding:22px 26px;font-family:${FONT};color:#fff;"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:${C.gold};">Munchingo &middot; daily summary</div><div style="font-size:22px;font-weight:700;margin-top:4px;">${esc(dayLabel)}</div></td></tr>
@@ -270,9 +289,10 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {} }) {
     <tr><td style="padding:16px 22px 0;"><table role="presentation" width="100%"><tr>${tile('Orders', orders.length)}${tile('Boxes', boxes)}${tile('Collected', money(revenue))}</tr><tr>${tile('GST included', money(gst))}${tile('Discounts', money(discount))}${tile('Gift notes', gifts)}</tr></table></td></tr>
     <tr><td style="padding:16px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:4px;">Pack list (gift sets opened up)</div><table role="presentation" width="100%">${pack}</table></td></tr>
     <tr><td style="padding:16px 26px 6px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:8px;">Orders &amp; shipping labels</div>${cards}</td></tr>
+    ${refundBlock}
     <tr><td style="padding:4px 26px 22px;font-family:${FONT};font-size:12px;color:#8A7765;">A CSV of these orders (for accounting) is attached.</td></tr>`
     : `<tr><td style="padding:24px 26px 28px;font-family:${FONT};font-size:14px;color:${C.ink};">No paid orders yesterday. This email still arrives every morning, so you know the summary is working.</td></tr>`}
   </table></td></tr></table></body></html>`;
 }
 
-module.exports = { customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };
+module.exports = { ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };

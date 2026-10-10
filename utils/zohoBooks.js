@@ -155,4 +155,59 @@ async function syncPaidOrder({ invoice, order }) {
   return { invoiceId };
 }
 
-module.exports = { configured, syncPaidOrder };
+/**
+ * Credit note + refund for a refunded order. Needs the extra OAuth scope ZohoBooks.creditnotes.CREATE
+ * (re-run scripts/zoho-get-refresh-token.js with it). Returns null when Zoho isn't configured.
+ */
+async function syncCreditNote({ creditNote }) {
+  if (!configured()) return null;
+  const ids = itemIds();
+  const contactId = await findOrCreateContact(creditNote.buyer);
+  const date = new Date(creditNote.issuedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const taxId = creditNote.supplyType === 'intra' ? process.env.ZOHO_GST_TAX_ID_5 : process.env.ZOHO_IGST_TAX_ID_5;
+  const missing = creditNote.items.filter((it) => it.netPaise > 0 && !ids[it.name]).map((it) => it.name);
+  if (missing.length) throw new Error('No Zoho item for: ' + missing.join(', '));
+
+  const line_items = creditNote.items.filter((it) => it.netPaise > 0).map((it) => ({
+    item_id: ids[it.name],
+    name: it.name,
+    description: `Refund: ${it.name}${it.contents ? ' - ' + it.contents : ''} (against ${creditNote.invoiceNo}) - HSN ${creditNote.hsn}`,
+    rate: +(it.netPaise / 100).toFixed(2),
+    quantity: 1,
+    hsn_or_sac: creditNote.hsn,
+    ...(taxId ? { tax_id: taxId } : {}),
+  }));
+
+  const cn = await call('post', '/creditnotes', {
+    params: { ignore_auto_number_generation: true },
+    data: {
+      customer_id: contactId,
+      creditnote_number: creditNote.creditNoteNo,
+      reference_number: creditNote.invoiceNo,
+      date,
+      is_inclusive_tax: true,
+      gst_treatment: 'consumer',
+      place_of_supply: creditNote.buyer.stateCode ? stateAbbrev(creditNote.buyer.stateCode) : 'HR',
+      line_items,
+      notes: `Refund for order ${creditNote.orderId}: ${creditNote.reasonLabel}${creditNote.reasonNote ? ' - ' + creditNote.reasonNote : ''}`,
+    },
+  });
+  const creditNoteId = cn.creditnote.creditnote_id;
+
+  // Money out: the refund against this credit note, from the same account the sale was deposited to.
+  if (process.env.ZOHO_DEPOSIT_ACCOUNT_ID) {
+    await call('post', `/creditnotes/${creditNoteId}/refunds`, {
+      data: {
+        date,
+        refund_mode: process.env.ZOHO_PAYMENT_MODE || 'others',
+        amount: creditNote.amountPaise / 100,
+        from_account_id: process.env.ZOHO_DEPOSIT_ACCOUNT_ID,
+        reference_number: creditNote.refundId,
+        description: `Razorpay refund ${creditNote.refundId} for ${creditNote.orderId}`,
+      },
+    });
+  }
+  return { creditNoteId };
+}
+
+module.exports = { configured, syncPaidOrder, syncCreditNote };

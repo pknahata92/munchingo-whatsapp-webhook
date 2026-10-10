@@ -283,6 +283,40 @@ async function getInvoicesByOrderIds(orderIds) {
   return Object.fromEntries((data || []).map((r) => [r.order_id, r]));
 }
 
+// ── GST credit notes (see credit_notes_migration.sql) ─────────────────────────
+async function getCreditNoteByRefund(refundId) {
+  const { data, error } = await db().from('credit_notes').select('*').eq('refund_id', refundId).maybeSingle();
+  if (error) throw new Error(`Supabase select (credit note) failed: ${error.message}`);
+  return data;
+}
+async function getCreditNotesByOrder(orderId) {
+  const { data, error } = await db().from('credit_notes').select('*').eq('order_id', orderId);
+  if (error) throw new Error(`Supabase select (credit notes) failed: ${error.message}`);
+  return data || [];
+}
+async function saveCreditNote({ creditNote, fy, seq }) {
+  const { data, error } = await db().from('credit_notes').insert({
+    credit_note_no: creditNote.creditNoteNo, refund_id: creditNote.refundId, order_id: creditNote.orderId,
+    invoice_no: creditNote.invoiceNo, fy, seq, issued_at: creditNote.issuedAt,
+    reason_code: creditNote.reasonCode || null, reason_note: creditNote.reasonNote || null,
+    amount_paise: creditNote.amountPaise, taxable_paise: creditNote.taxablePaise,
+    cgst_paise: creditNote.cgstPaise, sgst_paise: creditNote.sgstPaise, igst_paise: creditNote.igstPaise,
+    is_full: creditNote.isFull, data: creditNote,
+  }).select().single();
+  if (error) throw new Error(`Supabase insert (credit note) failed: ${error.message}`);
+  console.log(`[DB] Credit note ${creditNote.creditNoteNo} saved for ${creditNote.orderId}`);
+  return data;
+}
+async function markCreditNote(creditNoteNo, fields) {
+  const { error } = await db().from('credit_notes').update(fields).eq('credit_note_no', creditNoteNo);
+  if (error) console.error(`[DB] markCreditNote(${creditNoteNo}) failed:`, error.message);
+}
+async function getCreditNotesBetween(sinceISO, untilISO) {
+  const { data, error } = await db().from('credit_notes').select('*').gte('issued_at', sinceISO).lt('issued_at', untilISO).order('issued_at', { ascending: true });
+  if (error) { console.error('[DB] getCreditNotesBetween error:', error.message); return []; }
+  return data || [];
+}
+
 // Once-per-day guard for the 8:00 AM summary, so two triggers (pg_cron + the GitHub backup) never double-send.
 // Re-uses the invoice_counters table (key 'digest-YYYY-MM-DD') so no extra migration is needed.
 async function claimDigestDay(day) {
@@ -301,6 +335,11 @@ async function markInvoice(orderId, fields) {
 }
 
 module.exports = {
+  getCreditNoteByRefund,
+  getCreditNotesByOrder,
+  saveCreditNote,
+  markCreditNote,
+  getCreditNotesBetween,
   claimDigestDay,
   releaseDigestDay,
   getInvoicesByOrderIds,

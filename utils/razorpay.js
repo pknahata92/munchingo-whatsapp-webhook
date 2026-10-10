@@ -119,4 +119,19 @@ function verifyWebhookSignature(rawBody, signature) {
   }
 }
 
-module.exports = { createPaymentLink, expirePaymentLink, verifyWebhookSignature, orderIdFromReference };
+/**
+ * Start a refund on a captured payment. Amount in paise; omit for a full refund.
+ * Razorpay then fires refund.processed, and THAT webhook does the rest (credit note, Zoho, customer message),
+ * so every refund - from our endpoint or from the Razorpay dashboard - follows one path.
+ */
+async function createRefund({ paymentId, amountPaise, notes }) {
+  const body = { speed: 'normal', notes: notes || {} };
+  if (amountPaise) body.amount = amountPaise;
+  const res = await axios.post(`https://api.razorpay.com/v1/payments/${paymentId}/refund`, body, {
+    auth: { username: process.env.RAZORPAY_KEY_ID, password: process.env.RAZORPAY_KEY_SECRET },
+    timeout: 15000,
+  });
+  return res.data;
+}
+
+module.exports = { createRefund, createPaymentLink, expirePaymentLink, verifyWebhookSignature, orderIdFromReference };

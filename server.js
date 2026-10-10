@@ -255,26 +255,15 @@ app.post('/razorpay-webhook', async (req, res) => {
     // is a full refund, close the order so it leaves the packing list.
     if (event.event === 'refund.processed') {
       const refund    = event.payload.refund.entity;
-      const { getOrderByPaymentId, markOrderRefunded } = require('./utils/database');
-      const { notifyRefund } = require('./utils/refunds');
+      const { getOrderByPaymentId } = require('./utils/database');
 
       const order = await getOrderByPaymentId(refund.payment_id);
       if (!order) {
         console.log(`[RAZORPAY] refund.processed for unknown payment ${refund.payment_id} — skipping`);
         return;
       }
-
-      const amountRupees = Math.round(Number(refund.amount) / 100);
-      const isFull       = amountRupees >= Number(order.total);
-
-      if (isFull && order.status === 'cancelled') {
-        console.log(`[RAZORPAY] Duplicate full-refund webhook for ${order.order_id} — ignoring`);
-        return;
-      }
-
-      if (isFull) await markOrderRefunded(order.order_id);
-      console.log(`[RAZORPAY] Refund of ₹${amountRupees} processed for ${order.order_id} (${isFull ? 'full' : 'partial'})`);
-      await notifyRefund(order, amountRupees, isFull);
+      // One path for every refund: credit note, Zoho, customer message, owner email (utils/refundFlow.js).
+      await require('./utils/refundFlow').processRefund({ order, refund });
       return;
     }
 
@@ -351,10 +340,12 @@ app.get('/internal/daily-digest', async (req, res) => {
     const until = new Date(since.getTime() + 86400000);
     const orders = await getOrdersPaidSince(since.toISOString(), until.toISOString());
     const invoicesByOrder = await getInvoicesByOrderIds(orders.map((o) => o.order_id));
+    const { getCreditNotesBetween } = require('./utils/database');
+    const creditNotes = await getCreditNotesBetween(since.toISOString(), until.toISOString());
 
     const dayLabel = new Date(Date.parse(dayIst + 'T12:00:00Z')).toLocaleDateString('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
     try {
-      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder });
+      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder, creditNotes });
     } catch (sendErr) {
       if (!force) await releaseDigestDay(dayIst); // let the next trigger retry
       throw sendErr;
@@ -367,6 +358,63 @@ app.get('/internal/daily-digest', async (req, res) => {
   }
 });
 
+
+
+// ── Owner actions (protected by the same DIGEST_SECRET, sent as the x-admin-secret header) ──────────────
+function adminAuthorised(req) {
+  const secret = process.env.DIGEST_SECRET;
+  if (!secret) return false;
+  const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
+  const want = Buffer.from(secret);
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+
+// POST /internal/refund  { orderId, amountRupees?, reasonCode?, note? }
+// Starts a refund in Razorpay (omit amount for the full remaining amount). Razorpay's refund.processed webhook then
+// issues the GST credit note, records it in Zoho, messages the customer and emails you.
+app.post('/internal/refund', express.json(), async (req, res) => {
+  if (!adminAuthorised(req)) return res.sendStatus(403);
+  try {
+    const { orderId, amountRupees, reasonCode = 'other', note = '' } = req.body || {};
+    const { getOrder, getCreditNotesByOrder } = require('./utils/database');
+    const { REASONS } = require('./utils/refundReasons');
+    const order = await getOrder(orderId);
+    if (!order) return res.status(404).json({ ok: false, error: 'No such order' });
+    if (order.status !== 'paid') return res.status(409).json({ ok: false, error: `Order is "${order.status}", only paid orders can be refunded` });
+    if (!order.payment_id) return res.status(409).json({ ok: false, error: 'Order has no payment id' });
+    if (!REASONS[reasonCode]) return res.status(400).json({ ok: false, error: `reasonCode must be one of: ${Object.keys(REASONS).join(', ')}` });
+
+    let refundedPaise = 0;
+    try { refundedPaise = (await getCreditNotesByOrder(orderId)).reduce((n, c) => n + c.amount_paise, 0); } catch (e) { /* table not created yet */ }
+    const remaining = Math.round(Number(order.total) * 100) - refundedPaise;
+    const amountPaise = amountRupees ? Math.round(Number(amountRupees) * 100) : remaining;
+    if (!(amountPaise > 0) || amountPaise > remaining) return res.status(400).json({ ok: false, error: `Amount must be between Rs 0.01 and Rs ${(remaining / 100).toFixed(2)} (what is still refundable)` });
+
+    const refund = await require('./utils/razorpay').createRefund({ paymentId: order.payment_id, amountPaise, notes: { order_id: orderId, reason_code: reasonCode, note: String(note).slice(0, 200) } });
+    console.log(`[REFUND] Started ${refund.id} for ${orderId}: Rs ${amountPaise / 100} (${reasonCode})`);
+    res.json({ ok: true, refundId: refund.id, amountRupees: amountPaise / 100, status: refund.status, next: 'Razorpay will confirm; the credit note, Zoho entry and customer message follow automatically.' });
+  } catch (err) {
+    console.error('[REFUND] /internal/refund failed:', err.response?.data ? JSON.stringify(err.response.data) : err.message);
+    res.status(500).json({ ok: false, error: err.response?.data?.error?.description || err.message });
+  }
+});
+
+// POST /internal/cancel  { orderId }   - for UNPAID orders only (nothing to refund): closes the order and its payment link.
+app.post('/internal/cancel', express.json(), async (req, res) => {
+  if (!adminAuthorised(req)) return res.sendStatus(403);
+  try {
+    const { getOrder, cancelOrder } = require('./utils/database');
+    const order = await getOrder((req.body || {}).orderId);
+    if (!order) return res.status(404).json({ ok: false, error: 'No such order' });
+    if (!/^pending/.test(order.status)) return res.status(409).json({ ok: false, error: `Order is "${order.status}". Paid orders are cancelled by refunding them (POST /internal/refund).` });
+    if (order.payment_link_id) await require('./utils/razorpay').expirePaymentLink(order.payment_link_id);
+    await cancelOrder(order.order_id);
+    res.json({ ok: true, orderId: order.order_id, status: 'cancelled' });
+  } catch (err) {
+    console.error('[CANCEL] failed:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 // ── "Subscribe & Save" daily renewal (GET) ────────────────────────────────────
 // Same reasoning and protection pattern as /internal/daily-digest above:

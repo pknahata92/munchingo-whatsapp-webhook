@@ -238,6 +238,21 @@ async function sendRefundEmail({ email, customerName, orderId, amount, isFull })
   console.log(`[MAILER] Refund email sent for #${orderId}`);
 }
 
+// One email to the owner for every refund, with the credit note attached.
+async function sendOwnerRefundEmail({ order, refund, creditNote, pdf }) {
+  const t = require('./emailTemplates');
+  const payload = {
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [process.env.NOTIFY_EMAIL],
+    subject: `Refund Rs.${refund.amountRupees} (${refund.isFull ? 'full' : 'partial'}): ${order.order_id} - ${refund.reason}`,
+    html: t.ownerRefundHtml({ order, refund, creditNote }),
+  };
+  if (creditNote && pdf) payload.attachments = [{ filename: `Munchingo-Credit-Note-${creditNote.creditNoteNo.replace(/\//g, '-')}.pdf`, content: pdf.toString('base64') }];
+  const { error } = await resend.emails.send(payload);
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Owner refund email sent for #${order.order_id}`);
+}
+
 async function sendContactFormEmail({ name, email, orderNumber, message }) {
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
@@ -283,15 +298,15 @@ function csvCell(v) {
 }
 
 // 8:00 AM summary of the previous day: totals, pack list, every order, plus a CSV for accounting.
-async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {} }) {
+async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, creditNotes = [] }) {
   const t = require('./emailTemplates');
   const { contentsOf } = require('./orderText');
   const revenue = orders.reduce((n, o) => n + Number(o.total || 0), 0);
   const payload = {
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [process.env.NOTIFY_EMAIL],
-    subject: orders.length ? `Munchingo ${dayLabel}: ${orders.length} order${orders.length === 1 ? '' : 's'}, Rs.${revenue}` : `Munchingo ${dayLabel}: no orders`,
-    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder }),
+    subject: (orders.length ? `Munchingo ${dayLabel}: ${orders.length} order${orders.length === 1 ? '' : 's'}, Rs.${revenue}` : `Munchingo ${dayLabel}: no orders`) + (creditNotes.length ? ` (${creditNotes.length} refund${creditNotes.length === 1 ? '' : 's'})` : ''),
+    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder, creditNotes }),
   };
   if (orders.length) {
     const head = ['order_id', 'paid_at_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_note', 'coupon', 'discount', 'total', 'invoice_no', 'taxable', 'cgst', 'sgst', 'igst', 'payment_id', 'ship_to'];
@@ -310,4 +325,4 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {} }) 
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };
+module.exports = { sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };
