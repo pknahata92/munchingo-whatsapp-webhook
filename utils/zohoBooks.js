@@ -11,11 +11,28 @@
  *   -> exchange the grant code once for a refresh token, then set on Render:
  *   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORG_ID,
  *   ZOHO_DC (in | com | eu ...; default "in"),
- *   ZOHO_DEPOSIT_ACCOUNT_ID  (the bank/"Razorpay clearing" account payments land in),
- *   ZOHO_GST_TAX_ID_5        (the 5% GST tax id, optional if tax is set on the items)
+ *   ZOHO_DEPOSIT_ACCOUNT_ID  (account payments land in; Undeposited Funds works until a Razorpay bank/clearing account exists),
+ *   ZOHO_GST_TAX_ID_5        (5% GST group, used for Haryana -> Haryana sales: CGST 2.5% + SGST 2.5%),
+ *   ZOHO_IGST_TAX_ID_5       (IGST 5%, used for every other state),
+ *   ZOHO_PAYMENT_MODE        (optional, default "others")
+ * Munchingo org values (read via the Zoho Books connector on 2026-10-10): org 60091499971, DC "in",
+ *   GST5 = 4288800000000034214, IGST5 = 4288800000000034177, Undeposited Funds = 4288800000000000456.
+ * Get the refresh token once with scripts/zoho-get-refresh-token.js.
  */
 
 const axios = require('axios');
+
+// Catalog items created in the Munchingo Books org on 2026-10-10 (HSN 1905, GST5 / IGST5).
+// Keyed by the item name our checkout stores (utils/catalog.js NAMES). Override with ZOHO_ITEM_IDS='{"Atta Original":"..."}'.
+const ITEM_IDS = {
+  'Atta Original': '4288800000000039021',
+  'Atta Kesari': '4288800000000041001',
+  'Atta Ajwain': '4288800000000039030',
+  'Atta Sugar-Lite': '4288800000000042001',
+  'Trio Gift Set': '4288800000000043001',
+  'Full Range Gift Set': '4288800000000034246',
+};
+const itemIds = () => ({ ...ITEM_IDS, ...(process.env.ZOHO_ITEM_IDS ? JSON.parse(process.env.ZOHO_ITEM_IDS) : {}) });
 
 const dc = () => process.env.ZOHO_DC || 'in';
 const accountsUrl = () => `https://accounts.zoho.${dc()}/oauth/v2/token`;
@@ -56,16 +73,17 @@ async function call(method, path, { params, data } = {}) {
 }
 
 async function findOrCreateContact(buyer) {
-  const email = buyer.email || undefined;
-  const search = email ? { email } : { contact_name: buyer.name };
-  const found = await call('get', '/contacts', { params: search });
-  const hit = (found.contacts || []).find((c) => (email ? c.email === email : c.contact_name === buyer.name));
+  // Same person (name + phone) always maps to the same Books customer; different people who share a name don't merge.
+  const displayName = `${buyer.name} (${buyer.phone || 'no phone'})`.slice(0, 100);
+  const found = await call('get', '/contacts', { params: { contact_name: displayName } });
+  const hit = (found.contacts || []).find((c) => c.contact_name === displayName);
   if (hit) return hit.contact_id;
   const created = await call('post', '/contacts', {
     data: {
-      contact_name: buyer.name,
+      contact_name: displayName,
       contact_type: 'customer',
       customer_sub_type: 'individual',
+      gst_treatment: 'consumer',
       place_of_contact: buyer.stateCode ? stateAbbrev(buyer.stateCode) : undefined,
       contact_persons: [{ first_name: buyer.name, email: buyer.email || undefined, mobile: buyer.phone || undefined, is_primary_contact: true }],
       billing_address: { address: buyer.address, city: buyer.city, state: buyer.state, zip: buyer.pincode, country: 'India' },
@@ -87,15 +105,22 @@ async function syncPaidOrder({ invoice, order }) {
   const contactId = await findOrCreateContact(invoice.buyer);
   const date = new Date(invoice.issuedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
+  const taxId = invoice.supplyType === 'intra' ? process.env.ZOHO_GST_TAX_ID_5 : process.env.ZOHO_IGST_TAX_ID_5;
+
   // Line rate is the GST-inclusive net price per unit after discount (is_inclusive_tax = true).
+  const ids = itemIds();
   const line_items = invoice.items.map((it) => ({
+    item_id: ids[it.name],
     name: it.name,
     description: `${it.name}${it.unit ? ' (' + it.unit + ')' : ''} - HSN ${invoice.hsn}`,
     rate: +(it.netPaise / it.qty / 100).toFixed(2),
     quantity: it.qty,
     hsn_or_sac: invoice.hsn,
-    ...(process.env.ZOHO_GST_TAX_ID_5 ? { tax_id: process.env.ZOHO_GST_TAX_ID_5 } : {}),
+    ...(taxId ? { tax_id: taxId } : {}),
   }));
+
+  const missing = invoice.items.filter((it) => !ids[it.name]).map((it) => it.name);
+  if (missing.length) throw new Error('No Zoho item for: ' + missing.join(', ') + ' (add it in Books and ZOHO_ITEM_IDS)');
 
   const inv = await call('post', '/invoices', {
     params: { ignore_auto_number_generation: true },
@@ -118,7 +143,7 @@ async function syncPaidOrder({ invoice, order }) {
     await call('post', '/customerpayments', {
       data: {
         customer_id: contactId,
-        payment_mode: 'Razorpay',
+        payment_mode: process.env.ZOHO_PAYMENT_MODE || 'others',
         amount: invoice.totalPaise / 100,
         date,
         reference_number: invoice.paymentId || order.payment_id || undefined,
