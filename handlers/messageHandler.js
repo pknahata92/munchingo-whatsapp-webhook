@@ -27,7 +27,7 @@ const BULK_GIFTING_FLOW_ID = '1066239432999546';
 // an order is only fulfilled hyperlocally/manually by Prashant directly, not
 // through the bot. Referenced in the pre-catalog nudge (sendProductList) and
 // enforced for real in handleOrderMessage.
-const MIN_ORDER_VALUE = 499;
+const MIN_BOXES = 3; // every catalog item is one box; keep equal to MIN_BOXES in routes/checkout.js
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -160,7 +160,7 @@ async function sendWelcome(to, name) {
 async function sendProductList(to) {
   await wa.sendCatalog(
     to,
-    `🍪 Our pure desi ghee atta cookies — starting at ₹259 for a 250g pack.\n\nTap a product to add it to your cart! *Minimum order value is ₹${MIN_ORDER_VALUE} for delivery.*`,
+    `🍪 Our pure desi ghee atta cookies — starting at ₹259 for a 250g pack.\n\nTap a product to add it to your cart! *Minimum order is ${MIN_BOXES} boxes for delivery.*`,
     '91slwpjdqq'
   );
 }
@@ -174,7 +174,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
-      `Minimum order value: ₹${MIN_ORDER_VALUE} for delivery\n` +
+      `Minimum order: ${MIN_BOXES} boxes for delivery\n` +
       `Delivery across India 🇮🇳`,
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
@@ -231,7 +231,7 @@ async function sendShippingInfo(to) {
     `🚚 *Munchingo delivers across India!*\n\n` +
       `📍 We ship to all major cities & tier-2 towns\n` +
       `⏱️ Delivery time depends on your location — we'll share an estimate when you order\n` +
-      `✅ No separate delivery charge — price is all-inclusive (₹${MIN_ORDER_VALUE} minimum order value)\n` +
+      `✅ No separate delivery charge — price is all-inclusive (${MIN_BOXES}-box minimum order)\n` +
       `📦 Orders are packed & sealed securely\n\n` +
       `Questions about your area? Just ask!`,
     [
@@ -249,7 +249,7 @@ async function sendPriceList(to) {
 
   await wa.sendButtons(
     to,
-    `💰 *Munchingo Pricing:*\n\n${lines}\n\n✅ No separate delivery charge — price is all-inclusive (₹${MIN_ORDER_VALUE} minimum order value)\n_Prices inclusive of 5% GST (GSTIN 06AIIPN5005C2ZP)_`,
+    `💰 *Munchingo Pricing:*\n\n${lines}\n\n✅ No separate delivery charge — price is all-inclusive (${MIN_BOXES}-box minimum order)\n_Prices inclusive of 5% GST (GSTIN 06AIIPN5005C2ZP)_`,
     [
       { id: 'btn_products', title: '🛒 Shop Now' },
       { id: 'btn_order',    title: '📦 How to Order' },
@@ -552,11 +552,12 @@ async function handleOrderMessage(to, order, contactName) {
 
   const total = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
 
-  if (total < MIN_ORDER_VALUE) {
+  const totalBoxes = items.reduce((n, i) => n + i.quantity, 0); // every catalog item is one box
+  if (totalBoxes < MIN_BOXES) {
     await wa.sendButtons(
       to,
-      `📦 Your order comes to *₹${total}*, just under our *₹${MIN_ORDER_VALUE} minimum order value* for delivery.\n\n` +
-        `Add a bit more to your cart, or reply *human* if you'd like to arrange a single-box order directly with our team.`,
+      `📦 Your cart has *${totalBoxes} box${totalBoxes === 1 ? '' : 'es'}*, and our minimum order is *${MIN_BOXES} boxes* for delivery.\n\n` +
+        `Add ${MIN_BOXES - totalBoxes} more to your cart, or reply *human* if you'd like to arrange a smaller order directly with our team.`,
       [
         { id: 'btn_products', title: '🛒 Add More' },
         { id: 'btn_contact',  title: '📞 Talk to Us' },

@@ -45,6 +45,16 @@ const NAMES = {
 const TRIO_NAME = 'Trio Gift Set';
 
 /**
+ * How many physical boxes one unit of this slug is: singles 1, Trio gift set 3,
+ * Full Range gift set 4. The minimum order is counted in boxes (see MIN_BOXES in routes/checkout.js).
+ */
+function boxesForSlug(slug) {
+  if (slug === 'full-range-set') return 4;
+  if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) return 3;
+  return 1;
+}
+
+/**
  * Look up the real price for a website cart item slug.
  * Returns the price in rupees, or null if the slug isn't recognised.
  */
@@ -83,4 +93,5 @@ function isAvailable(slug) {
   return true; // unrecognised slugs are rejected elsewhere by priceForSlug
 }
 
-module.exports = { priceForSlug, isAvailable, nameForSlug };
+module.exports = {
+  boxesForSlug, priceForSlug, isAvailable, nameForSlug };

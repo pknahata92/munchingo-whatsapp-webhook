@@ -7,7 +7,7 @@ const router = express.Router();
 const { createPaymentLink, orderIdFromReference } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('../utils/database');
 const { sendOrderEmail, sendContactFormEmail } = require('../utils/mailer');
-const { priceForSlug, isAvailable, nameForSlug } = require('../utils/catalog');
+const { priceForSlug, isAvailable, nameForSlug, boxesForSlug } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 const { validateCoupon } = require('../utils/coupons');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
@@ -20,10 +20,12 @@ const { createSubscription, attachSubscriptionToOrder } = require('../utils/subs
 const SUBSCRIPTION_DISCOUNT_PCT = 8;
 const SUBSCRIPTION_FREQUENCY_DAYS = 30;
 
-// Minimum order value for the automated (nationwide courier) checkout.
-// Single-box orders are only fulfilled hyperlocally/manually, not through
-// this system - see the check in POST /api/checkout below.
-const MIN_ORDER_VALUE = 499;
+// Minimum order for the automated (nationwide courier) checkout, counted in BOXES:
+// the courier mailer packs hold 3-4 boxes, so smaller orders are not fulfilled through
+// this system (singles are arranged manually/hyperlocally). A Trio gift set counts as
+// 3 boxes and the Full Range set as 4 - see boxesForSlug in utils/catalog.js.
+// Keep equal to MIN_BOXES in the website's js/cart.js.
+const MIN_BOXES = 3;
 
 // Helpers
 function generateOrderId() {
@@ -115,14 +117,12 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       // the client's submitted total (see normaliseItems for why).
       const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
 
-      // Minimum order value for the automated (nationwide courier) checkout.
-      // Single-box / below-MOV orders are fulfilled manually/hyperlocally by
-      // Prashant directly, outside this system entirely - not something the
-      // automated flow accepts.
-      if (realTotal < MIN_ORDER_VALUE) {
+      // Minimum order for the automated (nationwide courier) checkout, in boxes.
+      const totalBoxes = enrichedItems.reduce((n, i) => n + i.quantity * boxesForSlug(i.slug), 0);
+      if (totalBoxes < MIN_BOXES) {
         return res.status(400).json({
           ok: false,
-          error: `Minimum order value is ₹${MIN_ORDER_VALUE} for delivery. Please add more to your cart, or message us on WhatsApp directly for a single-box order.`,
+          error: `Online orders start at ${MIN_BOXES} boxes. Please add ${MIN_BOXES - totalBoxes} more box${MIN_BOXES - totalBoxes === 1 ? '' : 'es'} (or pick a gift set), or message us on WhatsApp directly for a smaller order.`,
         });
       }
 
