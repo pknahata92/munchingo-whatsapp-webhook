@@ -34,7 +34,7 @@ function shapeOrder(o, invoice, creditNotes = []) {
 }
 
 async function listOrders() {
-  const orders = await db.listRecentOrders(300);
+  const orders = await db.listRecentOrders(600);
   const ids = orders.map((o) => o.order_id);
   const invoices = await db.getInvoicesByOrderIds(ids);
   const cns = await db.getCreditNotesByOrderIds(ids);

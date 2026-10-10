@@ -46,6 +46,12 @@ main{max-width:980px;margin:0 auto;padding:16px}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 18px;border-radius:12px;display:none;z-index:50;max-width:92vw;text-align:center}
 .err{color:var(--red);font-size:13px;margin-top:8px;min-height:18px}.muted{color:var(--ink2);font-size:13px}
 a{color:var(--terra)}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center}.ctl select{width:auto;min-width:140px;flex:1 1 150px}
+.inl{display:flex;align-items:center;gap:6px;margin:0;text-transform:none;letter-spacing:0;font-size:13px}.inl input{width:auto;min-height:38px}
+.bar{display:flex;align-items:center;gap:8px;margin:8px 0 10px;font-size:13px;color:var(--ink2)}.bar .sp{flex:1}.bar b{color:var(--ink)}
+.ctl[hidden]{display:none}
+.bar .btn{white-space:nowrap}.bar span:first-child{line-height:1.3}
+.chip.tog.on,.chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
 </style>
 </head>
 <body>
@@ -74,7 +80,23 @@ a{color:var(--terra)}
   <main>
     <div class="tiles" id="tiles"></div>
     <div class="chips" id="chips"></div>
-    <div class="row"><input id="q" placeholder="Search name, phone, order or invoice number"><button class="btn ghost small" id="reload">Refresh</button></div>
+    <div class="row"><input id="q" placeholder="Search name, phone, address, pincode, order or invoice no."><button class="btn ghost small" id="reload">Refresh</button></div>
+    <div class="ctl">
+      <select id="sort" aria-label="Sort by">
+        <option value="new">Newest first</option><option value="old">Oldest first</option>
+        <option value="valueDesc">Highest value</option><option value="valueAsc">Lowest value</option>
+        <option value="boxesDesc">Most boxes</option><option value="nameAZ">Name A to Z</option>
+      </select>
+      <select id="range" aria-label="Date">
+        <option value="all">Any date</option><option value="today">Today</option><option value="yesterday">Yesterday</option>
+        <option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="month">This month</option><option value="custom">Pick dates…</option>
+      </select>
+      <button class="chip" id="fGift" type="button">🎁 Gift notes</button>
+      <button class="chip" id="fCoupon" type="button">Coupon used</button>
+      <button class="chip" id="fSet" type="button">Gift sets</button>
+    </div>
+    <div class="ctl" id="customDates" hidden><label class="inl">From <input type="date" id="dFrom"></label><label class="inl">To <input type="date" id="dTo"></label></div>
+    <div class="bar"><span id="count"></span><span class="sp"></span><button class="btn ghost small" id="csv">Download CSV</button><button class="btn ghost small" id="reset">Clear filters</button></div>
     <div id="list"></div>
   </main>
 </div>
@@ -87,7 +109,12 @@ a{color:var(--terra)}
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var token = ''; try { token = localStorage.getItem('mngAdminToken') || ''; } catch (e) {}
-  var state = { orders: [], filter: 'topack', reasons: {}, open: null };
+  var state = { orders: [], filter: 'topack', reasons: {}, open: null, sort: 'new', range: 'all', from: '', to: '', gift: false, coupon: false, set: false };
+  try { var saved = JSON.parse(localStorage.getItem('mngAdminView') || '{}'); ['filter', 'sort', 'range', 'from', 'to', 'gift', 'coupon', 'set'].forEach(function (k) { if (saved[k] != null) state[k] = saved[k]; }); } catch (e) {}
+  function saveView() { try { localStorage.setItem('mngAdminView', JSON.stringify({ filter: state.filter, sort: state.sort, range: state.range, from: state.from, to: state.to, gift: state.gift, coupon: state.coupon, set: state.set })); } catch (e) {} }
+  var IST = 5.5 * 3600 * 1000;
+  var istDay = function (iso) { return new Date(Date.parse(iso) + IST).toISOString().slice(0, 10); };
+  var dayShift = function (n) { return new Date(Date.now() + IST - n * 86400000).toISOString().slice(0, 10); };
 
   // Safe DOM builder: text is always set as text, never as HTML.
   function h(tag, attrs) {
@@ -147,18 +174,46 @@ a{color:var(--terra)}
     var t = $('tiles'); t.textContent = '';
     [['Orders today', s.today.orders], ['Boxes today', s.today.boxes], ['Sales today', inr(s.today.revenue)], ['To pack', s.topack], ['Shipped', s.shipped], ['Unpaid', s.unpaid]].forEach(function (x) { t.appendChild(h('div', { class: 'tile' }, h('b', {}, x[1]), h('span', {}, x[0]))); });
   }
+  function inRange(o) {
+    var d = istDay(o.paid_at || o.created_at), r = state.range;
+    if (r === 'all') return true;
+    if (r === 'today') return d === dayShift(0);
+    if (r === 'yesterday') return d === dayShift(1);
+    if (r === '7') return d >= dayShift(6);
+    if (r === '30') return d >= dayShift(29);
+    if (r === 'month') return d.slice(0, 7) === dayShift(0).slice(0, 7);
+    if (r === 'custom') return (!state.from || d >= state.from) && (!state.to || d <= state.to);
+    return true;
+  }
+  function visible() {
+    var q = $('q').value.trim().toLowerCase();
+    var rows = state.orders.filter(function (o) {
+      var okState = state.filter === 'all' || o.state === state.filter || (state.filter === 'refunded' && o.state === 'cancelled');
+      var hay = [o.id, o.name, o.phone, o.invoice_no, o.email, o.address].join(' ').toLowerCase();
+      return okState && inRange(o) && (!q || hay.indexOf(q) >= 0)
+        && (!state.gift || !!o.gift_note) && (!state.coupon || !!o.coupon)
+        && (!state.set || o.items.some(function (i) { return !!i.contents; }));
+    });
+    var key = function (o) { return o.paid_at || o.created_at; };
+    var by = { new: function (a, b) { return key(b) < key(a) ? -1 : 1; }, old: function (a, b) { return key(a) < key(b) ? -1 : 1; },
+      valueDesc: function (a, b) { return b.total - a.total; }, valueAsc: function (a, b) { return a.total - b.total; },
+      boxesDesc: function (a, b) { return b.boxes - a.boxes; }, nameAZ: function (a, b) { return a.name.localeCompare(b.name); } };
+    return rows.sort(by[state.sort] || by.new);
+  }
   function render() {
     var c = $('chips'); c.textContent = '';
     FILTERS.forEach(function (f) {
       var n = f[0] === 'all' ? state.orders.length : state.orders.filter(function (o) { return o.state === f[0] || (f[0] === 'refunded' && o.state === 'cancelled'); }).length;
-      c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; render(); } }, f[1] + ' ' + n));
+      c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; saveView(); render(); } }, f[1] + ' ' + n));
     });
-    var q = $('q').value.trim().toLowerCase();
-    var rows = state.orders.filter(function (o) {
-      var okState = state.filter === 'all' || o.state === state.filter || (state.filter === 'refunded' && o.state === 'cancelled');
-      var hay = [o.id, o.name, o.phone, o.invoice_no, o.email].join(' ').toLowerCase();
-      return okState && (!q || hay.indexOf(q) >= 0);
-    });
+    var rows = visible();
+    var sum = rows.reduce(function (n, o) { return n + (o.state === 'unpaid' || o.state === 'cancelled' ? 0 : o.total); }, 0);
+    var bx = rows.reduce(function (n, o) { return n + o.boxes; }, 0);
+    $('count').textContent = '';
+    $('count').appendChild(h('b', {}, rows.length + ' order' + (rows.length === 1 ? '' : 's')));
+    $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes · ' + inr(sum) + ' paid'));
+    $('sort').value = state.sort; $('range').value = state.range; $('dFrom').value = state.from; $('dTo').value = state.to; $('customDates').hidden = state.range !== 'custom';
+    [['fGift', 'gift'], ['fCoupon', 'coupon'], ['fSet', 'set']].forEach(function (x) { $(x[0]).classList.toggle('on', !!state[x[1]]); });
     var list = $('list'); list.textContent = '';
     if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
     rows.forEach(function (o) {
@@ -169,6 +224,23 @@ a{color:var(--terra)}
     });
   }
   $('q').addEventListener('input', render); $('reload').onclick = load;
+  function change(fn) { return function (e) { fn(e); saveView(); render(); }; }
+  $('sort').onchange = change(function () { state.sort = $('sort').value; });
+  $('range').onchange = change(function () { state.range = $('range').value; });
+  $('dFrom').onchange = change(function () { state.from = $('dFrom').value; });
+  $('dTo').onchange = change(function () { state.to = $('dTo').value; });
+  $('fGift').onclick = change(function () { state.gift = !state.gift; });
+  $('fCoupon').onclick = change(function () { state.coupon = !state.coupon; });
+  $('fSet').onclick = change(function () { state.set = !state.set; });
+  $('reset').onclick = change(function () { state.filter = 'all'; state.sort = 'new'; state.range = 'all'; state.from = state.to = ''; state.gift = state.coupon = state.set = false; $('q').value = ''; });
+  $('csv').onclick = function () {
+    var rows = visible(), q = function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    var head = ['order', 'status', 'paid_or_created_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_message', 'coupon', 'discount', 'total', 'refunded', 'invoice', 'ship_to', 'courier', 'awb'];
+    var lines = [head].concat(rows.map(function (o) { return [o.id, o.state, new Date(o.paid_at || o.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), o.name, '+' + o.phone, o.email, o.items.map(function (i) { return i.name + ' x' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join('; '), o.boxes, o.gift_note, o.coupon, o.discount, o.total, o.refunded, o.invoice_no, o.address, o.carrier, o.awb]; }));
+    var blob = new Blob(['\uFEFF' + lines.map(function (r) { return r.map(q).join(','); }).join('\n')], { type: 'text/csv' });
+    var a = h('a', { href: URL.createObjectURL(blob), download: 'munchingo-orders-' + dayShift(0) + '.csv' }); document.body.appendChild(a); a.click(); a.remove();
+    toast('Downloaded ' + rows.length + ' orders');
+  };
 
   // ── order sheet ──
   function openOrder(id) { api('/admin/api/orders/' + encodeURIComponent(id)).then(function (j) { if (!j.ok) return toast(j.error); state.open = j.order; draw(j.order); $('sheet').classList.add('on'); }); }
