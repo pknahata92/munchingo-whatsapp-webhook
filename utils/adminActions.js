@@ -18,12 +18,16 @@ async function razorpayMoney(sinceMs) {
   const p = (async () => {
     try {
       const items = await require('./razorpay').listPayments(Math.floor(sinceMs / 1000));
-      const byId = {};
-      items.forEach((x) => { byId[x.id] = (x.status === 'captured' || x.status === 'refunded') ? Math.max(0, (x.amount - (x.amount_refunded || 0))) / 100 : 0; });
-      return { live: true, byId, since: sinceMs };
+      const byId = {}, refundedFull = new Set();
+      items.forEach((x) => {
+        if (x.status !== 'captured' && x.status !== 'refunded') return;   // failed / abandoned attempts are not money
+        byId[x.id] = Math.max(0, (x.amount - (x.amount_refunded || 0))) / 100;
+        if (x.status === 'refunded' || (x.amount_refunded || 0) >= x.amount) refundedFull.add(x.id);
+      });
+      return { live: true, byId, refundedFull, since: sinceMs };
     } catch (err) {
       console.error('[ADMIN] could not read Razorpay payments:', err.response ? JSON.stringify(err.response.data) : err.message);
-      return { live: false, byId: {}, since: sinceMs };
+      return { live: false, byId: {}, refundedFull: new Set(), since: sinceMs };
     }
   })();
   rzCache = { at: Date.now(), since: sinceMs, p };
@@ -39,6 +43,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
   if (/^pending/.test(o.status)) state = 'unpaid';
   else if (o.status === 'cancelled' && !o.payment_id) state = 'cancelled';
   else if (o.status === 'cancelled' || (refundedPaise > 0 && refundedPaise >= totalPaise)) state = 'refunded';
+  else if (money && money.live && o.payment_id && o.status === 'paid' && money.refundedFull.has(o.payment_id)) state = 'refunded';   // fully refunded at Razorpay; the order is closed below
   else if (money && money.live && o.payment_id && o.status === 'paid' && !(o.payment_id in money.byId)) state = 'test';   // paid in the database, unknown to Razorpay: a test-phase order
   else if (o.delivered_at) state = 'delivered';
   else if (o.shipped_at) state = 'shipped';
@@ -78,6 +83,14 @@ async function loadOrders() {
   const money = orders.length ? await razorpayMoney(Math.min(...orders.map((o) => Date.parse(o.created_at))) - 86400_000) : null;
   const byOrder = {};
   cns.forEach((c) => { (byOrder[c.order_id] = byOrder[c.order_id] || []).push(c); });
+  // A paid order whose payment Razorpay shows as fully refunded is closed here too (the refund notice can arrive late or
+  // not at all). Same call the refund flow uses; the credit note still comes from that flow.
+  if (money && money.live) {
+    orders.filter((o) => o.status === 'paid' && o.payment_id && money.refundedFull.has(o.payment_id)).forEach((o) => {
+      db.markOrderRefunded(o.order_id).then(() => { o.status = 'cancelled'; logEvent(o.order_id, 'auto_cancelled', null, { meta: { reason: 'fully refunded at Razorpay' } }); })
+        .catch((e) => console.error('[ADMIN] could not close refunded order', o.order_id, e.message));
+    });
+  }
   const shaped = orders.map((o) => shapeOrder(o, invoices[o.order_id], byOrder[o.order_id] || [], money));
   shaped.moneyLive = !!(money && money.live);
   return shaped;

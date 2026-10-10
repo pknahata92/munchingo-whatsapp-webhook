@@ -183,8 +183,8 @@ a{color:var(--terra)}
 
   // ── main list ──
   var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier. Open each order, enter the tracking number and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
-  var FILTERS = [['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
-  var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST' };
+  var FILTERS = [['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
+  var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
     api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; $('stockBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
@@ -389,7 +389,7 @@ a{color:var(--terra)}
     if (o.state === 'unpaid' && state.role === 'owner') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', invoice_resent: 'Invoice resent', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
       return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';
