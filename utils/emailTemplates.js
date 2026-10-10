@@ -7,6 +7,8 @@
  * Images are served from munchingo.com (they go live with the website push).
  */
 
+const { contentsOf, flavourTotals, boxesIn } = require('./orderText');
+
 const SITE = 'https://munchingo.com';
 const C = { navy: '#0B2D50', gold: '#CEAD5E', terra: '#A35A34', terraDeep: '#86482A', ink: '#2A1A12', ink2: '#5B4537', cream: '#FAF6EB', paper: '#FFFDF8', line: '#E9DCC3', band: '#F3E6CC' };
 const FONT = "'Poppins','Helvetica Neue',Helvetica,Arial,sans-serif";
@@ -113,7 +115,7 @@ function shell({ preheader = '', title, subtitle = '', body, promo = 'full', bou
 function summaryTable({ items, totalRupees, discountRupees = 0, couponCode = null, gstAmount }) {
   const rows = items.map((it) => `
       <tr>
-        <td style="padding:11px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink};">${esc(it.productName || it.name || it.product_retailer_id)}${it.unit ? `<span style="color:${C.ink2};"> &middot; ${esc(it.unit)}</span>` : ''}</td>
+        <td style="padding:11px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink};">${esc(it.productName || it.name || it.product_retailer_id)}${it.unit && !contentsOf(it) ? `<span style="color:${C.ink2};"> &middot; ${esc(it.unit)}</span>` : ''}${contentsOf(it) ? `<div style="font-size:12px;color:${C.ink2};margin-top:2px;">${esc(contentsOf(it))}</div>` : ''}</td>
         <td style="padding:11px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink2};text-align:center;">&times;${it.quantity}</td>
         <td style="padding:11px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink};text-align:right;">${inr((it.item_price ?? 0) * it.quantity)}</td>
       </tr>`).join('');
@@ -216,25 +218,61 @@ function refundHtml({ customerName, orderId, amount, isFull }) {
   });
 }
 
-// ── Owner: payment received + invoice ─────────────────────────────────────────
+// ── Owner: ONE email per paid order (everything needed to pack and ship) ─────
 function ownerPaidHtml({ order, invoice }) {
   const total = invoice ? invoice.totalPaise / 100 : order.total;
-  const rows = [
-    ['Customer', esc(order.customer_name)],
-    ['WhatsApp', `+${esc(order.customer_phone)}`],
-    ['Email', esc(order.customer_email || 'not given (invoice sent on WhatsApp only)')],
-    ['Ship to', esc((order.delivery_address && order.delivery_address.raw) || '')],
-    ['Invoice', invoice ? esc(invoice.invoiceNo) : 'not generated (run invoices_migration.sql)'],
-    ['Supply', invoice ? `${invoice.supplyType === 'intra' ? 'CGST+SGST' : 'IGST'} &middot; ${esc(invoice.placeOfSupply)}` : '&mdash;'],
-  ].map(([k, v]) => `<tr><td style="padding:5px 0;color:#8A7765;width:92px;vertical-align:top;font-family:${FONT};font-size:13px;">${k}</td><td style="padding:5px 0;font-family:${FONT};font-size:13px;color:${C.ink};">${v}</td></tr>`).join('');
+  const items = order.items || [];
+  const addr = (order.delivery_address && order.delivery_address.raw) || '';
+  const pack = Object.entries(flavourTotals(items)).map(([n, q]) => `<tr><td style="padding:5px 0;font-family:${FONT};font-size:14px;color:${C.ink};">${esc(n)}</td><td style="padding:5px 0;font-family:${FONT};font-size:14px;font-weight:700;color:${C.ink};text-align:right;">&times; ${q}</td></tr>`).join('');
+  const boxes = items.reduce((n, i) => n + (Number(i.quantity) || 0) * boxesIn(i), 0);
+  const row = (k, v) => `<tr><td style="padding:5px 0;color:#8A7765;width:92px;vertical-align:top;font-family:${FONT};font-size:13px;">${k}</td><td style="padding:5px 0;font-family:${FONT};font-size:13px;color:${C.ink};">${v}</td></tr>`;
   return `<!doctype html><html><body style="margin:0;background:${C.band};"><table role="presentation" width="100%"><tr><td align="center" style="padding:20px 10px;">
   <table role="presentation" width="560" style="width:100%;max-width:560px;background:${C.cream};border-radius:14px;overflow:hidden;">
-    <tr><td style="background:#2F7A4B;padding:20px 26px;font-family:${FONT};color:#fff;"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.85;">Payment received</div><div style="font-size:22px;font-weight:700;margin-top:4px;">${inr(total)} &middot; Order ${esc(order.order_id)}</div></td></tr>
-    <tr><td style="padding:20px 26px;"><table role="presentation" width="100%">${rows}</table>
-      <div style="height:14px;"></div>${summaryTable({ items: order.items || [], totalRupees: total, discountRupees: Number(order.discount_amount || 0), couponCode: order.coupon_code })}
-      ${order.gift_note ? `<p style="font-family:${FONT};font-size:13px;color:${C.ink};background:#FBEFE8;border-radius:8px;padding:10px 14px;">&#127873; <b>Gift note:</b> ${esc(order.gift_note)}</p>` : ''}
-      <p style="font-family:${FONT};font-size:12px;color:#8A7765;margin:16px 0 0;">The customer&rsquo;s copy of the invoice is attached here too.</p></td></tr>
+    <tr><td style="background:#2F7A4B;padding:20px 26px;font-family:${FONT};color:#fff;"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.85;">New paid order &middot; ${boxes} box${boxes === 1 ? '' : 'es'}</div><div style="font-size:22px;font-weight:700;margin-top:4px;">${inr(total)} &middot; ${esc(order.order_id)}</div></td></tr>
+    ${order.gift_note ? `<tr><td style="padding:18px 26px 0;"><div style="background:#FBEFE8;border:1px dashed ${C.terra};border-radius:10px;padding:14px 16px;font-family:${FONT};font-size:14px;color:${C.ink};"><b style="color:${C.terra};">&#127873; Gift message to write on the card</b><br><span style="font-size:16px;line-height:1.5;">${esc(order.gift_note)}</span></div></td></tr>` : ''}
+    <tr><td style="padding:18px 26px 6px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">Pack</div>
+      <table role="presentation" width="100%" style="border-top:1px solid ${C.line};">${pack}</table></td></tr>
+    <tr><td style="padding:12px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">Ship to</div>
+      <table role="presentation" width="100%">${row('Name', esc(order.customer_name))}${row('Address', esc(addr))}${row('Phone', '+' + esc(order.customer_phone) + ` &middot; <a href="https://wa.me/${esc(order.customer_phone)}" style="color:${C.terra};">WhatsApp</a>`)}${row('Email', esc(order.customer_email || 'not given'))}</table></td></tr>
+    <tr><td style="padding:12px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">Order</div>
+      ${summaryTable({ items, totalRupees: total, discountRupees: Number(order.discount_amount || 0), couponCode: order.coupon_code })}</td></tr>
+    <tr><td style="padding:14px 26px 24px;font-family:${FONT};font-size:12px;color:#8A7765;line-height:1.7;">Invoice ${invoice ? esc(invoice.invoiceNo) + ' &middot; PDF attached &middot; ' + (invoice.supplyType === 'intra' ? 'CGST + SGST' : 'IGST') + ' &middot; ' + esc(invoice.placeOfSupply) : 'not generated (see the Render logs)'}<br>The customer has been sent their confirmation and invoice by email${order.customer_email ? '' : ' (none: no email given)'} and WhatsApp.</td></tr>
   </table></td></tr></table></body></html>`;
 }
 
-module.exports = { customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, shell, FLAVOURS };
+// ── Owner: 8:00 AM summary of the previous day ───────────────────────────────
+function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {} }) {
+  const money = (n) => '&#8377;' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  const allItems = orders.flatMap((o) => o.items || []);
+  const boxes = allItems.reduce((n, i) => n + (Number(i.quantity) || 0) * boxesIn(i), 0);
+  const revenue = orders.reduce((n, o) => n + Number(o.total || 0), 0);
+  const discount = orders.reduce((n, o) => n + Number(o.discount_amount || 0), 0);
+  const inv = Object.values(invoicesByOrder);
+  const sum = (k) => inv.reduce((n, i) => n + (Number(i[k]) || 0), 0) / 100;
+  const gst = sum('cgst_paise') + sum('sgst_paise') + sum('igst_paise');
+  const gifts = orders.filter((o) => o.gift_note).length;
+  const pack = Object.entries(flavourTotals(allItems)).map(([n, q]) => `<tr><td style="padding:6px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink};">${esc(n)}</td><td style="padding:6px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;font-weight:700;text-align:right;">&times; ${q}</td></tr>`).join('');
+  const tile = (label, value) => `<td style="padding:4px;"><div style="background:${C.paper};border:1px solid ${C.line};border-radius:12px;padding:12px 10px;text-align:center;"><div style="font-family:${FONT};font-size:20px;font-weight:700;color:${C.ink};">${value}</div><div style="font-family:${FONT};font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:${C.ink2};margin-top:2px;">${label}</div></div></td>`;
+  const cards = orders.map((o) => {
+    const i = invoicesByOrder[o.order_id];
+    const addr = (o.delivery_address && o.delivery_address.raw) || '';
+    const lines = (o.items || []).map((it) => `${esc(it.productName || it.product_retailer_id)} &times; ${it.quantity}${contentsOf(it) ? ` <span style="color:${C.ink2};">(${esc(contentsOf(it))})</span>` : ''}`).join('<br>');
+    return `<div style="border:1px solid ${C.line};border-radius:12px;background:${C.paper};padding:14px 16px;margin-bottom:10px;font-family:${FONT};font-size:13px;line-height:1.6;color:${C.ink};">
+      <b style="color:${C.terra};">${esc(o.order_id)}</b> &middot; ${money(o.total)}${i ? ' &middot; ' + esc(i.invoice_no) : ''}${o.coupon_code ? ' &middot; ' + esc(o.coupon_code) : ''}<br>
+      <b>${esc(o.customer_name)}</b> &middot; +${esc(o.customer_phone)}<br>${lines}<br>
+      <span style="color:#8A7765;">Ship to:</span> ${esc(addr)}
+      ${o.gift_note ? `<br><span style="color:${C.terra};">&#127873; ${esc(o.gift_note)}</span>` : ''}</div>`;
+  }).join('');
+  return `<!doctype html><html><body style="margin:0;background:${C.band};"><table role="presentation" width="100%"><tr><td align="center" style="padding:20px 10px;">
+  <table role="presentation" width="600" style="width:100%;max-width:600px;background:${C.cream};border-radius:14px;overflow:hidden;">
+    <tr><td style="background:${C.navy};padding:22px 26px;font-family:${FONT};color:#fff;"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:${C.gold};">Munchingo &middot; daily summary</div><div style="font-size:22px;font-weight:700;margin-top:4px;">${esc(dayLabel)}</div></td></tr>
+    ${orders.length ? `
+    <tr><td style="padding:16px 22px 0;"><table role="presentation" width="100%"><tr>${tile('Orders', orders.length)}${tile('Boxes', boxes)}${tile('Collected', money(revenue))}</tr><tr>${tile('GST included', money(gst))}${tile('Discounts', money(discount))}${tile('Gift notes', gifts)}</tr></table></td></tr>
+    <tr><td style="padding:16px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:4px;">Pack list (gift sets opened up)</div><table role="presentation" width="100%">${pack}</table></td></tr>
+    <tr><td style="padding:16px 26px 6px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:8px;">Orders &amp; shipping labels</div>${cards}</td></tr>
+    <tr><td style="padding:4px 26px 22px;font-family:${FONT};font-size:12px;color:#8A7765;">A CSV of these orders (for accounting) is attached.</td></tr>`
+    : `<tr><td style="padding:24px 26px 28px;font-family:${FONT};font-size:14px;color:${C.ink};">No paid orders yesterday. This email still arrives every morning, so you know the summary is working.</td></tr>`}
+  </table></td></tr></table></body></html>`;
+}
+
+module.exports = { customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };

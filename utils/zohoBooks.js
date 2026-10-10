@@ -112,7 +112,7 @@ async function syncPaidOrder({ invoice, order }) {
   const line_items = invoice.items.map((it) => ({
     item_id: ids[it.name],
     name: it.name,
-    description: `${it.name}${it.unit ? ' (' + it.unit + ')' : ''} - HSN ${invoice.hsn}`,
+    description: `${it.name}${it.unit ? ' (' + it.unit + ')' : ''}${it.contents ? ' - ' + it.contents : ''} - HSN ${invoice.hsn}`,
     rate: +(it.netPaise / it.qty / 100).toFixed(2),
     quantity: it.qty,
     hsn_or_sac: invoice.hsn,

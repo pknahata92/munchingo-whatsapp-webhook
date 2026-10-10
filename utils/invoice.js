@@ -14,6 +14,7 @@
  */
 
 const path = require('path');
+const { contentsOf } = require('./orderText');
 const PDFDocument = require('pdfkit');
 
 const SELLER = {
@@ -109,6 +110,7 @@ function buildInvoice(order, { invoiceNo, issuedAt }) {
     qty: Number(i.quantity) || 1,
     grossPaise: paise(i.item_price) * (Number(i.quantity) || 1),
     unit: i.unit || null,
+    contents: contentsOf(i),   // gift sets: which flavours are inside
   }));
   const grossTotal = items.reduce((s, i) => s + i.grossPaise, 0);
   const discount = Math.min(paise(order.discount_amount || 0), grossTotal);
@@ -180,19 +182,22 @@ function renderInvoicePdf(inv) {
     let display = 'Helvetica-Bold';
     try { doc.registerFont('Display', path.join(__dirname, '..', 'assets', 'Monthoers.otf')); display = 'Display'; } catch (_) { /* fall back to Helvetica-Bold */ }
 
-    // Header band
-    doc.rect(0, 0, 595, 96).fill(C.cream);
-    doc.rect(0, 96, 595, 3).fill(C.terra);
-    doc.fillColor(C.terra).font(display).fontSize(30).text('MUNCHINGO', L, 30, { characterSpacing: 1 });
-    doc.fillColor(C.ink2).font('Helvetica').fontSize(8.5).text('Tiny Treats, Mighty Flavors.', L, 66);
-    doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(16).text('TAX INVOICE', 330, 30, { width: R - 330, align: 'right' });
-    doc.font('Helvetica').fontSize(9).fillColor(C.ink2)
+    // Header band: navy with the real Munchingo logo (gold ringed mark with the TM sign)
+    doc.rect(0, 0, 595, 104).fill('#0B2D50');
+    doc.rect(0, 104, 595, 3).fill('#CEAD5E');
+    try {
+      doc.image(path.join(__dirname, '..', 'assets', 'logo-tm.png'), L, 14, { fit: [150, 76] });
+    } catch (_) {
+      doc.fillColor('#CEAD5E').font('Helvetica-Bold').fontSize(24).text('MUNCHINGO', L, 38);
+    }
+    doc.fillColor('#FFF9EC').font('Helvetica-Bold').fontSize(16).text('TAX INVOICE', 330, 30, { width: R - 330, align: 'right' });
+    doc.font('Helvetica').fontSize(9).fillColor('#DCE3EE')
       .text(`Invoice No: ${inv.invoiceNo}`, 330, 54, { width: R - 330, align: 'right' })
       .text(`Date: ${new Date(inv.issuedAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}`, 330, 67, { width: R - 330, align: 'right' })
       .text(`Order: ${inv.orderId}`, 330, 80, { width: R - 330, align: 'right' });
 
     // Seller / Buyer
-    let y = 116;
+    let y = 124;
     doc.fillColor(C.terra).font('Helvetica-Bold').fontSize(8).text('SOLD BY', L, y).text('BILLED & SHIPPED TO', 310, y);
     y += 13;
     doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(10).text(`${inv.seller.name} (Prop. ${inv.seller.proprietor})`, L, y, { width: 250 });
@@ -209,7 +214,7 @@ function renderInvoicePdf(inv) {
     doc.text(`Place of supply: ${inv.placeOfSupply}`, 310, doc.y + 1, { width: 245 });
 
     // Items table
-    y = 232;
+    y = 244;
     const cols = [
       { k: '#', x: L, w: 22, a: 'left' },
       { k: 'Item', x: L + 22, w: 190, a: 'left' },
@@ -228,7 +233,8 @@ function renderInvoicePdf(inv) {
       const label = it.unit ? `${it.name} (${it.unit})` : it.name;
       const row = [String(i + 1), label, inv.hsn, String(it.qty), rs(it.taxablePaise), rs(it.taxPaise), rs(it.netPaise)];
       cols.forEach((c, ci) => doc.fillColor(C.ink).text(row[ci], c.x + (c.a === 'left' ? 4 : 0), y + 7, { width: c.w - 4, align: c.a }));
-      y += 26;
+      if (it.contents) doc.fillColor(C.ink2).font('Helvetica-Oblique').fontSize(7.5).text('Contains: ' + it.contents, cols[1].x + 4, y + 19, { width: cols[1].w - 4 }).font('Helvetica').fontSize(9);
+      y += it.contents ? 34 : 26;
       doc.moveTo(L, y).lineTo(R, y).strokeColor(C.line).lineWidth(0.6).stroke();
     });
 

@@ -182,7 +182,7 @@ async function sendBulkInquiryAlert({ customerPhone, customerName, company_name,
 
 // Payment-confirmed email to the customer. `invoice` + `pdf` are optional: if invoice
 // generation failed (or the migration hasn't been run) the email still goes out without them.
-// The owner is BCC'd so the invoice copy lands in the NOTIFY_EMAIL inbox too.
+// (The owner gets their own single order email, sendOwnerPaidEmail: no BCC copy of this one.)
 async function sendCustomerConfirmationEmail({ order, invoice, pdf }) {
   const t = require('./emailTemplates');
   const payload = {
@@ -191,7 +191,6 @@ async function sendCustomerConfirmationEmail({ order, invoice, pdf }) {
     subject: `Order confirmed: your Munchingo box is on its way to the oven (#${order.order_id})`,
     html: t.customerConfirmationHtml({ order, invoice }),
   };
-  if (process.env.NOTIFY_EMAIL) payload.bcc = [process.env.NOTIFY_EMAIL];
   if (invoice && pdf) payload.attachments = [{ filename: `Munchingo-Invoice-${invoice.invoiceNo.replace(/\//g, '-')}.pdf`, content: pdf.toString('base64') }];
   const { error } = await resend.emails.send(payload);
   if (error) throw new Error(error.message);
@@ -200,11 +199,13 @@ async function sendCustomerConfirmationEmail({ order, invoice, pdf }) {
 
 // Owner heads-up when money actually lands (the checkout-time email fires before payment).
 async function sendOwnerPaidEmail({ order, invoice, pdf }) {
+  // Set OWNER_ORDER_ALERT=off on Render to rely on the 8:00 AM daily summary alone.
+  if (String(process.env.OWNER_ORDER_ALERT || '').toLowerCase() === 'off') return;
   const t = require('./emailTemplates');
   const payload = {
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [process.env.NOTIFY_EMAIL],
-    subject: `Paid: Rs.${invoice ? invoice.totalPaise / 100 : order.total} from ${order.customer_name} (#${order.order_id})`,
+    subject: `${order.gift_note ? '🎁 ' : ''}New order: Rs.${invoice ? invoice.totalPaise / 100 : order.total} from ${order.customer_name} (${order.order_id})`,
     html: t.ownerPaidHtml({ order, invoice }),
   };
   if (invoice && pdf) payload.attachments = [{ filename: `Munchingo-Invoice-${invoice.invoiceNo.replace(/\//g, '-')}.pdf`, content: pdf.toString('base64') }];
@@ -276,91 +277,37 @@ function formatAddress(order) {
   return escapeHtml(typeof addr === 'string' ? addr : (addr.raw || JSON.stringify(addr)));
 }
 
-async function sendDailyDigestEmail({ orders, windowLabel }) {
-  // Always send, even with zero orders — a "no orders today" email that
-  // reliably arrives every morning is also the simplest proof the digest
-  // pipeline itself is alive. Skipping on empty made a real pipeline outage
-  // indistinguishable from a genuinely slow day (see CLAUDE.md 2026-08-11).
-  if (!orders.length) {
-    const { error } = await resend.emails.send({
-      from: 'Munchingo Orders <orders@munchingo.com>',
-      to: [process.env.NOTIFY_EMAIL],
-      subject: `Daily packing list — 0 orders`,
-      html: `
-        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
-          <div style="background:#6B3A2A;padding:22px 26px;">
-            <h2 style="color:#fff;margin:0;font-size:20px;">&#128230; Munchingo Daily Packing List</h2>
-            <p style="color:#f5deb3;margin:6px 0 0;font-size:14px;">${windowLabel} &middot; 0 orders</p>
-          </div>
-          <div style="padding:22px 26px;background:#fffaf6;">
-            <p style="font-size:14px;color:#444;margin:0;">No orders turned <strong>paid</strong> in the last 24 hours. Nothing to pack today.</p>
-          </div>
-        </div>
-      `,
-    });
-    if (error) throw new Error(error.message);
-    console.log('[MAILER] Daily digest sent — 0 orders');
-    return;
-  }
+function csvCell(v) {
+  const t = String(v ?? '');
+  return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
 
-  // Packing summary: total quantity per product across all of today's orders,
-  // so whoever's packing can pull stock once instead of re-reading every order.
-  const productTotals = {};
-  orders.forEach((o) => {
-    (o.items || []).forEach((item) => {
-      const key = escapeHtml(item.productName || item.product_retailer_id || 'Unknown item');
-      productTotals[key] = (productTotals[key] || 0) + Number(item.quantity || 0);
-    });
-  });
-  const packingRows = Object.entries(productTotals)
-    .map(([name, qty]) => `<tr><td style="padding:6px 14px;border-bottom:1px solid #f0e6d3;">${name}</td><td style="padding:6px 14px;border-bottom:1px solid #f0e6d3;text-align:right;font-weight:600;">${qty}</td></tr>`)
-    .join('');
-
-  const revenue = orders.reduce((sum, o) => sum + Number(o.total || 0), 0);
-
-  const orderCards = orders.map((o) => {
-    const itemLines = (o.items || [])
-      .map((item) => `${escapeHtml(item.productName || item.product_retailer_id)} × ${item.quantity}`)
-      .join('<br>');
-    return `
-      <div style="border:1px solid #e0d0c0;border-radius:8px;padding:14px 18px;margin-bottom:12px;">
-        <div style="font-weight:700;color:#6B3A2A;margin-bottom:6px;">#${o.order_id} — ₹${o.total}</div>
-        <div style="font-size:13px;color:#444;line-height:1.6;">
-          <strong>${escapeHtml(o.customer_name) || 'Unknown'}</strong> · +${o.customer_phone}<br>
-          ${itemLines}<br>
-          <span style="color:#888;">Ship to:</span> ${formatAddress(o)}
-          ${o.gift_note ? `<br><span style="color:#B7673E;">🎁 ${escapeHtml(o.gift_note)}</span>` : ''}
-        </div>
-      </div>`;
-  }).join('');
-
-  const html = `
-    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
-      <div style="background:#6B3A2A;padding:22px 26px;">
-        <h2 style="color:#fff;margin:0;font-size:20px;">&#128230; Munchingo Daily Packing List</h2>
-        <p style="color:#f5deb3;margin:6px 0 0;font-size:14px;">${windowLabel} &middot; ${orders.length} order${orders.length === 1 ? '' : 's'} &middot; &#8377;${revenue} collected</p>
-      </div>
-      <div style="padding:22px 26px;background:#fffaf6;">
-        <h3 style="font-size:14px;color:#6B3A2A;margin:0 0 8px;">Pack today</h3>
-        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:22px;">
-          <tbody>${packingRows}</tbody>
-        </table>
-
-        <h3 style="font-size:14px;color:#6B3A2A;margin:0 0 8px;">Orders &amp; shipping labels</h3>
-        ${orderCards}
-      </div>
-    </div>
-  `;
-
-  const { error } = await resend.emails.send({
+// 8:00 AM summary of the previous day: totals, pack list, every order, plus a CSV for accounting.
+async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {} }) {
+  const t = require('./emailTemplates');
+  const { contentsOf } = require('./orderText');
+  const revenue = orders.reduce((n, o) => n + Number(o.total || 0), 0);
+  const payload = {
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [process.env.NOTIFY_EMAIL],
-    subject: `Daily packing list — ${orders.length} order${orders.length === 1 ? '' : 's'}, ₹${revenue}`,
-    html,
-  });
-
+    subject: orders.length ? `Munchingo ${dayLabel}: ${orders.length} order${orders.length === 1 ? '' : 's'}, Rs.${revenue}` : `Munchingo ${dayLabel}: no orders`,
+    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder }),
+  };
+  if (orders.length) {
+    const head = ['order_id', 'paid_at_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_note', 'coupon', 'discount', 'total', 'invoice_no', 'taxable', 'cgst', 'sgst', 'igst', 'payment_id', 'ship_to'];
+    const { boxesIn } = require('./orderText');
+    const rows = orders.map((o) => {
+      const i = invoicesByOrder[o.order_id] || {};
+      const items = (o.items || []).map((it) => `${it.productName} x${it.quantity}${contentsOf(it) ? ' (' + contentsOf(it) + ')' : ''}`).join('; ');
+      const boxes = (o.items || []).reduce((n, it) => n + (Number(it.quantity) || 0) * boxesIn(it), 0);
+      return [o.order_id, new Date(o.updated_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), o.customer_name, '+' + o.customer_phone, o.customer_email || '', items, boxes, o.gift_note || '', o.coupon_code || '', o.discount_amount || 0, o.total, i.invoice_no || '', (i.taxable_paise || 0) / 100, (i.cgst_paise || 0) / 100, (i.sgst_paise || 0) / 100, (i.igst_paise || 0) / 100, o.payment_id || '', (o.delivery_address && o.delivery_address.raw) || ''];
+    });
+    const csv = [head, ...rows].map((r) => r.map(csvCell).join(',')).join('\n');
+    payload.attachments = [{ filename: `munchingo-orders-${dayLabel.replace(/[^A-Za-z0-9]+/g, '-')}.csv`, content: Buffer.from('\uFEFF' + csv, 'utf8').toString('base64') }];
+  }
+  const { error } = await resend.emails.send(payload);
   if (error) throw new Error(error.message);
-  console.log(`[MAILER] Daily digest sent — ${orders.length} orders`);
+  console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
 module.exports = { sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };

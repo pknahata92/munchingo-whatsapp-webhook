@@ -30,11 +30,14 @@ async function processPaidOrder({ order, phone }) {
     if (ok && invoice) await markInvoice(order.order_id, { email_sent_at: new Date().toISOString() });
   }
 
-  // 3. Owner "paid" email (the checkout-time one fires before payment)
+  // 3. The ONE owner email per paid order (pack list, address, gift message, invoice PDF). Switch off with OWNER_ORDER_ALERT=off.
   if (process.env.NOTIFY_EMAIL) await step('owner email', () => mailer.sendOwnerPaidEmail({ order, invoice, pdf }));
 
-  // 4. WhatsApp invoice. Only after the document template is approved by Meta and
+  // 4. WhatsApp invoice: THE one WhatsApp message a customer gets for a paid order (it already says
+  //    'payment confirmed'). If it can't be sent the caller falls back to the order-confirmed template.
+  //    Only after the document template is approved by Meta and
   //    INVOICE_WA_TEMPLATE is set on Render (name: munchingo_invoice).
+  let waSent = false;
   if (invoice && pdf && phone && process.env.INVOICE_WA_TEMPLATE) {
     const sent = await step('whatsapp invoice', async () => {
       const filename = `Munchingo-Invoice-${invoice.invoiceNo.replace(/\//g, '-')}.pdf`;
@@ -43,7 +46,7 @@ async function processPaidOrder({ order, phone }) {
         [order.customer_name || 'there', invoice.invoiceNo, order.order_id, (invoice.totalPaise / 100).toFixed(2)]);
       return true;
     });
-    if (sent) await markInvoice(order.order_id, { wa_sent_at: new Date().toISOString() });
+    if (sent) { waSent = true; await markInvoice(order.order_id, { wa_sent_at: new Date().toISOString() }); }
   }
 
   // 5. Accounting
@@ -51,7 +54,7 @@ async function processPaidOrder({ order, phone }) {
     const zoho = await step('zoho books sync', () => require('./zohoBooks').syncPaidOrder({ invoice, order }));
     if (zoho?.invoiceId) await markInvoice(order.order_id, { zoho_invoice_id: zoho.invoiceId, zoho_synced_at: new Date().toISOString() });
   }
-  return invoice;
+  return { invoice, waSent };
 }
 
 module.exports = { processPaidOrder };

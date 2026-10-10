@@ -2,7 +2,8 @@
 
 const wa = require('../utils/whatsapp');
 const { getStoredLang, setLang, HINDI_ENABLED } = require('../utils/langPrefs');
-const { sendOrderEmail, sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
+const { sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
+const { ordersOpen, CLOSED_MESSAGE } = require('../utils/launch');
 const {
   saveOrder,
   updateOrderAddress,
@@ -536,6 +537,10 @@ async function sendFAQ(to) {
 
 // ── Handle a WhatsApp checkout order ─────────────────────────────────────────
 async function handleOrderMessage(to, order, contactName) {
+  if (!ordersOpen()) {
+    await wa.sendText(to, `🍪 ${CLOSED_MESSAGE}`);
+    return;
+  }
   const name  = contactName || 'there';
   const items = order.product_items || [];
   const orderId    = generateOrderId();
@@ -622,13 +627,9 @@ async function handleOrderMessage(to, order, contactName) {
     );
   }
 
-  // 4. Send email notification
+  // 4. No owner email at this point: the order is not paid yet. The owner gets one email when the
+  //    payment lands (utils/invoiceFlow.js) and the 8:00 AM daily summary.
   console.log('[ORDER]', { orderId, customer: to, name, total, timestamp });
-  try {
-    await sendOrderEmail({ orderId, customerPhone: to, customerName: name, items: enrichedItems, total, timestamp });
-  } catch (err) {
-    console.error('[MAILER] Failed to send order notification:', err.message);
-  }
 }
 
 // ── Shared by both the Flow form and the free-text fallback: saves the

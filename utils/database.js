@@ -276,12 +276,34 @@ async function saveInvoice({ invoice, fy, seq }) {
   return data;
 }
 
+async function getInvoicesByOrderIds(orderIds) {
+  if (!orderIds.length) return {};
+  const { data, error } = await db().from('invoices').select('*').in('order_id', orderIds);
+  if (error) { console.error('[DB] getInvoicesByOrderIds error:', error.message); return {}; }
+  return Object.fromEntries((data || []).map((r) => [r.order_id, r]));
+}
+
+// Once-per-day guard for the 8:00 AM summary, so two triggers (pg_cron + the GitHub backup) never double-send.
+// Re-uses the invoice_counters table (key 'digest-YYYY-MM-DD') so no extra migration is needed.
+async function claimDigestDay(day) {
+  const { error } = await db().from('invoice_counters').insert({ fy: `digest-${day}`, last_seq: 1 });
+  if (!error) return true;
+  if (error.code === '23505') return false; // already sent for that day
+  throw new Error(`claimDigestDay failed: ${error.message}`);
+}
+async function releaseDigestDay(day) {
+  await db().from('invoice_counters').delete().eq('fy', `digest-${day}`);
+}
+
 async function markInvoice(orderId, fields) {
   const { error } = await db().from('invoices').update(fields).eq('order_id', orderId);
   if (error) console.error(`[DB] markInvoice(${orderId}) failed:`, error.message);
 }
 
 module.exports = {
+  claimDigestDay,
+  releaseDigestDay,
+  getInvoicesByOrderIds,
   getInvoiceByOrder,
   reserveInvoiceNumber,
   saveInvoice,

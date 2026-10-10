@@ -6,7 +6,8 @@ const router = express.Router();
 // Reuse the REAL, already-deployed modules — do not duplicate them.
 const { createPaymentLink, orderIdFromReference } = require('../utils/razorpay');
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('../utils/database');
-const { sendOrderEmail, sendContactFormEmail } = require('../utils/mailer');
+const { sendContactFormEmail } = require('../utils/mailer');
+const { ordersOpen, CLOSED_MESSAGE } = require('../utils/launch');
 const { priceForSlug, isAvailable, nameForSlug, boxesForSlug } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 const { validateCoupon } = require('../utils/coupons');
@@ -97,7 +98,12 @@ function normalisePhone(rawPhone) {
 // (who submits once), tight enough to blunt scripted abuse.
 router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
-          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts } = req.body;
+          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts, previewKey } = req.body;
+
+      // Orders open at launch (see utils/launch.js); the owner can test earlier with the preview key.
+      if (!ordersOpen(previewKey)) {
+        return res.status(403).json({ ok: false, closed: true, error: CLOSED_MESSAGE });
+      }
 
       if (!name || !phone || !address || !Array.isArray(items) || !items.length || !total) {
               return res.status(400).json({ ok: false, error: 'Missing required fields: name, phone, address, items, total' });
@@ -222,12 +228,8 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
         }
       }
 
-      // 3. Notify the owner by email (mirrors handlers/messageHandler.js's WhatsApp order flow)
-      try {
-        await sendOrderEmail({ orderId, customerPhone, customerName: name, items: enrichedItems, total: finalTotal, timestamp, giftNote: (giftNote || '').trim() || null });
-      } catch (err) {
-        console.error('[MAILER] Failed to send order notification:', err.message);
-      }
+      // No owner email here any more: an unpaid order is not news. The owner gets ONE email when the
+      // payment lands (utils/invoiceFlow.js) and the 8:00 AM daily summary.
 
       console.log(`[CHECKOUT] Order ${orderId} created via website, payment link issued`);
           res.json({ ok: true, orderId, paymentUrl: paymentLinkUrl });

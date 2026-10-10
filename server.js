@@ -169,7 +169,19 @@ app.post('/razorpay-webhook', async (req, res) => {
         }
       }
 
-      if (phone) {
+      // GST invoice, customer + owner emails (invoice attached), WhatsApp invoice and the
+      // Zoho Books entry. Each step is isolated inside processPaidOrder, so nothing here
+      // can fail the webhook. `existing` was read before markOrderPaid, so add the payment id.
+      let waSent = false;
+      if (existing) try {
+        const done = await require('./utils/invoiceFlow').processPaidOrder({ order: { ...existing, payment_id: paymentId }, phone });
+        waSent = !!(done && done.waSent);
+      } catch (err) {
+        console.error('[INVOICE] Unexpected failure after payment:', err.message);
+      }
+
+      if (phone && !waSent) {
+        // Fallback only: used when the WhatsApp invoice could not be sent (invoice off, template missing, or an error).
         // Uses the approved "munchingo_order_confirmed" template instead of free text --
         // free text only delivers within WhatsApp's 24h session window, which a
         // website-checkout customer has almost never opened with the bot.
@@ -201,14 +213,6 @@ app.post('/razorpay-webhook', async (req, res) => {
         }
       }
 
-      // GST invoice, customer + owner emails (invoice attached), WhatsApp invoice and the
-      // Zoho Books entry. Each step is isolated inside processPaidOrder, so nothing here
-      // can fail the webhook. `existing` was read before markOrderPaid, so add the payment id.
-      if (existing) try {
-        await require('./utils/invoiceFlow').processPaidOrder({ order: { ...existing, payment_id: paymentId }, phone });
-      } catch (err) {
-        console.error('[INVOICE] Unexpected failure after payment:', err.message);
-      }
       return;
     }
 
@@ -328,17 +332,35 @@ app.get('/internal/daily-digest', async (req, res) => {
   if (!matches) return res.sendStatus(403);
 
   try {
-    const { getOrdersPaidSince } = require('./utils/database');
+    const { getOrdersPaidSince, getInvoicesByOrderIds } = require('./utils/database');
     const { sendDailyDigestEmail } = require('./utils/mailer');
 
-    const until = new Date();
-    const since = new Date(until.getTime() - 24 * 60 * 60 * 1000);
+    // The 8:00 AM email summarises the whole previous day in IST (00:00 to 24:00), so every order
+    // appears in exactly one summary. ?date=YYYY-MM-DD re-sends the summary for a specific IST day.
+    const IST = 5.5 * 3600 * 1000;
+    const todayIst = new Date(Date.now() + IST).toISOString().slice(0, 10);
+    const dayIst = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '')
+      ? req.query.date
+      : new Date(Date.parse(todayIst + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+    const { claimDigestDay, releaseDigestDay } = require('./utils/database');
+    const force = req.query.force === '1' || /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '');
+    if (!force && !(await claimDigestDay(dayIst))) {
+      return res.json({ ok: true, day: dayIst, skipped: 'already sent' });
+    }
+    const since = new Date(Date.parse(dayIst + 'T00:00:00Z') - IST);
+    const until = new Date(since.getTime() + 86400000);
     const orders = await getOrdersPaidSince(since.toISOString(), until.toISOString());
+    const invoicesByOrder = await getInvoicesByOrderIds(orders.map((o) => o.order_id));
 
-    const windowLabel = until.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' });
-    await sendDailyDigestEmail({ orders, windowLabel });
+    const dayLabel = new Date(Date.parse(dayIst + 'T12:00:00Z')).toLocaleDateString('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    try {
+      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder });
+    } catch (sendErr) {
+      if (!force) await releaseDigestDay(dayIst); // let the next trigger retry
+      throw sendErr;
+    }
 
-    res.json({ ok: true, orders: orders.length });
+    res.json({ ok: true, day: dayIst, orders: orders.length });
   } catch (err) {
     console.error('[DIGEST] Failed to send daily digest:', err.message);
     res.status(500).json({ ok: false, error: err.message });
