@@ -42,6 +42,9 @@ function verifyMetaSignature(rawBody, signatureHeader) {
 const app = express();
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
+// Private admin page (login by emailed code; see utils/adminAuth.js and routes/admin.js)
+app.use(require('./routes/admin'));
+
 // CORS - the checkout/contact pages call this backend from the browser, from
 // either munchingo.com or www.munchingo.com (Cloudflare Pages serves both,
 // it doesn't redirect www -> apex). SITE_ORIGIN being a single hardcoded

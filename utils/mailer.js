@@ -238,6 +238,28 @@ async function sendRefundEmail({ email, customerName, orderId, amount, isFull })
   console.log(`[MAILER] Refund email sent for #${orderId}`);
 }
 
+async function sendAdminCode(email, code) {
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [email],
+    subject: `Your Munchingo admin code: ${code}`,
+    html: `<div style="font-family:sans-serif;max-width:420px;margin:0 auto;padding:24px;border:1px solid #e0d0c0;border-radius:12px;background:#fffaf6;"><p style="margin:0 0 8px;color:#555;">Your sign-in code for the Munchingo admin:</p><p style="font-size:34px;letter-spacing:.2em;font-weight:700;margin:6px 0 14px;color:#0B2D50;">${code}</p><p style="margin:0;color:#888;font-size:13px;">It works for about 5 to 10 minutes. If you did not ask for it, ignore this email.</p></div>`,
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function sendShippedEmail({ order, carrier, awb, trackUrl }) {
+  const t = require('./emailTemplates');
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [order.customer_email],
+    subject: `Your Munchingo box has shipped (${order.order_id})`,
+    html: t.shippedHtml({ order, carrier, awb, trackUrl }),
+  });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Shipped email sent for #${order.order_id}`);
+}
+
 // One email to the owner for every refund, with the credit note attached.
 async function sendOwnerRefundEmail({ order, refund, creditNote, pdf }) {
   const t = require('./emailTemplates');
@@ -325,4 +347,4 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };
+module.exports = { sendAdminCode, sendShippedEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };

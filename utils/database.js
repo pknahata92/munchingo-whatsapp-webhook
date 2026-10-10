@@ -283,6 +283,23 @@ async function getInvoicesByOrderIds(orderIds) {
   return Object.fromEntries((data || []).map((r) => [r.order_id, r]));
 }
 
+// ── Admin page helpers ──────────────────────────────────────────────────────
+async function listRecentOrders(limit = 300) {
+  const { data, error } = await db().from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) throw new Error(`Supabase list orders failed: ${error.message}`);
+  return data || [];
+}
+async function getCreditNotesByOrderIds(orderIds) {
+  if (!orderIds.length) return [];
+  const { data, error } = await db().from('credit_notes').select('*').in('order_id', orderIds);
+  if (error) { console.error('[DB] getCreditNotesByOrderIds error:', error.message); return []; }
+  return data || [];
+}
+async function updateOrderFields(orderId, fields) {
+  const { error } = await db().from('orders').update({ ...fields, updated_at: undefined }).eq('order_id', orderId);
+  if (error) throw new Error(error.message.includes('column') ? 'Run orders_admin_migration.sql in Supabase first.' : error.message);
+}
+
 // ── GST credit notes (see credit_notes_migration.sql) ─────────────────────────
 async function getCreditNoteByRefund(refundId) {
   const { data, error } = await db().from('credit_notes').select('*').eq('refund_id', refundId).maybeSingle();
@@ -335,6 +352,9 @@ async function markInvoice(orderId, fields) {
 }
 
 module.exports = {
+  listRecentOrders,
+  getCreditNotesByOrderIds,
+  updateOrderFields,
   getCreditNoteByRefund,
   getCreditNotesByOrder,
   saveCreditNote,

@@ -240,6 +240,23 @@ function ownerPaidHtml({ order, invoice }) {
   </table></td></tr></table></body></html>`;
 }
 
+// ── Customer: your box has shipped ───────────────────────────────────────────
+function shippedHtml({ order, carrier, awb, trackUrl }) {
+  const first = String(order.customer_name || 'there').trim().split(/\s+/)[0];
+  const body = card(`
+    <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:10px;">Order ${esc(order.order_id)}</div>
+    <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">
+      <b>${esc(carrier || 'Courier')}</b>${awb ? ` &middot; tracking number <b>${esc(awb)}</b>` : ''}
+    </div>
+    ${trackUrl ? `<div style="text-align:center;padding:18px 0 4px;">${button(trackUrl, 'Track your box')}</div>` : ''}`);
+  return shell({
+    preheader: `Your Munchingo box has shipped${awb ? ' (tracking ' + awb + ')' : ''}.`,
+    title: `Your box is on its way, ${esc(first)}.`,
+    subtitle: 'Baked in Bikaner and now travelling to your doorstep.',
+    body, promo: 'light', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean), browseHeading: 'While you wait',
+  });
+}
+
 // ── Owner: refund processed (with credit note) ───────────────────────────────
 function ownerRefundHtml({ order, refund, creditNote }) {
   const row = (k, v) => `<tr><td style="padding:5px 0;color:#8A7765;width:110px;vertical-align:top;font-family:${FONT};font-size:13px;">${k}</td><td style="padding:5px 0;font-family:${FONT};font-size:13px;color:${C.ink};">${v}</td></tr>`;
@@ -295,4 +312,4 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
   </table></td></tr></table></body></html>`;
 }
 
-module.exports = { ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };
+module.exports = { shippedHtml, ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };

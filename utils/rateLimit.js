@@ -6,9 +6,9 @@
 // (e.g. someone scripting POST /api/checkout to spam orders/emails/Razorpay
 // payment links). Not a replacement for a CDN-level limiter, but stops
 // casual abuse.
-const hits = new Map(); // ip -> [timestamps]
 
 function rateLimit({ windowMs = 60_000, max = 10 } = {}) {
+  const hits = new Map(); // ip -> [timestamps]; one map PER limiter so routes with different windows don't trim each other
   return function (req, res, next) {
     const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
     const now = Date.now();

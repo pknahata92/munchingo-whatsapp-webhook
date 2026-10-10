@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Munchingo Admin</title>
+<style>
+:root{--navy:#0B2D50;--gold:#CEAD5E;--terra:#A35A34;--terra-d:#86482A;--cream:#FAF6EB;--paper:#FFFDF8;--ink:#2A1A12;--ink2:#5B4537;--line:#E4D6BE;--band:#F3E6CC;--green:#2F7A4B;--red:#B0413E;--amber:#B7791F}
+@media (prefers-color-scheme:dark){:root{--cream:#1B1612;--paper:#241D18;--ink:#F3EADB;--ink2:#C9B9A4;--line:#3A2F27;--band:#2B231C}}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--cream);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px;position:sticky;top:0;z-index:20}
+header img{height:38px;width:auto}header .sp{flex:1}header small{opacity:.8;font-size:12px}
+button,input,select,textarea{font:inherit;color:inherit}
+.btn{border:0;border-radius:999px;padding:11px 18px;background:var(--terra);color:#fff;font-weight:600;cursor:pointer;min-height:44px}
+.btn:hover{background:var(--terra-d)}.btn.ghost{background:transparent;color:var(--terra);border:1.5px solid var(--terra)}
+.btn.red{background:var(--red)}.btn.small{padding:7px 14px;min-height:36px;font-size:13px}.btn:disabled{opacity:.5;cursor:default}
+input,select,textarea{width:100%;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:11px 12px;min-height:44px}
+textarea{min-height:70px;resize:vertical}label{display:block;font-size:12px;font-weight:600;color:var(--ink2);margin:10px 0 4px;letter-spacing:.04em;text-transform:uppercase}
+main{max-width:980px;margin:0 auto;padding:16px}
+.login{max-width:380px;margin:12vh auto;padding:0 16px;text-align:center}
+.login h1{font-size:22px;margin:10px 0 4px}.login p{color:var(--ink2);margin:0 0 16px}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+@media(min-width:700px){.tiles{grid-template-columns:repeat(6,1fr)}}
+.tile{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:10px 8px;text-align:center}
+.tile b{display:block;font-size:20px}.tile span{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px}
+.chip{white-space:nowrap;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:8px 14px;cursor:pointer;font-weight:600;font-size:13px;min-height:38px}
+.chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;cursor:pointer}
+.card:hover{border-color:var(--terra)}.card .top{display:flex;justify-content:space-between;gap:8px;font-weight:700}
+.card .meta{color:var(--ink2);font-size:13px;margin-top:2px}
+.badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
+.b-topack{background:#FDF0D5;color:var(--amber)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:30;overflow:auto}
+.sheet.on{display:block}.panel{background:var(--cream);max-width:640px;margin:0 auto;min-height:100%;padding:16px 16px 40px}
+@media(min-width:700px){.panel{margin:24px auto;min-height:0;border-radius:18px}}
+.sec{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0}
+.sec h3{margin:0 0 6px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--terra)}
+.gift{background:#FBEFE8;color:#2A1A12;border:1px dashed var(--terra);border-radius:12px;padding:12px 14px;margin:10px 0}
+.kv{display:grid;grid-template-columns:96px 1fr;gap:4px 10px;font-size:14px}.kv dt{color:var(--ink2)}.kv dd{margin:0;word-break:break-word}
+.line{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}.line:last-child{border:0}.line small{display:block;color:var(--ink2)}
+.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 18px;border-radius:12px;display:none;z-index:50;max-width:92vw;text-align:center}
+.err{color:var(--red);font-size:13px;margin-top:8px;min-height:18px}.muted{color:var(--ink2);font-size:13px}
+a{color:var(--terra)}
+</style>
+</head>
+<body>
+
+<div id="login" class="login" hidden>
+  <img src="/admin/logo.png" alt="Munchingo" style="height:84px;background:var(--navy);padding:10px 18px;border-radius:16px">
+  <h1>Munchingo admin</h1>
+  <p>We will email a 6-digit code to your business inbox.</p>
+  <div id="stepEmail">
+    <input id="email" type="email" placeholder="Your email" autocomplete="email" inputmode="email">
+    <div style="height:10px"></div><button class="btn" style="width:100%" id="sendCode">Email me a code</button>
+  </div>
+  <div id="stepCode" hidden>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code" style="text-align:center;font-size:22px;letter-spacing:.3em">
+    <div style="height:10px"></div><button class="btn" style="width:100%" id="verify">Sign in</button>
+    <p class="muted" style="margin-top:12px"><a href="#" id="again">Use a different email or get a new code</a></p>
+  </div>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <img src="/admin/logo.png" alt="Munchingo"><span class="sp"></span><small id="who"></small>
+    <button class="btn ghost small" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
+  </header>
+  <main>
+    <div class="tiles" id="tiles"></div>
+    <div class="chips" id="chips"></div>
+    <div class="row"><input id="q" placeholder="Search name, phone, order or invoice number"><button class="btn ghost small" id="reload">Refresh</button></div>
+    <div id="list"></div>
+  </main>
+</div>
+
+<div class="sheet" id="sheet"><div class="panel" id="panel"></div></div>
+<div id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var token = ''; try { token = localStorage.getItem('mngAdminToken') || ''; } catch (e) {}
+  var state = { orders: [], filter: 'topack', reasons: {}, open: null };
+
+  // Safe DOM builder: text is always set as text, never as HTML.
+  function h(tag, attrs) {
+    var el = document.createElement(tag), kids = Array.prototype.slice.call(arguments, 2);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === 'class') el.className = attrs[k]; else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), attrs[k]); else if (attrs[k] !== false && attrs[k] != null) el.setAttribute(k, attrs[k]);
+    });
+    kids.flat().forEach(function (c) { if (c == null || c === false) return; el.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c); });
+    return el;
+  }
+  var inr = function (n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 }); };
+  var when = function (iso) { return iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''; };
+  function toast(msg, ms) { var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, ms || 3500); }
+
+  function api(path, opts) {
+    opts = opts || {};
+    return fetch(path, { method: opts.method || 'GET', headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}), body: opts.body ? JSON.stringify(opts.body) : undefined })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'Unexpected reply' }; }).then(function (j) { if (r.status === 401 && token) { signOut(true); } return j; }); });
+  }
+
+  // ── sign in ──
+  function showLogin() { $('app').hidden = true; $('login').hidden = false; try { $('email').value = localStorage.getItem('mngAdminEmail') || ''; } catch (e) {} }
+  function signOut(expired) { token = ''; try { localStorage.removeItem('mngAdminToken'); } catch (e) {} showLogin(); if (expired) $('loginErr').textContent = 'Please sign in again.'; }
+  $('sendCode').onclick = function () {
+    var email = $('email').value.trim(); if (!email) return;
+    $('sendCode').disabled = true; $('loginErr').textContent = '';
+    api('/admin/api/login', { method: 'POST', body: { email: email } }).then(function (j) {
+      $('sendCode').disabled = false;
+      if (j.ok) { try { localStorage.setItem('mngAdminEmail', email); } catch (e) {} $('stepEmail').hidden = true; $('stepCode').hidden = false; $('code').focus(); toast('If that address is allowed, a code is on its way.'); }
+      else $('loginErr').textContent = j.error || 'Could not send the code.';
+    });
+  };
+  $('verify').onclick = function () {
+    $('loginErr').textContent = '';
+    api('/admin/api/verify', { method: 'POST', body: { email: $('email').value.trim(), code: $('code').value.trim() } }).then(function (j) {
+      if (j.ok) { token = j.token; try { localStorage.setItem('mngAdminToken', token); } catch (e) {} $('code').value = ''; start(); }
+      else $('loginErr').textContent = j.error || 'That code did not work.';
+    });
+  };
+  $('code').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('verify').click(); });
+  $('email').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('sendCode').click(); });
+  $('again').onclick = function (e) { e.preventDefault(); $('stepCode').hidden = true; $('stepEmail').hidden = false; $('loginErr').textContent = ''; };
+  $('out').onclick = function () { signOut(false); };
+
+  // ── main list ──
+  var FILTERS = [['topack', 'To pack'], ['shipped', 'Shipped'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['all', 'All']];
+  function start() {
+    $('login').hidden = true; $('app').hidden = false;
+    api('/admin/api/me').then(function (j) { if (j.ok) { $('who').textContent = j.email; state.reasons = j.reasons; } });
+    load();
+  }
+  function load() {
+    api('/admin/api/summary').then(function (j) { if (j.ok) tiles(j.summary); });
+    api('/admin/api/orders').then(function (j) { if (!j.ok) return toast(j.error || 'Could not load orders'); state.orders = j.orders; render(); });
+  }
+  function tiles(s) {
+    var t = $('tiles'); t.textContent = '';
+    [['Orders today', s.today.orders], ['Boxes today', s.today.boxes], ['Sales today', inr(s.today.revenue)], ['To pack', s.topack], ['Shipped', s.shipped], ['Unpaid', s.unpaid]].forEach(function (x) { t.appendChild(h('div', { class: 'tile' }, h('b', {}, x[1]), h('span', {}, x[0]))); });
+  }
+  function render() {
+    var c = $('chips'); c.textContent = '';
+    FILTERS.forEach(function (f) {
+      var n = f[0] === 'all' ? state.orders.length : state.orders.filter(function (o) { return o.state === f[0] || (f[0] === 'refunded' && o.state === 'cancelled'); }).length;
+      c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; render(); } }, f[1] + ' ' + n));
+    });
+    var q = $('q').value.trim().toLowerCase();
+    var rows = state.orders.filter(function (o) {
+      var okState = state.filter === 'all' || o.state === state.filter || (state.filter === 'refunded' && o.state === 'cancelled');
+      var hay = [o.id, o.name, o.phone, o.invoice_no, o.email].join(' ').toLowerCase();
+      return okState && (!q || hay.indexOf(q) >= 0);
+    });
+    var list = $('list'); list.textContent = '';
+    if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
+    rows.forEach(function (o) {
+      list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } },
+        h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, o.state === 'topack' ? 'TO PACK' : o.state.toUpperCase()), o.gift_note ? ' 🎁' : ''), h('span', {}, inr(o.total))),
+        h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '')),
+        o.state === 'topack' || o.state === 'shipped' ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null));
+    });
+  }
+  $('q').addEventListener('input', render); $('reload').onclick = load;
+
+  // ── order sheet ──
+  function openOrder(id) { api('/admin/api/orders/' + encodeURIComponent(id)).then(function (j) { if (!j.ok) return toast(j.error); state.open = j.order; draw(j.order); $('sheet').classList.add('on'); }); }
+  function closeSheet() { $('sheet').classList.remove('on'); }
+  $('sheet').addEventListener('click', function (e) { if (e.target === $('sheet')) closeSheet(); });
+  function section(title) { var kids = Array.prototype.slice.call(arguments, 1); return h.apply(null, ['div', { class: 'sec' }, h('h3', {}, title)].concat(kids)); }
+  function kv(pairs) { var dl = h('dl', { class: 'kv' }); pairs.forEach(function (p) { if (p[1] === '' || p[1] == null) return; dl.appendChild(h('dt', {}, p[0])); dl.appendChild(h('dd', {}, p[1])); }); return dl; }
+  function done(msg) { toast(msg, 4500); load(); openOrder(state.open.id); }
+  function act(path, body, okMsg, btn) { if (btn) btn.disabled = true; return api(path, { method: 'POST', body: body || {} }).then(function (j) { if (btn) btn.disabled = false; if (!j.ok) { toast(j.error || 'Something went wrong', 6000); return j; } done(typeof okMsg === 'function' ? okMsg(j) : okMsg); return j; }); }
+
+  function draw(o) {
+    var p = $('panel'); p.textContent = '';
+    p.appendChild(h('div', { class: 'row' }, h('div', { style: 'flex:1' }, h('b', { style: 'font-size:18px' }, o.id), h('span', { class: 'badge b-' + o.state }, o.state === 'topack' ? 'TO PACK' : o.state.toUpperCase())), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
+    if (o.gift_note) p.appendChild(h('div', { class: 'gift' }, h('b', { style: 'color:var(--terra)' }, '🎁 Gift message to write on the card'), h('div', { style: 'font-size:17px;margin-top:4px' }, o.gift_note)));
+
+    var items = h('div', {});
+    o.items.forEach(function (i) { items.appendChild(h('div', { class: 'line' }, h('div', {}, i.name + ' × ' + i.qty, i.contents ? h('small', {}, i.contents) : null), h('div', {}, inr((i.price || 0) * i.qty)))); });
+    if (o.discount) items.appendChild(h('div', { class: 'line' }, h('div', {}, 'Discount' + (o.coupon ? ' (' + o.coupon + ')' : '')), h('div', {}, '− ' + inr(o.discount))));
+    items.appendChild(h('div', { class: 'line' }, h('b', {}, 'Total · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es')), h('b', {}, inr(o.total))));
+    p.appendChild(section('Order', items));
+
+    var addr = h('div', {}, h('div', {}, o.address || '—'), h('div', { class: 'acts' }, o.address ? h('button', { class: 'btn ghost small', onclick: function () { (navigator.clipboard && navigator.clipboard.writeText(o.name + '\n' + o.address + '\n' + o.phone)).then(function () { toast('Address copied'); }); } }, 'Copy label') : null));
+    p.appendChild(section('Ship to', kv([['Name', o.name], ['Phone', '+' + o.phone]]), addr,
+      h('div', { class: 'acts' }, h('a', { class: 'btn small', href: 'https://wa.me/' + encodeURIComponent(o.phone), target: '_blank', rel: 'noopener', style: 'text-decoration:none' }, 'WhatsApp'), h('a', { class: 'btn ghost small', href: 'tel:+' + o.phone, style: 'text-decoration:none' }, 'Call'))));
+
+    p.appendChild(section('Payment & invoice', kv([['Payment', o.payment_id || 'not paid'], ['Invoice', o.invoice_no ? o.invoice_no + ' (' + (o.supply === 'intra' ? 'CGST+SGST' : 'IGST') + ')' : ''], ['Email', o.email || 'none given'], ['Refunded', o.refunded ? inr(o.refunded) : '']]),
+      o.invoice_no ? h('div', { class: 'acts' },
+        h('button', { class: 'btn ghost small', onclick: function () { fetch('/admin/api/orders/' + encodeURIComponent(o.id) + '/invoice.pdf', { headers: { Authorization: 'Bearer ' + token } }).then(function (r) { return r.ok ? r.blob() : Promise.reject(); }).then(function (b) { window.open(URL.createObjectURL(b), '_blank'); }).catch(function () { toast('Could not open the invoice'); }); } }, 'View invoice PDF'),
+        h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
+
+    if (o.credit_notes.length) p.appendChild(section('Refunds & credit notes', o.credit_notes.map(function (c) { return h('div', { class: 'line' }, h('div', {}, c.no, h('small', {}, c.reason + (c.full ? ' · order closed' : '') + ' · ' + when(c.at))), h('div', {}, inr(c.amount))); })));
+
+    if (o.state === 'topack') p.appendChild(shipForm(o));
+    if (o.state === 'shipped') p.appendChild(section('Shipped', kv([['Carrier', o.carrier], ['Tracking', o.awb], ['When', when(o.shipped_at)]])));
+    if (o.status === 'paid' && o.refundable > 0) p.appendChild(refundForm(o));
+    if (o.state === 'unpaid') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
+
+    var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';
+    p.appendChild(section('Note', note, h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/note', { note: note.value }, 'Note saved', e.target); } }, 'Save note'))));
+  }
+
+  function shipForm(o) {
+    var carrier = h('input', { value: 'Delhivery' }), awb = h('input', { placeholder: 'Tracking / AWB number' });
+    return section('Mark shipped', h('label', {}, 'Courier'), carrier, h('label', {}, 'Tracking number'), awb,
+      h('p', { class: 'muted' }, o.email ? 'The customer is emailed with a tracking link.' : 'No customer email, so no email is sent.'),
+      h('button', { class: 'btn small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/ship', { carrier: carrier.value, awb: awb.value }, function (j) { return 'Marked shipped' + (j.emailed ? ' · customer emailed' : ''); }, e.target); } }, 'Mark as shipped'));
+  }
+
+  function refundForm(o) {
+    var amount = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', placeholder: 'Full ' + inr(o.refundable) + ' (leave empty)' });
+    var reason = h('select', {}); Object.keys(state.reasons).forEach(function (k) { reason.appendChild(h('option', { value: k }, state.reasons[k])); });
+    var note = h('input', { placeholder: 'Optional note, e.g. one box crushed' });
+    return section('Refund', h('p', { class: 'muted' }, 'Up to ' + inr(o.refundable) + ' can still be refunded. A GST credit note is made and the customer is told automatically.'),
+      h('label', {}, 'Amount (₹)'), amount, h('label', {}, 'Reason'), reason, h('label', {}, 'Note'), note,
+      h('div', { class: 'acts' }, h('button', { class: 'btn red small', onclick: function (e) {
+        var amt = amount.value ? Number(amount.value) : null;
+        var text = (amt ? inr(amt) : 'the full ' + inr(o.refundable)) + ' to ' + o.name + ' (' + state.reasons[reason.value] + ')';
+        if (!confirm('Refund ' + text + '?\nThis cannot be undone.')) return;
+        act('/admin/api/orders/' + encodeURIComponent(o.id) + '/refund', { amountRupees: amt, reasonCode: reason.value, note: note.value }, function (j) { return 'Refund of ' + inr(j.refund.amountRupees) + ' started. The credit note follows in a moment.'; }, e.target);
+      } }, 'Refund')));
+  }
+
+  if (token) start(); else showLogin();
+})();
+</script>
+</body>
+</html>
