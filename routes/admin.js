@@ -18,7 +18,9 @@ const wrap = (fn) => async (req, res) => {
 };
 
 // The page itself holds no data; every data call needs a signed session.
-router.get('/admin', (req, res) => {
+const isAdminHost = (req) => req.hostname === 'admin.munchingo.com';
+router.get(['/admin', '/'], (req, res, next) => {
+  if (req.path === '/' && !isAdminHost(req)) return next(); // '/' stays the health check on other hosts
   res.set({ 'X-Robots-Tag': 'noindex, nofollow', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' });
   res.sendFile(path.join(__dirname, '..', 'admin', 'index.html'));
 });
