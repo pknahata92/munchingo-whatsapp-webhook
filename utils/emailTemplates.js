@@ -37,7 +37,7 @@ function giftBlock() {
       <tr><td style="padding:28px 26px;text-align:center;">
         <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:${C.gold};">Love it? Pass it on</div>
         <div style="font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.2;color:#FFF9EC;margin:10px 0 8px;">Somebody you love deserves a box too.</div>
-        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a gift set, fill it with their favourite flavours and add a note in your own words. We pack it in Faridabad and ship it straight to their door, anywhere in India.</div>
+        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a gift set, fill it with their favourite flavours and add a note in your own words. We bake it in Bikaner and deliver it straight to their doorstep, anywhere in India.</div>
         <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;">
           <tr>
             <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">${inr(739)}</b><br>Trio set &middot; any 3 flavours</td>
@@ -132,7 +132,7 @@ function card(inner) {
 
 function steps() {
   const s = [
-    ['1', 'Packed fresh', 'Boxed by hand in Faridabad, fresh from the bakery.'],
+    ['1', 'Packed fresh', 'Baked in Bikaner, boxed by hand with care.'],
     ['2', 'On its way', 'Shipped across India. We&rsquo;ll update you on WhatsApp.'],
     ['3', 'Snack time', 'Open, share, and save the last bite for yourself.'],
   ];
@@ -169,7 +169,7 @@ function customerConfirmationHtml({ order, invoice }) {
   return shell({
     preheader: `Payment received. Your Munchingo order ${order.order_id} is confirmed${invoice ? ` and your invoice ${invoice.invoiceNo} is attached` : ''}.`,
     title: `Thank you, ${esc(first)}. Your box is in the oven.`,
-    subtitle: 'Your payment is confirmed. We&rsquo;ll pack your order by hand in Faridabad and message you on WhatsApp the moment it ships.',
+    subtitle: 'Your payment is confirmed. We&rsquo;ll pack your order by hand and message you on WhatsApp the moment it ships.',
     body,
     promo: 'full',
     boughtSlugs: bought,
