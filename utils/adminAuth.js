@@ -26,16 +26,26 @@ function allowedEmails() {
 const norm = (email) => String(email || '').trim().toLowerCase();
 const isEnvOwner = (email) => !!key() && allowedEmails().includes(norm(email));
 
+// Short cache so a page load (several calls at once) costs one lookup, not one per call. Team changes clear it,
+// and a disabled person is locked out within CACHE_MS at the latest.
+const CACHE_MS = 10_000;
+const cache = new Map();
+const clearUserCache = () => cache.clear();
+
 // -> { email, name, role: 'owner' | 'staff' } or null. If the table cannot be read, only env owners get in.
+// Env owners never need the database: they are always owners.
 async function resolveUser(email) {
   const e = norm(email);
   if (!key() || !e) return null;
+  if (isEnvOwner(e)) return { email: e, name: e, role: 'owner' };
+  const hit = cache.get(e);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.user;
   let row = null;
   try { row = await require('./database').getAdminUser(e); }
-  catch (err) { console.error('[ADMIN] could not read admin_users:', err.message); }
-  if (isEnvOwner(e)) return { email: e, name: (row && row.name) || e, role: 'owner' };
-  if (row && row.active && (row.role === 'owner' || row.role === 'staff')) return { email: e, name: row.name || e, role: row.role };
-  return null;
+  catch (err) { console.error('[ADMIN] could not read admin_users:', err.message); return null; }
+  const user = row && row.active && (row.role === 'owner' || row.role === 'staff') ? { email: e, name: row.name || e, role: row.role } : null;
+  cache.set(e, { at: Date.now(), user });
+  return user;
 }
 const isAllowed = async (email) => !!(await resolveUser(email));
 
@@ -99,4 +109,4 @@ function requireOwner(req, res, next) {
   next();
 }
 
-module.exports = { isAllowed, resolveUser, isEnvOwner, issueCode, verifyCode, issueToken, readToken, requireAdmin, requireOwner, locked };
+module.exports = { clearUserCache, isAllowed, resolveUser, isEnvOwner, issueCode, verifyCode, issueToken, readToken, requireAdmin, requireOwner, locked };

@@ -36,7 +36,18 @@ function shapeOrder(o, invoice, creditNotes = []) {
   };
 }
 
-async function listOrders() {
+// One load of the order list is shared by everything that asks within 3 s (the tiles and the list load together).
+// Any change made through the admin clears it at once.
+let listCache = null;
+const bust = () => { listCache = null; };
+function listOrders() {
+  if (listCache && Date.now() - listCache.at < 3000) return listCache.p;
+  const p = loadOrders();
+  listCache = { at: Date.now(), p };
+  p.catch(() => { if (listCache && listCache.p === p) listCache = null; });
+  return p;
+}
+async function loadOrders() {
   const orders = await db.listRecentOrders(600);
   const ids = orders.map((o) => o.order_id);
   const invoices = await db.getInvoicesByOrderIds(ids);
@@ -79,6 +90,7 @@ async function cancelUnpaid(orderId, actor) {
   if (!/^pending/.test(order.status)) throw new AdminError(`Order is "${order.status}". Paid orders are cancelled by refunding them.`, 409);
   if (order.payment_link_id) await require('./razorpay').expirePaymentLink(order.payment_link_id);
   await db.cancelOrder(orderId);
+  bust();
   await logEvent(orderId, 'cancelled_unpaid', actor);
   return { orderId };
 }
@@ -108,6 +120,7 @@ async function resendInvoice(orderId, actor) {
 
 const who = (actor) => ({ actor_email: actor && actor.email || null, actor_name: actor && (actor.name || actor.email) || null });
 async function logEvent(orderId, event, actor, { from = null, to = null, meta = null } = {}) {
+  bust();
   await db.logOrderEvent({ order_id: orderId, event, from_state: from, to_state: to, meta, ...who(actor) });
 }
 
@@ -217,6 +230,7 @@ async function saveTeamMember({ email, name = '', role = 'staff', active = true,
   if (!['owner', 'staff'].includes(role)) throw new AdminError('Role must be owner or staff.');
   if (auth.isEnvOwner(e) && (role !== 'owner' || !active)) throw new AdminError('This address is a permanent owner set on the server. Change ADMIN_EMAILS on Render to demote it.', 409);
   if (e === actor.email && (role !== 'owner' || !active)) throw new AdminError('You cannot demote or disable yourself.', 409);
+  auth.clearUserCache();
   await db.upsertAdminUser({ email: e, name: String(name).slice(0, 60), role, active: !!active, created_by: actor.email });
   console.log(`[ADMIN] ${actor.email} set ${e} -> ${role}${active ? '' : ' (disabled)'}`);
   return {};
