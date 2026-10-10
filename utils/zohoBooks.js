@@ -117,6 +117,9 @@ const stateAbbrev = (code) => ABBREV[code];
 async function syncPaidOrder({ invoice, order }) {
   if (!configured()) return null;
 
+  if (invoice.supplyType === 'inter' && !invoice.buyer.stateCode) {
+    throw new Error('Customer state not recognised on this invoice, so Zoho cannot tell where it was supplied. Fix the address, or enter this invoice in Zoho by hand.');
+  }
   const contactId = await findOrCreateContact(invoice.buyer);
   const date = new Date(invoice.issuedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 

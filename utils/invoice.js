@@ -47,6 +47,14 @@ const STATE_ALIASES = {
   'daman and diu': 'dadra and nagar haveli and daman and diu', 'the dadra and nagar haveli and daman and diu': 'dadra and nagar haveli and daman and diu',
 };
 
+// Longest names first so "Andaman and Nicobar Islands" wins over a shorter match; whole words only.
+function findStateIn(raw) {
+  const text = ' ' + String(raw || '').toLowerCase().replace(/[^a-z& ]+/g, ' ').replace(/\s+/g, ' ') + ' ';
+  const names = [...Object.keys(STATE_CODES), ...Object.keys(STATE_ALIASES)].sort((a, b) => b.length - a.length);
+  const hit = names.find((n) => text.includes(' ' + n + ' '));
+  return hit || '';
+}
+
 function normaliseState(raw) {
   const k = String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const key = STATE_ALIASES[k] || k;
@@ -65,6 +73,11 @@ function parseAddress(deliveryAddress) {
   if (!city) {
     const parts = raw.split(',').map((s) => s.trim());
     if (parts.length >= 3) city = parts[parts.length - 2];
+  }
+  // Addresses typed freely (WhatsApp bot, older orders) may not end in "State - 123456": look for a state name anywhere.
+  if (!normaliseState(state)) {
+    const found = findStateIn(raw);
+    if (found) state = found;
   }
   return { raw, state: state || '', pincode: pincode || '', city: city || '' };
 }
