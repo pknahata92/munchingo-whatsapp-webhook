@@ -183,7 +183,12 @@ app.post('/razorpay-webhook', async (req, res) => {
         console.error('[INVOICE] Unexpected failure after payment:', err.message);
       }
 
-      if (phone && !waSent) {
+      // Pre-order window: the approved confirmation templates promise "dispatch within 48 hours of payment", which a
+      // pre-order does not meet. Skip them (the email and the order page carry the dispatch date) unless a pre-order
+      // template has been approved and named in PREORDER_WA_TEMPLATE.
+      const preorderBlock = require('./utils/launch').isPreorder() && !process.env.PREORDER_WA_TEMPLATE;
+      if (preorderBlock && phone && !waSent) console.log('[WA] pre-order: skipped the 48-hour confirmation template for', orderId);
+      if (phone && !waSent && !preorderBlock) {
         // Fallback only: used when the WhatsApp invoice could not be sent (invoice off, template missing, or an error).
         // Uses the approved "munchingo_order_confirmed" template instead of free text --
         // free text only delivers within WhatsApp's 24h session window, which a
@@ -482,6 +487,7 @@ app.get('/internal/subscription-renewals', async (req, res) => {
 
       // Recompute every item's price + availability fresh — never trust
       // what was true when the customer first subscribed.
+      await require('./utils/stock').ensureFresh();
       const soldOut = sub.items.find((i) => !isAvailable(i.slug));
       if (soldOut) {
         console.warn(`[SUBSCRIPTIONS] Subscription ${sub.id} skipped — "${soldOut.name}" is sold out. Will retry tomorrow.`);

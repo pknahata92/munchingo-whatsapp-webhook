@@ -114,6 +114,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
                   return res.status(400).json({ ok: false, error: 'Phone number looks invalid - include a 10-digit number' });
           }
 
+      await require('../utils/stock').ensureFresh();
       const { items: enrichedItems, error: itemsError } = normaliseItems(items);
           if (itemsError) {
                   return res.status(400).json({ ok: false, error: itemsError });
@@ -254,6 +255,7 @@ router.post('/api/validate-coupon', rateLimit({ windowMs: 60_000, max: 10 }), as
               return res.status(400).json({ ok: false, error: 'Missing required fields: code, items' });
       }
 
+      await require('../utils/stock').ensureFresh();
       const { items: enrichedItems, error: itemsError } = normaliseItems(items);
           if (itemsError) return res.status(400).json({ ok: false, error: itemsError });
 
@@ -340,6 +342,26 @@ router.get('/api/order/:orderId', rateLimit({ windowMs: 60_000, max: 20 }), asyn
           console.error('[ORDER] Lookup error:', err.message);
           res.status(500).json({ ok: false, error: 'Could not look up that order right now.' });
     }
+});
+
+// Public, read-only: which base flavours are sold out right now (the cart greys them out).
+router.get('/api/stock', rateLimit({ windowMs: 60_000, max: 60 }), async (req, res) => {
+  const stock = require('../utils/stock');
+  await stock.ensureFresh();
+  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, soldOut: stock.soldOutSlugs() || [] });
+});
+
+// Public, read-only: how many Founding 100 places are left. Nothing else about the coupon is exposed.
+router.get('/api/promo/founding', rateLimit({ windowMs: 60_000, max: 60 }), async (req, res) => {
+  try {
+    const c = await require('../utils/database').getCouponUsage('FOUNDING10');
+    const live = c && c.active && !(c.expires_at && new Date(c.expires_at) < new Date()) && c.max_uses != null;
+    const remaining = live ? Math.max(0, c.max_uses - (c.uses_count || 0)) : 0;
+    res.set('Cache-Control', 'public, max-age=60').json({ ok: true, remaining, total: live ? c.max_uses : 0 });
+  } catch (err) {
+    console.error('[PROMO] founding count failed:', err.message);
+    res.status(503).json({ ok: false });
+  }
 });
 
 module.exports = router;

@@ -7,6 +7,9 @@ const path = require('path');
 const fs = require('fs');
 const root = path.join(__dirname, '..');
 process.env.ADMIN_EMAILS = 'owner@example.com';
+const team = [{ email: 'staff@example.com', name: 'Staff', role: 'staff', active: true, created_at: new Date().toISOString() }];
+const events = [];
+const stockRows = ['atta-original', 'atta-kesari', 'atta-lite-sugar', 'atta-ajwain'].map((slug) => ({ slug, available: true }));
 process.env.DIGEST_SECRET = 'dev-only-secret';
 process.env.RESEND_API_KEY = 'x';
 const stub = (rel, exp) => { const f = require.resolve(path.join(root, rel)); require.cache[f] = { id: f, filename: f, loaded: true, exports: exp }; };
@@ -34,9 +37,17 @@ stub('utils/database.js', {
   getCreditNotesByOrder: async (id) => cns.filter((c) => c.order_id === id),
   updateOrderFields: async (id, f) => Object.assign(orders.find((o) => o.order_id === id), f),
   cancelOrder: async (id) => { orders.find((o) => o.order_id === id).status = 'cancelled'; return true; },
+  getAdminUser: async (e) => team.find((t) => t.email === e) || null,
+  listAdminUsers: async () => team,
+  upsertAdminUser: async (r) => { const i = team.findIndex((t) => t.email === r.email); if (i >= 0) Object.assign(team[i], r); else team.push({ ...r, created_at: new Date().toISOString() }); },
+  logOrderEvent: async (ev) => events.push({ ...ev, created_at: new Date().toISOString() }),
+  listOrderEvents: async (id) => events.filter((e) => e.order_id === id),
+  updateOrderIf: async (id, where, fields) => { const o = orders.find((x) => x.order_id === id); if (Object.entries(where).some(([k, v]) => (v === null ? o[k] != null : o[k] !== v))) return false; Object.assign(o, fields); return true; },
+  listStock: async () => stockRows,
+  setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
 stub('utils/mailer.js', {
-  sendAdminCode: async (email, code) => { fs.writeFileSync('/tmp/admin-dev-code.txt', code); console.log('[dev] login code for', email, '=', code); },
+  sendAdminCode: async (email, code) => { fs.writeFileSync('/tmp/admin-dev-code-' + email.split('@')[0] + '.txt', code); fs.writeFileSync('/tmp/admin-dev-code.txt', code); console.log('[dev] login code for', email, '=', code); },
   sendShippedEmail: async ({ order }) => console.log('[dev] shipped email ->', order.customer_email),
   sendCustomerConfirmationEmail: async ({ order }) => console.log('[dev] invoice email ->', order.customer_email),
 });

@@ -21,8 +21,8 @@ textarea{min-height:70px;resize:vertical}label{display:block;font-size:12px;font
 main{max-width:980px;margin:0 auto;padding:16px}
 .login{max-width:380px;margin:12vh auto;padding:0 16px;text-align:center}
 .login h1{font-size:22px;margin:10px 0 4px}.login p{color:var(--ink2);margin:0 0 16px}
-.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
-@media(min-width:700px){.tiles{grid-template-columns:repeat(6,1fr)}}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+@media(min-width:700px){.tiles{grid-template-columns:repeat(8,1fr)}}
 .tile{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:10px 8px;text-align:center}
 .tile b{display:block;font-size:20px}.tile span{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
 .chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px}
@@ -33,7 +33,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .card:hover{border-color:var(--terra)}.card .top{display:flex;justify-content:space-between;gap:8px;font-weight:700}
 .card .meta{color:var(--ink2);font-size:13px;margin-top:2px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
-.b-topack{background:#FDF0D5;color:var(--amber)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
+.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:30;overflow:auto}
 .sheet.on{display:block}.panel{background:var(--cream);max-width:640px;margin:0 auto;min-height:100%;padding:16px 16px 40px}
 @media(min-width:700px){.panel{margin:24px auto;min-height:0;border-radius:18px}}
@@ -46,6 +46,9 @@ main{max-width:980px;margin:0 auto;padding:16px}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:11px 18px;border-radius:12px;display:none;z-index:50;max-width:92vw;text-align:center}
 .err{color:var(--red);font-size:13px;margin-top:8px;min-height:18px}.muted{color:var(--ink2);font-size:13px}
 a{color:var(--terra)}
+.pick{display:flex;gap:10px;align-items:flex-start}.pick input{width:22px;min-height:22px;margin-top:3px;flex:none}.pick>div{flex:1;min-width:0}
+.tl{font-size:13px;color:var(--ink2)}.tl div{padding:4px 0;border-bottom:1px solid var(--line)}.tl div:last-child{border:0}.tl b{color:var(--ink)}
+.sw{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.sw:last-child{border:0}
 .ctl{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center}.ctl select{width:auto;min-width:140px;flex:1 1 150px}
 .inl{display:flex;align-items:center;gap:6px;margin:0;text-transform:none;letter-spacing:0;font-size:13px}.inl input{width:auto;min-height:38px}
 .bar{display:flex;align-items:center;gap:8px;margin:8px 0 10px;font-size:13px;color:var(--ink2)}.bar .sp{flex:1}.bar b{color:var(--ink)}
@@ -75,7 +78,7 @@ a{color:var(--terra)}
 <div id="app" hidden>
   <header>
     <img src="/admin/logo.png" alt="Munchingo"><span class="sp"></span><small id="who"></small>
-    <button class="btn ghost small" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
+    <button class="btn ghost small owner" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
   </header>
   <main>
     <div class="tiles" id="tiles"></div>
@@ -97,6 +100,7 @@ a{color:var(--terra)}
     </div>
     <div class="ctl" id="customDates" hidden><label class="inl">From <input type="date" id="dFrom"></label><label class="inl">To <input type="date" id="dTo"></label></div>
     <div class="bar"><span id="count"></span><span class="sp"></span><button class="btn ghost small" id="csv">Download CSV</button><button class="btn ghost small" id="reset">Clear filters</button></div>
+    <div class="bar" id="bulk" hidden style="flex-wrap:wrap"></div>
     <div id="list"></div>
   </main>
 </div>
@@ -109,7 +113,7 @@ a{color:var(--terra)}
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var token = ''; try { token = localStorage.getItem('mngAdminToken') || ''; } catch (e) {}
-  var state = { orders: [], filter: 'topack', reasons: {}, open: null, sort: 'new', range: 'all', from: '', to: '', gift: false, coupon: false, set: false };
+  var state = { role: 'staff', sel: {}, orders: [], filter: 'topack', reasons: {}, open: null, sort: 'new', range: 'all', from: '', to: '', gift: false, coupon: false, set: false };
   try { var saved = JSON.parse(localStorage.getItem('mngAdminView') || '{}'); ['filter', 'sort', 'range', 'from', 'to', 'gift', 'coupon', 'set'].forEach(function (k) { if (saved[k] != null) state[k] = saved[k]; }); } catch (e) {}
   function saveView() { try { localStorage.setItem('mngAdminView', JSON.stringify({ filter: state.filter, sort: state.sort, range: state.range, from: state.from, to: state.to, gift: state.gift, coupon: state.coupon, set: state.set })); } catch (e) {} }
   var IST = 5.5 * 3600 * 1000;
@@ -160,10 +164,11 @@ a{color:var(--terra)}
   $('out').onclick = function () { signOut(false); };
 
   // ── main list ──
-  var FILTERS = [['topack', 'To pack'], ['shipped', 'Shipped'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['all', 'All']];
+  var FILTERS = [['topack', 'To pack'], ['packed', 'Packed'], ['shipped', 'Shipped'], ['delivered', 'Delivered'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['all', 'All']];
+  var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { $('who').textContent = j.email; state.reasons = j.reasons; } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; state.reasons = j.reasons; $('stockBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
     load();
   }
   function load() {
@@ -172,7 +177,7 @@ a{color:var(--terra)}
   }
   function tiles(s) {
     var t = $('tiles'); t.textContent = '';
-    [['Orders today', s.today.orders], ['Boxes today', s.today.boxes], ['Sales today', inr(s.today.revenue)], ['To pack', s.topack], ['Shipped', s.shipped], ['Unpaid', s.unpaid]].forEach(function (x) { t.appendChild(h('div', { class: 'tile' }, h('b', {}, x[1]), h('span', {}, x[0]))); });
+    [['Orders today', s.today.orders], ['Boxes today', s.today.boxes], ['Sales today', inr(s.today.revenue)], ['To pack', s.topack], ['Packed', s.packed], ['Shipped', s.shipped], ['Delivered', s.delivered], ['Unpaid', s.unpaid]].forEach(function (x) { t.appendChild(h('div', { class: 'tile' }, h('b', {}, x[1]), h('span', {}, x[0]))); });
   }
   function inRange(o) {
     var d = istDay(o.paid_at || o.created_at), r = state.range;
@@ -217,10 +222,64 @@ a{color:var(--terra)}
     var list = $('list'); list.textContent = '';
     if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
     rows.forEach(function (o) {
-      list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } },
-        h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, o.state === 'topack' ? 'TO PACK' : o.state.toUpperCase()), o.gift_note ? ' 🎁' : ''), h('span', {}, inr(o.total))),
-        h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '')),
-        o.state === 'topack' || o.state === 'shipped' ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null));
+      var pickable = o.state === 'topack' || o.state === 'packed';
+      var box = pickable ? h('input', { type: 'checkbox', 'aria-label': 'Select ' + o.id, onclick: function (e) { e.stopPropagation(); if (e.target.checked) state.sel[o.id] = 1; else delete state.sel[o.id]; bulkBar(); } }) : null;
+      if (box && state.sel[o.id]) box.checked = true;
+      list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
+        h('div', {},
+          h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? ' 🎁' : ''), h('span', {}, inr(o.total))),
+          h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '')),
+          ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null))));
+    });
+    bulkBar();
+  }
+
+  // ── bulk actions: pick list, packing slips, mark packed ──
+  function selectedIds() { return Object.keys(state.sel).filter(function (id) { return state.orders.some(function (o) { return o.id === id; }); }); }
+  function printableIds() { var s = selectedIds(); return s.length ? s : visible().filter(function (o) { return o.state === 'topack' || o.state === 'packed'; }).map(function (o) { return o.id; }); }
+  function bulkBar() {
+    var b = $('bulk'); b.textContent = '';
+    var vis = visible().filter(function (o) { return o.state === 'topack' || o.state === 'packed'; });
+    if (!vis.length) { b.hidden = true; return; }
+    b.hidden = false;
+    var sel = selectedIds(), n = sel.length;
+    b.appendChild(h('button', { class: 'chip', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length));
+    if (n) b.appendChild(h('button', { class: 'chip', onclick: function () { state.sel = {}; render(); } }, 'Clear (' + n + ')'));
+    b.appendChild(h('button', { class: 'btn ghost small', onclick: function () { printSheets('pick'); } }, 'Print pick list' + (n ? ' (' + n + ')' : '')));
+    b.appendChild(h('button', { class: 'btn ghost small', onclick: function () { printSheets('slips'); } }, 'Print slips' + (n ? ' (' + n + ')' : '')));
+    var toPack = sel.filter(function (id) { return state.orders.some(function (o) { return o.id === id && o.state === 'topack'; }); });
+    if (toPack.length) b.appendChild(h('button', { class: 'btn small', onclick: function (e) {
+      if (!confirm('Mark ' + toPack.length + ' order' + (toPack.length === 1 ? '' : 's') + ' as packed?')) return;
+      e.target.disabled = true;
+      api('/admin/api/orders/bulk-pack', { method: 'POST', body: { ids: toPack } }).then(function (j) {
+        if (!j.ok) { e.target.disabled = false; return toast(j.error || 'Failed', 6000); }
+        var bad = j.results.filter(function (r) { return !r.ok; });
+        toast(j.packed + ' packed' + (bad.length ? ' · ' + bad.length + ' skipped: ' + bad[0].id + ' ' + bad[0].error : ''), 6000);
+        state.sel = {}; load();
+      });
+    } }, 'Mark ' + toPack.length + ' packed'));
+  }
+  var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  function printOne(id, kind) { printSheets(kind, [id]); }
+  function printSheets(kind, only) {
+    var ids = only || printableIds(); if (!ids.length) return toast('Nothing to print');
+    var w = window.open('', '_blank'); if (!w) return toast('Allow pop-ups to print');
+    api('/admin/api/picklist', { method: 'POST', body: { ids: ids } }).then(function (j) {
+      if (!j.ok) { w.close(); return toast(j.error || 'Could not build the sheet'); }
+      var css = 'body{font:14px/1.4 -apple-system,Helvetica,Arial,sans-serif;color:#111;margin:18px}h1{font-size:20px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin:10px 0}td,th{border-bottom:1px solid #ccc;padding:6px 4px;text-align:left;vertical-align:top}.big{font-size:22px;font-weight:700}.gift{border:2px dashed #333;padding:12px;margin:12px 0;font-size:20px}.slip{page-break-after:always;padding:6px 0}.slip:last-child{page-break-after:auto}.box{display:inline-block;width:14px;height:14px;border:1.5px solid #111;margin-right:8px;vertical-align:middle}small{color:#555}@media print{body{margin:8mm}}';
+      var html;
+      if (kind === 'pick') {
+        html = '<h1>Pick list</h1><small>' + esc(new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })) + ' · ' + j.orders.length + ' order(s)</small><h2>Pull from stock</h2><table>'
+          + Object.keys(j.flavours).map(function (f) { return '<tr><td class="big"><span class="box"></span>' + esc(f) + '</td><td class="big">' + j.flavours[f] + ' box' + (j.flavours[f] === 1 ? '' : 'es') + '</td></tr>'; }).join('')
+          + '</table><h2>Orders</h2><table>' + j.orders.map(function (o) { return '<tr><td><span class="box"></span><b>' + esc(o.id) + '</b><br>' + esc(o.name) + '</td><td>' + o.items.map(function (i) { return esc(i.name) + ' ×' + i.qty + (i.contents ? ' <small>(' + esc(i.contents) + ')</small>' : ''); }).join('<br>') + '</td><td>' + (o.gift_note ? '🎁 gift card' : '') + '</td></tr>'; }).join('') + '</table>';
+      } else {
+        html = j.orders.map(function (o) {
+          return '<div class="slip">' + (o.gift_note ? '<div class="gift">🎁 Write on the card:<br>' + esc(o.gift_note) + '</div>' : '')
+            + '<h1>' + esc(o.id) + '</h1><table>' + o.items.map(function (i) { return '<tr><td class="big">' + i.qty + ' ×</td><td><b>' + esc(i.name) + '</b>' + (i.contents ? '<br><small>' + esc(i.contents) + '</small>' : '') + '</td></tr>'; }).join('') + '</table>'
+            + '<p><b>Ship to</b><br>' + esc(o.name) + '<br>' + esc(o.address) + '<br>+' + esc(o.phone) + '</p><p><small>' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · packed by ____________ · ' + esc(new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })) + '</small></p></div>';
+        }).join('');
+      }
+      w.document.open(); w.document.write('<!doctype html><title>' + (kind === 'pick' ? 'Pick list' : 'Packing slips') + '</title><style>' + css + '</style>' + html); w.document.close(); w.focus(); setTimeout(function () { w.print(); }, 300);
     });
   }
   $('q').addEventListener('input', render); $('reload').onclick = load;
@@ -253,7 +312,7 @@ a{color:var(--terra)}
 
   function draw(o) {
     var p = $('panel'); p.textContent = '';
-    p.appendChild(h('div', { class: 'row' }, h('div', { style: 'flex:1' }, h('b', { style: 'font-size:18px' }, o.id), h('span', { class: 'badge b-' + o.state }, o.state === 'topack' ? 'TO PACK' : o.state.toUpperCase())), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
+    p.appendChild(h('div', { class: 'row' }, h('div', { style: 'flex:1' }, h('b', { style: 'font-size:18px' }, o.id), h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase())), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
     if (o.gift_note) p.appendChild(h('div', { class: 'gift' }, h('b', { style: 'color:var(--terra)' }, '🎁 Gift message to write on the card'), h('div', { style: 'font-size:17px;margin-top:4px' }, o.gift_note)));
 
     var items = h('div', {});
@@ -269,15 +328,26 @@ a{color:var(--terra)}
     p.appendChild(section('Payment & invoice', kv([['Payment', o.payment_id || 'not paid'], ['Invoice', o.invoice_no ? o.invoice_no + ' (' + (o.supply === 'intra' ? 'CGST+SGST' : 'IGST') + ')' : ''], ['Email', o.email || 'none given'], ['Refunded', o.refunded ? inr(o.refunded) : '']]),
       o.invoice_no ? h('div', { class: 'acts' },
         h('button', { class: 'btn ghost small', onclick: function () { fetch('/admin/api/orders/' + encodeURIComponent(o.id) + '/invoice.pdf', { headers: { Authorization: 'Bearer ' + token } }).then(function (r) { return r.ok ? r.blob() : Promise.reject(); }).then(function (b) { window.open(URL.createObjectURL(b), '_blank'); }).catch(function () { toast('Could not open the invoice'); }); } }, 'View invoice PDF'),
-        h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
+        state.role !== 'owner' ? null : h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
 
     if (o.credit_notes.length) p.appendChild(section('Refunds & credit notes', o.credit_notes.map(function (c) { return h('div', { class: 'line' }, h('div', {}, c.no, h('small', {}, c.reason + (c.full ? ' · order closed' : '') + ' · ' + when(c.at))), h('div', {}, inr(c.amount))); })));
 
-    if (o.state === 'topack') p.appendChild(shipForm(o));
-    if (o.state === 'shipped') p.appendChild(section('Shipped', kv([['Carrier', o.carrier], ['Tracking', o.awb], ['When', when(o.shipped_at)]])));
-    if (o.status === 'paid' && o.refundable > 0) p.appendChild(refundForm(o));
-    if (o.state === 'unpaid') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
+    var adv = '/admin/api/orders/' + encodeURIComponent(o.id) + '/advance';
+    if (o.state === 'topack') p.appendChild(section('Next step', h('p', { class: 'muted' }, 'Pack the box(es), then mark it packed.'),
+      h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { act(adv, { to: 'packed' }, 'Marked packed', e.target); } }, 'Mark packed'),
+        h('button', { class: 'btn ghost small', onclick: function () { printOne(o.id, 'slips'); } }, 'Print slip'))));
+    if (o.state === 'packed') p.appendChild(shipForm(o));
+    if (o.state === 'shipped' || o.state === 'delivered') p.appendChild(section(o.state === 'delivered' ? 'Delivered' : 'Shipped', kv([['Packed', o.packed_at ? when(o.packed_at) + (o.packed_by ? ' by ' + o.packed_by : '') : ''], ['Carrier', o.carrier], ['Tracking', o.awb], ['Shipped', when(o.shipped_at)], ['Delivered', o.delivered_at ? when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : '']]),
+      o.state === 'shipped' ? h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { if (confirm('Mark this order as delivered?')) act(adv, { to: 'delivered' }, 'Marked delivered', e.target); } }, 'Mark delivered')) : null));
+    if (state.role === 'owner' && ['packed', 'shipped', 'delivered'].indexOf(o.state) >= 0) p.appendChild(section('Owner', h('p', { class: 'muted' }, 'Made a mistake? Step this order back one stage. The customer is not un-emailed.'),
+      h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Undo the last step (' + o.state + ')?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/undo', {}, 'Stepped back', e.target); } }, 'Undo last step')));
+    if (state.role === 'owner' && o.status === 'paid' && o.refundable > 0) p.appendChild(refundForm(o));
+    if (o.state === 'unpaid' && state.role === 'owner') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
 
+    if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', invoice_resent: 'Invoice resent', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
+      return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
+    }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';
     p.appendChild(section('Note', note, h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/note', { note: note.value }, 'Note saved', e.target); } }, 'Save note'))));
   }
@@ -286,7 +356,7 @@ a{color:var(--terra)}
     var carrier = h('input', { value: 'Delhivery' }), awb = h('input', { placeholder: 'Tracking / AWB number' });
     return section('Mark shipped', h('label', {}, 'Courier'), carrier, h('label', {}, 'Tracking number'), awb,
       h('p', { class: 'muted' }, o.email ? 'The customer is emailed with a tracking link.' : 'No customer email, so no email is sent.'),
-      h('button', { class: 'btn small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/ship', { carrier: carrier.value, awb: awb.value }, function (j) { return 'Marked shipped' + (j.emailed ? ' · customer emailed' : ''); }, e.target); } }, 'Mark as shipped'));
+      h('button', { class: 'btn small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'shipped', carrier: carrier.value, awb: awb.value }, function (j) { return 'Marked shipped' + (j.emailed ? ' · customer emailed' : ''); }, e.target); } }, 'Mark as shipped'));
   }
 
   function refundForm(o) {
@@ -299,9 +369,47 @@ a{color:var(--terra)}
         var amt = amount.value ? Number(amount.value) : null;
         var text = (amt ? inr(amt) : 'the full ' + inr(o.refundable)) + ' to ' + o.name + ' (' + state.reasons[reason.value] + ')';
         if (!confirm('Refund ' + text + '?\nThis cannot be undone.')) return;
-        act('/admin/api/orders/' + encodeURIComponent(o.id) + '/refund', { amountRupees: amt, reasonCode: reason.value, note: note.value }, function (j) { return 'Refund of ' + inr(j.refund.amountRupees) + ' started. The credit note follows in a moment.'; }, e.target);
+        var path = '/admin/api/orders/' + encodeURIComponent(o.id) + '/refund', okMsg = function (j) { return 'Refund of ' + inr(j.refund.amountRupees) + ' started. The credit note follows in a moment.'; };
+        api(path, { method: 'POST', body: { amountRupees: amt, reasonCode: reason.value, note: note.value } }).then(function (j) {
+          if (!j.ok && j.needsConfirm) { if (!confirm(j.error + '\n\nRefund anyway?')) return; return act(path, { amountRupees: amt, reasonCode: reason.value, note: note.value, confirmShipped: true }, okMsg, e.target); }
+          if (!j.ok) return toast(j.error || 'Something went wrong', 6000);
+          done(okMsg(j));
+        });
       } }, 'Refund')));
   }
+
+  // ── owner screens: stock and team ──
+  function ownerPanel(title, body) { var p = $('panel'); p.textContent = ''; p.appendChild(h('div', { class: 'row' }, h('b', { style: 'flex:1;font-size:18px' }, title), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close'))); body.forEach(function (b) { p.appendChild(b); }); $('sheet').classList.add('on'); }
+  function openStock() {
+    api('/admin/api/stock').then(function (j) {
+      if (!j.ok) return toast(j.error);
+      ownerPanel('Stock', [h('p', { class: 'muted' }, 'Switch a flavour off and it cannot be bought on the website (single boxes and any gift set that contains it). Takes effect within 30 seconds.'),
+        section('Flavours', j.stock.map(function (x) {
+          return h('div', { class: 'sw' }, h('div', {}, h('b', {}, x.name), h('div', { class: 'muted' }, x.available ? 'On sale' : 'SOLD OUT')),
+            h('button', { class: 'btn small' + (x.available ? ' red' : ''), onclick: function (e) {
+              if (x.available && !confirm('Mark ' + x.name + ' SOLD OUT? Customers will not be able to order it or any gift set that includes it.')) return;
+              e.target.disabled = true; api('/admin/api/stock', { method: 'POST', body: { slug: x.slug, available: !x.available } }).then(function (r) { toast(r.ok ? x.name + (x.available ? ' marked sold out' : ' back on sale') : (r.error || 'Failed'), 4500); openStock(); });
+            } }, x.available ? 'Mark sold out' : 'Back on sale'));
+        }))]);
+    });
+  }
+  function openTeam() {
+    api('/admin/api/team').then(function (j) {
+      if (!j.ok) return toast(j.error);
+      var email = h('input', { type: 'email', placeholder: 'person@gmail.com' }), name = h('input', { placeholder: 'Name' });
+      var role = h('select', {}, h('option', { value: 'staff' }, 'Staff (pack, ship, notes, print)'), h('option', { value: 'owner' }, 'Owner (everything)'));
+      var save = function (m, patch, btn) { if (btn) btn.disabled = true; api('/admin/api/team', { method: 'POST', body: Object.assign({ email: m.email, name: m.name, role: m.role, active: m.active }, patch) }).then(function (r) { toast(r.ok ? 'Saved' : (r.error || 'Failed'), 5000); openTeam(); }); };
+      ownerPanel('Team', [section('People who can sign in', j.team.map(function (m) {
+        return h('div', { class: 'sw' }, h('div', {}, h('b', {}, m.name || m.email), h('div', { class: 'muted' }, m.email + ' · ' + m.role + (m.active ? '' : ' · DISABLED') + (m.permanent ? ' · set on server' : ''))),
+          m.permanent ? null : h('div', { class: 'acts', style: 'margin:0' },
+            h('button', { class: 'btn ghost small', onclick: function (e) { save(m, { role: m.role === 'owner' ? 'staff' : 'owner' }, e.target); } }, m.role === 'owner' ? 'Make staff' : 'Make owner'),
+            h('button', { class: 'btn small' + (m.active ? ' red' : ''), onclick: function (e) { save(m, { active: !m.active }, e.target); } }, m.active ? 'Disable' : 'Enable')));
+      })),
+      section('Add a person', h('label', {}, 'Email (the 6-digit code is sent here)'), email, h('label', {}, 'Name'), name, h('label', {}, 'Role'), role,
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { save({ active: true }, { email: email.value, name: name.value, role: role.value, active: true }, e.target); } }, 'Add')))]);
+    });
+  }
+  $('stockBtn').onclick = openStock; $('teamBtn').onclick = openTeam;
 
   if (token) start(); else showLogin();
 })();

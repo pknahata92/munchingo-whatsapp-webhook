@@ -30,6 +30,12 @@ const SOLD_OUT_SLUGS = [
 
 const BASE_SLUGS = ['atta-original', 'atta-kesari', 'atta-lite-sugar', 'atta-ajwain'];
 
+// The live list comes from the product_stock table (see utils/stock.js, toggled in the admin).
+// Until it has loaded once, or if it cannot be read, the hard-coded SOLD_OUT_SLUGS above applies.
+function soldOutNow() {
+  try { return require('./stock').soldOutSlugs() || SOLD_OUT_SLUGS; } catch (_) { return SOLD_OUT_SLUGS; }
+}
+
 // Display names, matching what js/cart.js's own Add-to-Bag buttons already
 // show (see gifting.html/index.html's data-name attributes) — a website
 // order's item name should never come from the client, since a crafted
@@ -82,10 +88,11 @@ function nameForSlug(slug) {
  * "lite-sugar" itself contains a hyphen).
  */
 function isAvailable(slug) {
-  if (BASE_SLUGS.includes(slug)) return !SOLD_OUT_SLUGS.includes(slug);
-  if (slug === 'full-range-set') return SOLD_OUT_SLUGS.length === 0;
+  const out = soldOutNow();
+  if (BASE_SLUGS.includes(slug)) return !out.includes(slug);
+  if (slug === 'full-range-set') return out.length === 0;
   if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) {
-    return !SOLD_OUT_SLUGS.some((soldSlug) => {
+    return !out.some((soldSlug) => {
       const token = soldSlug.replace(/^atta-/, '');
       return new RegExp(`(^|-)${token}(-|$)`).test(slug);
     });
@@ -94,4 +101,4 @@ function isAvailable(slug) {
 }
 
 module.exports = {
-  boxesForSlug, priceForSlug, isAvailable, nameForSlug };
+  boxesForSlug, priceForSlug, isAvailable, nameForSlug, BASE_SLUGS };

@@ -351,7 +351,56 @@ async function markInvoice(orderId, fields) {
   if (error) console.error(`[DB] markInvoice(${orderId}) failed:`, error.message);
 }
 
+// ── Roles, timeline, stock (admin_roles_migration.sql) ───────────────────────
+async function getAdminUser(email) {
+  const { data, error } = await db().from('admin_users').select('*').eq('email', String(email).toLowerCase()).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+async function listAdminUsers() {
+  const { data, error } = await db().from('admin_users').select('*').order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function upsertAdminUser(row) {
+  const { error } = await db().from('admin_users').upsert(row, { onConflict: 'email' });
+  if (error) throw new Error(error.message);
+}
+async function logOrderEvent(ev) {
+  const { error } = await db().from('order_events').insert(ev);
+  if (error) console.error(`[DB] logOrderEvent(${ev.order_id}, ${ev.event}) failed:`, error.message);
+}
+async function listOrderEvents(orderId) {
+  const { data, error } = await db().from('order_events').select('*').eq('order_id', orderId).order('created_at', { ascending: true });
+  if (error) { console.error('[DB] listOrderEvents error:', error.message); return []; }
+  return data || [];
+}
+// Conditional update: only touches the row if every key in `where` still matches (null means "is null").
+// Returns true if a row changed, so two people clicking the same button cannot both succeed.
+async function updateOrderIf(orderId, where, fields) {
+  let q = db().from('orders').update(fields).eq('order_id', orderId);
+  for (const [k, v] of Object.entries(where)) q = v === null ? q.is(k, null) : q.eq(k, v);
+  const { data, error } = await q.select('order_id');
+  if (error) throw new Error(error.message.includes('column') ? 'Run admin_roles_migration.sql in Supabase first.' : error.message);
+  return (data || []).length > 0;
+}
+async function listStock() {
+  const { data, error } = await db().from('product_stock').select('*');
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function setStock(slug, available, updatedBy, note) {
+  const { error } = await db().from('product_stock').upsert({ slug, available, note: note || null, updated_by: updatedBy, updated_at: new Date().toISOString() }, { onConflict: 'slug' });
+  if (error) throw new Error(error.message);
+}
+async function getCouponUsage(code) {
+  const { data, error } = await db().from('coupons').select('max_uses, uses_count, active, expires_at').eq('code', code).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+
 module.exports = {
+  getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

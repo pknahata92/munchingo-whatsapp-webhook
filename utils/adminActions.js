@@ -5,7 +5,7 @@ const db = require('./database');
 const { contentsOf, boxesIn } = require('./orderText');
 const { reasonOf, REASONS } = require('./refundReasons');
 
-class AdminError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
+class AdminError extends Error { constructor(msg, status = 400, extra = {}) { super(msg); this.status = status; this.extra = extra; } }
 
 const rupees = (paise) => Math.round(paise) / 100;
 
@@ -18,7 +18,9 @@ function shapeOrder(o, invoice, creditNotes = []) {
   if (/^pending/.test(o.status)) state = 'unpaid';
   else if (o.status === 'cancelled' && !o.payment_id) state = 'cancelled';
   else if (o.status === 'cancelled' || (refundedPaise > 0 && refundedPaise >= totalPaise)) state = 'refunded';
+  else if (o.delivered_at) state = 'delivered';
   else if (o.shipped_at) state = 'shipped';
+  else if (o.packed_at) state = 'packed';
   return {
     id: o.order_id, state, status: o.status,
     created_at: o.created_at, paid_at: o.status === 'paid' || o.payment_id ? o.updated_at : null,
@@ -29,6 +31,7 @@ function shapeOrder(o, invoice, creditNotes = []) {
     invoice_no: invoice ? invoice.invoice_no : '', supply: invoice ? invoice.supply_type : '',
     refunded: rupees(refundedPaise), refundable: rupees(Math.max(0, totalPaise - refundedPaise)),
     credit_notes: creditNotes.map((c) => ({ no: c.credit_note_no, amount: rupees(c.amount_paise), reason: (c.data && c.data.reasonLabel) || c.reason_code || '', at: c.issued_at, full: c.is_full })),
+    packed_at: o.packed_at || null, packed_by: o.packed_by || '', delivered_at: o.delivered_at || null, delivered_by: o.delivered_by || '',
     shipped_at: o.shipped_at || null, carrier: o.carrier || '', awb: o.awb || '', admin_note: o.admin_note || '',
   };
 }
@@ -48,12 +51,17 @@ async function getOrderDetail(orderId) {
   if (!o) throw new AdminError('No such order', 404);
   const invoice = await db.getInvoiceByOrder(orderId).catch(() => null);
   const cns = await db.getCreditNotesByOrder(orderId).catch(() => []);
-  return { order: o, invoice, shaped: shapeOrder(o, invoice, cns) };
+  const shaped = shapeOrder(o, invoice, cns);
+  shaped.events = (await db.listOrderEvents(orderId)).map((e) => ({ event: e.event, from: e.from_state, to: e.to_state, by: e.actor_name || e.actor_email || '', at: e.created_at, meta: e.meta || null }));
+  return { order: o, invoice, shaped };
 }
 
 // Start a refund in Razorpay. The refund.processed webhook then does the credit note, Zoho and customer message.
-async function startRefund({ orderId, amountRupees, reasonCode = 'other', note = '' }) {
+async function startRefund({ orderId, amountRupees, reasonCode = 'other', note = '', confirmShipped = false, actor }) {
   const { order, shaped } = await getOrderDetail(orderId);
+  if ((shaped.state === 'shipped' || shaped.state === 'delivered') && !confirmShipped) {
+    throw new AdminError(`This order is already ${shaped.state}. Refunding does not bring the parcel back. Confirm to go ahead.`, 409, { needsConfirm: 'shipped' });
+  }
   if (order.status !== 'paid') throw new AdminError(`Order is "${order.status}"; only paid orders can be refunded.`, 409);
   if (!order.payment_id) throw new AdminError('This order has no payment id.', 409);
   if (!REASONS[reasonCode]) throw new AdminError('Pick a reason.');
@@ -62,18 +70,20 @@ async function startRefund({ orderId, amountRupees, reasonCode = 'other', note =
   if (!(amountPaise > 0) || amountPaise > remainingPaise) throw new AdminError(`Amount must be between ₹0.01 and ₹${shaped.refundable.toFixed(2)} (what is still refundable).`);
   const refund = await require('./razorpay').createRefund({ paymentId: order.payment_id, amountPaise, notes: { order_id: orderId, reason_code: reasonCode, note: String(note).slice(0, 200) } });
   console.log(`[ADMIN] Refund ${refund.id} started for ${orderId}: Rs ${amountPaise / 100} (${reasonCode})`);
+  await logEvent(orderId, 'refund_started', actor, { meta: { refundId: refund.id, amountRupees: amountPaise / 100, reason: reasonCode, orderWas: shaped.state } });
   return { refundId: refund.id, amountRupees: amountPaise / 100, reason: reasonOf(reasonCode).label };
 }
 
-async function cancelUnpaid(orderId) {
+async function cancelUnpaid(orderId, actor) {
   const { order } = await getOrderDetail(orderId);
   if (!/^pending/.test(order.status)) throw new AdminError(`Order is "${order.status}". Paid orders are cancelled by refunding them.`, 409);
   if (order.payment_link_id) await require('./razorpay').expirePaymentLink(order.payment_link_id);
   await db.cancelOrder(orderId);
+  await logEvent(orderId, 'cancelled_unpaid', actor);
   return { orderId };
 }
 
-async function resendInvoice(orderId) {
+async function resendInvoice(orderId, actor) {
   const { order, invoice } = await getOrderDetail(orderId);
   if (!invoice) throw new AdminError('No invoice exists for this order yet.', 409);
   const { renderInvoicePdf } = require('./invoice');
@@ -92,24 +102,86 @@ async function resendInvoice(orderId) {
     sent.push('WhatsApp');
   }
   if (!sent.length) throw new AdminError('The customer has no email and WhatsApp invoices are not switched on.', 409);
+  await logEvent(orderId, 'invoice_resent', actor, { meta: { via: sent } });
   return { sent };
 }
 
-async function markShipped({ orderId, carrier = 'Delhivery', awb = '' }) {
-  const { order } = await getOrderDetail(orderId);
-  if (order.status !== 'paid') throw new AdminError('Only paid orders can be marked shipped.', 409);
-  const cleanAwb = String(awb).trim().slice(0, 40);
-  await db.updateOrderFields(orderId, { shipped_at: new Date().toISOString(), carrier: String(carrier).slice(0, 40), awb: cleanAwb });
-  let emailed = false;
-  if (order.customer_email) {
-    const trackUrl = /delhivery/i.test(carrier) && cleanAwb ? `https://www.delhivery.com/track/package/${encodeURIComponent(cleanAwb)}` : '';
-    try { await require('./mailer').sendShippedEmail({ order, carrier, awb: cleanAwb, trackUrl }); emailed = true; } catch (e) { console.error('[ADMIN] shipped email failed:', e.message); }
-  }
-  return { emailed };
+const who = (actor) => ({ actor_email: actor && actor.email || null, actor_name: actor && (actor.name || actor.email) || null });
+async function logEvent(orderId, event, actor, { from = null, to = null, meta = null } = {}) {
+  await db.logOrderEvent({ order_id: orderId, event, from_state: from, to_state: to, meta, ...who(actor) });
 }
 
-async function saveNote(orderId, note) {
+// Forward-only path for a paid order. Nothing can be skipped; only the owner can step back (undoStep).
+const NEXT = { topack: 'packed', packed: 'shipped', shipped: 'delivered' };
+const stampOf = { packed: 'packed', shipped: 'shipped', delivered: 'delivered' };
+
+async function advance({ orderId, to, actor, carrier = 'Delhivery', awb = '' }) {
+  const { order, shaped } = await getOrderDetail(orderId);
+  if (order.status !== 'paid') throw new AdminError('Only paid orders can be moved forward.', 409);
+  if (shaped.state === 'refunded') throw new AdminError('This order has been refunded.', 409);
+  const from = shaped.state;
+  if (NEXT[from] !== to) throw new AdminError(from === to || ['packed', 'shipped', 'delivered'].indexOf(from) > ['packed', 'shipped', 'delivered'].indexOf(to)
+    ? `Already ${from}.` : `This order is "${from}"; the next step is "${NEXT[from] || 'none'}".`, 409);
+  const now = new Date().toISOString();
+  const by = actor.name || actor.email;
+  let fields; let where;
+  if (to === 'packed') { fields = { packed_at: now, packed_by: by }; where = { status: 'paid', packed_at: null, shipped_at: null }; }
+  else if (to === 'shipped') {
+    fields = { shipped_at: now, carrier: String(carrier || 'Delhivery').slice(0, 40), awb: String(awb || '').trim().slice(0, 40) };
+    where = { status: 'paid', shipped_at: null, delivered_at: null };
+  } else { fields = { delivered_at: now, delivered_by: by }; where = { status: 'paid', delivered_at: null }; }
+  if (!(await db.updateOrderIf(orderId, where, fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
+  await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb } : null });
+  let emailed = false;
+  if (to === 'shipped' && order.customer_email) {
+    const trackUrl = /delhivery/i.test(fields.carrier) && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '';
+    try { await require('./mailer').sendShippedEmail({ order, carrier: fields.carrier, awb: fields.awb, trackUrl }); emailed = true; } catch (e) { console.error('[ADMIN] shipped email failed:', e.message); }
+  }
+  return { state: to, emailed };
+}
+
+// Owner only: undo the latest step (delivered -> shipped -> packed -> to pack). The customer is not un-emailed.
+async function undoStep({ orderId, actor }) {
+  const { order, shaped } = await getOrderDetail(orderId);
+  if (order.status !== 'paid') throw new AdminError('Only paid orders have steps to undo.', 409);
+  const from = shaped.state;
+  const steps = {
+    delivered: { to: 'shipped', where: {}, fields: { delivered_at: null, delivered_by: null } },
+    shipped: { to: 'packed', where: { delivered_at: null }, fields: { shipped_at: null, carrier: null, awb: null } },
+    packed: { to: 'topack', where: { shipped_at: null }, fields: { packed_at: null, packed_by: null } },
+  };
+  const step = steps[from];
+  if (!step) throw new AdminError('Nothing to undo on this order.', 409);
+  if (!(await db.updateOrderIf(orderId, { status: 'paid', ...step.where }, step.fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
+  await logEvent(orderId, 'undo', actor, { from, to: step.to, meta: from === 'shipped' ? { carrier: order.carrier, awb: order.awb } : null });
+  return { state: step.to };
+}
+
+// Mark many "to pack" orders packed in one go (same rules, one event each). Returns what happened per order.
+async function bulkPack({ ids, actor }) {
+  const results = [];
+  for (const id of Array.from(new Set(ids || [])).slice(0, 100)) {
+    try { await advance({ orderId: id, to: 'packed', actor }); results.push({ id, ok: true }); }
+    catch (e) { results.push({ id, ok: false, error: e.message }); }
+  }
+  return { results, packed: results.filter((r) => r.ok).length };
+}
+
+// Data for the pick list (flavour totals) and packing slips for the given orders.
+async function pickList(ids) {
+  const out = []; const allItems = [];
+  for (const id of Array.from(new Set(ids || [])).slice(0, 100)) {
+    const { order, shaped } = await getOrderDetail(id);
+    if (order.status !== 'paid') continue;
+    (order.items || []).forEach((it) => allItems.push(it));
+    out.push({ id: shaped.id, name: shaped.name, phone: shaped.phone, address: shaped.address, gift_note: shaped.gift_note, boxes: shaped.boxes, items: shaped.items.map((i) => ({ name: i.name, qty: i.qty, contents: i.contents })) });
+  }
+  return { flavours: require('./orderText').flavourTotals(allItems), orders: out };
+}
+
+async function saveNote(orderId, note, actor) {
   await db.updateOrderFields(orderId, { admin_note: String(note || '').slice(0, 1000) });
+  await logEvent(orderId, 'note', actor);
   return {};
 }
 
@@ -123,9 +195,46 @@ async function summary() {
     today: { orders: paidToday.length, boxes: paidToday.reduce((n, o) => n + o.boxes, 0), revenue: paidToday.reduce((n, o) => n + o.total, 0) },
     topack: all.filter((o) => o.state === 'topack').length,
     unpaid: all.filter((o) => o.state === 'unpaid').length,
+    packed: all.filter((o) => o.state === 'packed').length,
     shipped: all.filter((o) => o.state === 'shipped').length,
+    delivered: all.filter((o) => o.state === 'delivered').length,
     refunded: all.filter((o) => o.state === 'refunded').length,
   };
 }
 
-module.exports = { AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, markShipped, saveNote, summary };
+// ── Team (owner only) ──
+const auth = require('./adminAuth');
+async function listTeam() {
+  const rows = await db.listAdminUsers().catch(() => []);
+  const seen = new Set(rows.map((r) => r.email));
+  const envOwners = (process.env.ADMIN_EMAILS || process.env.NOTIFY_EMAIL || '').split(',').map((e) => e.trim().toLowerCase()).filter((e) => e && !seen.has(e));
+  return [...envOwners.map((email) => ({ email, name: '', role: 'owner', active: true, permanent: true })),
+    ...rows.map((r) => ({ email: r.email, name: r.name || '', role: r.role, active: r.active, permanent: auth.isEnvOwner(r.email) }))];
+}
+async function saveTeamMember({ email, name = '', role = 'staff', active = true, actor }) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) throw new AdminError('Enter a valid email address.');
+  if (!['owner', 'staff'].includes(role)) throw new AdminError('Role must be owner or staff.');
+  if (auth.isEnvOwner(e) && (role !== 'owner' || !active)) throw new AdminError('This address is a permanent owner set on the server. Change ADMIN_EMAILS on Render to demote it.', 409);
+  if (e === actor.email && (role !== 'owner' || !active)) throw new AdminError('You cannot demote or disable yourself.', 409);
+  await db.upsertAdminUser({ email: e, name: String(name).slice(0, 60), role, active: !!active, created_by: actor.email });
+  console.log(`[ADMIN] ${actor.email} set ${e} -> ${role}${active ? '' : ' (disabled)'}`);
+  return {};
+}
+
+// ── Stock (owner only) ──
+const stock = require('./stock');
+const { BASE_SLUGS, nameForSlug } = require('./catalog');
+async function stockList() {
+  await stock.refresh();
+  const out = stock.soldOutSlugs() || [];
+  return BASE_SLUGS.map((slug) => ({ slug, name: nameForSlug(slug), available: !out.includes(slug) }));
+}
+async function setStock({ slug, available, actor }) {
+  if (!BASE_SLUGS.includes(slug)) throw new AdminError('Unknown flavour.');
+  await stock.setAvailable(slug, !!available, actor.email);
+  console.log(`[ADMIN] ${actor.email} marked ${slug} ${available ? 'available' : 'SOLD OUT'}`);
+  return {};
+}
+
+module.exports = { AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

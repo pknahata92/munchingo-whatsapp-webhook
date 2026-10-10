@@ -133,8 +133,9 @@ function card(inner) {
 }
 
 function steps() {
+  const pre = require('./launch').isPreorder();
   const s = [
-    ['1', 'Packed fresh', 'Baked in Bikaner, boxed by hand with care.'],
+    ['1', pre ? `Packed for ${require('./launch').dispatchLabel()}` : 'Packed fresh', 'Baked in Bikaner, boxed by hand with care.'],
     ['2', 'On its way', 'Shipped across India. We&rsquo;ll update you on WhatsApp.'],
     ['3', 'Snack time', 'Open, share, and save the last bite for yourself.'],
   ];
@@ -168,10 +169,14 @@ function customerConfirmationHtml({ order, invoice }) {
   ].join('');
 
   const bought = items.map((i) => i.slug).filter(Boolean);
+  const launch = require('./launch');
+  const preorder = launch.isPreorder();
   return shell({
-    preheader: `Payment received. Your Munchingo order ${order.order_id} is confirmed${invoice ? ` and your invoice ${invoice.invoiceNo} is attached` : ''}.`,
-    title: `Thank you, ${esc(first)}. Your box is in the oven.`,
-    subtitle: 'Your payment is confirmed. We&rsquo;ll pack your order by hand and message you on WhatsApp the moment it ships.',
+    preheader: `Payment received. Your Munchingo ${preorder ? 'pre-order' : 'order'} ${order.order_id} is confirmed${invoice ? ` and your invoice ${invoice.invoiceNo} is attached` : ''}.`,
+    title: preorder ? `Thank you, ${esc(first)}. Your pre-order is in.` : `Thank you, ${esc(first)}. Your box is in the oven.`,
+    subtitle: preorder
+      ? `Your payment is confirmed. Pre-orders dispatch from ${esc(launch.dispatchLabel())}: we&rsquo;ll pack your order by hand and email you the tracking link the moment it ships.`
+      : 'Your payment is confirmed. We&rsquo;ll pack your order by hand and message you on WhatsApp the moment it ships.',
     body,
     promo: 'full',
     boughtSlugs: bought,
