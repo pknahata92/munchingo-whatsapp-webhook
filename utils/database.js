@@ -406,8 +406,21 @@ async function getCouponUsage(code) {
   return data || null;
 }
 
+async function listPrices() {
+  const { data, error } = await db().from('product_prices').select('*');
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function setPrice({ slug, price, mrp, actor }) {
+  const { data: old } = await db().from('product_prices').select('price, mrp').eq('slug', slug).maybeSingle();
+  const { error } = await db().from('product_prices').upsert({ slug, price, mrp: mrp == null ? null : mrp, updated_by: actor, updated_at: new Date().toISOString() }, { onConflict: 'slug' });
+  if (error) throw new Error(error.message);
+  const h = await db().from('product_price_history').insert({ slug, old_price: old ? old.price : null, new_price: price, old_mrp: old ? old.mrp : null, new_mrp: mrp == null ? null : mrp, changed_by: actor });
+  if (h.error) console.error('[DB] price history not recorded:', h.error.message);
+}
+
 module.exports = {
-  getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

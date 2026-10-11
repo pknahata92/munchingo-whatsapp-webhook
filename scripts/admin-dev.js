@@ -9,6 +9,7 @@ const root = path.join(__dirname, '..');
 process.env.ADMIN_EMAILS = 'owner@example.com';
 const team = [{ email: 'staff@example.com', name: 'Staff', role: 'staff', active: true, created_at: new Date().toISOString() }];
 const events = [];
+const priceRows = [{ slug: 'atta-original', price: 300, mrp: 300 }, { slug: 'atta-ajwain', price: 300, mrp: 300 }, { slug: 'atta-kesari', price: 350, mrp: 350 }, { slug: 'atta-lite-sugar', price: 350, mrp: 350 }, { slug: 'trio-gift-set', price: 739, mrp: null }, { slug: 'full-range-set', price: 999, mrp: null }];
 const stockRows = ['atta-original', 'atta-kesari', 'atta-lite-sugar', 'atta-ajwain'].map((slug) => ({ slug, available: true }));
 process.env.DIGEST_SECRET = 'dev-only-secret';
 process.env.RESEND_API_KEY = 'x';
@@ -53,6 +54,8 @@ stub('utils/database.js', {
   getCreditNotesByOrder: async (id) => cns.filter((c) => c.order_id === id),
   markCreditNote: async (no, f) => { const c = cns.find((x) => x.credit_note_no === no); if (c) Object.assign(c, f); },
   markOrderRefunded: async (id) => { orders.find((o) => o.order_id === id).status = 'cancelled'; },
+  listPrices: async () => priceRows,
+  setPrice: async ({ slug, price, mrp }) => { const r = priceRows.find((x) => x.slug === slug); if (r) { r.price = price; r.mrp = mrp; } else priceRows.push({ slug, price, mrp }); },
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });

@@ -362,6 +362,13 @@ router.get('/api/stock', rateLimit({ windowMs: 60_000, max: 60 }), async (req, r
   res.set('Cache-Control', 'public, max-age=30').json({ ok: true, soldOut: stock.soldOutSlugs() || [] });
 });
 
+// Public, read-only: what everything costs right now. The cart and product pages show these; checkout always re-prices
+// on the server regardless of what the browser says.
+router.get('/api/prices', rateLimit({ windowMs: 60_000, max: 60 }), async (req, res) => {
+  await require('../utils/stock').ensureFresh();      // refreshes stock and prices together
+  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, prices: require('../utils/catalog').priceBook() });
+});
+
 // Public, read-only: how many Founding 100 places are left. Nothing else about the coupon is exposed.
 router.get('/api/promo/founding', rateLimit({ windowMs: 60_000, max: 60 }), async (req, res) => {
   try {

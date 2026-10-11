@@ -45,6 +45,17 @@ async function login(email) {
   ok((await call('/orders/MNG-CCCC-1009/address', s.token, { address: '12 New Street, Faridabad, Haryana - 121007' })).s === 409, 'address locked once shipped');
   ok((await call('/me', s.token)).j.dispatchFrom, 'dispatch date exposed');
 
+  // prices
+  ok((await call('/prices', s.token)).s === 403, 'staff 403 on GET /prices');
+  ok((await call('/prices', s.token, { slug: 'atta-original', price: 1 })).s === 403, 'staff 403 on POST /prices');
+  const prl = await call('/prices', o.token); ok(prl.j.rows.length === 6 && prl.j.rows[0].price === 300, 'owner reads 6 prices');
+  ok((await call('/prices', o.token, { slug: 'atta-original', price: 20, mrp: 300 })).s === 400, 'price below 50 rejected');
+  ok((await call('/prices', o.token, { slug: 'atta-original', price: 400, mrp: 300 })).s === 400, 'MRP below price rejected');
+  ok((await call('/prices', o.token, { slug: 'nope', price: 300 })).s === 400, 'unknown product rejected');
+  ok((await call('/prices', o.token, { slug: 'atta-original', price: 280, mrp: 300 })).j.ok, 'owner changes a price');
+  ok((await call('/prices', o.token)).j.rows[0].price === 280, 'new price reads back');
+  await call('/prices', o.token, { slug: 'atta-original', price: 300, mrp: 300 });
+
   // no / bad token
   ok((await call('/orders', null)).s === 401, 'no token 401');
   ok((await call('/orders', s.token + 'x')).s === 401, 'tampered token 401');

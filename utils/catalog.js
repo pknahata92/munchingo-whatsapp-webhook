@@ -65,9 +65,29 @@ function boxesForSlug(slug) {
  * Returns the price in rupees, or null if the slug isn't recognised.
  */
 function priceForSlug(slug) {
+  const live = require('./prices').current();
+  const key = typeof slug === 'string' && slug.startsWith(TRIO_PREFIX) ? 'trio-gift-set' : slug;
+  if (live && live[key]) return live[key].price;
   if (Object.prototype.hasOwnProperty.call(PRICES, slug)) return PRICES[slug];
   if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) return TRIO_PRICE;
   return null;
+}
+
+// What the shop shows struck through (printed MRP), or null for none. Display only: never used to charge.
+function mrpForSlug(slug) {
+  const live = require('./prices').current();
+  const key = typeof slug === 'string' && slug.startsWith(TRIO_PREFIX) ? 'trio-gift-set' : slug;
+  return live && live[key] ? live[key].mrp : null;
+}
+
+// Everything the website needs to show prices: the live table, or the built-in prices before the table is switched on.
+function priceBook() {
+  const live = require('./prices').current();
+  if (live) return live;
+  const book = {};
+  Object.keys(PRICES).forEach((k) => { book[k] = { price: PRICES[k], mrp: null }; });
+  book['trio-gift-set'] = { price: TRIO_PRICE, mrp: null };
+  return book;
 }
 
 /**
@@ -101,4 +121,4 @@ function isAvailable(slug) {
 }
 
 module.exports = {
-  boxesForSlug, priceForSlug, isAvailable, nameForSlug, BASE_SLUGS };
+  boxesForSlug, priceForSlug, mrpForSlug, priceBook, isAvailable, nameForSlug, BASE_SLUGS };

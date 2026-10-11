@@ -90,7 +90,7 @@ a{color:var(--terra)}
 <div id="app" hidden>
   <header>
     <img src="/admin/logo.png" alt="Munchingo"><span class="sp"></span><small id="who"></small>
-    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
+    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="priceBtn" hidden>Prices</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
   </header>
   <main>
     <div class="money" id="tiles" hidden></div>
@@ -187,7 +187,7 @@ a{color:var(--terra)}
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('stockBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('stockBtn').hidden = $('priceBtn').hidden = $('teamBtn').hidden = j.role !== 'owner'; render(); } });
     load();
   }
   function load() {
@@ -474,6 +474,27 @@ a{color:var(--terra)}
         }))]);
     });
   }
+  function openPrices() {
+    api('/admin/api/prices').then(function (j) {
+      if (!j.ok) return toast(j.error);
+      var note = j.live ? h('p', { class: 'muted' }, 'Changes apply to new orders within 30 seconds. Orders already placed keep the price the customer paid. Customers with the old price in their bag see the new price when the page loads.')
+        : h('p', { class: 'note' }, 'Price control is not switched on yet, so the shop still uses its built-in prices. Run product_prices_migration.sql in Supabase first.');
+      var rows = j.rows.map(function (r) {
+        var price = h('input', { type: 'number', inputmode: 'numeric', min: '50', step: '1', value: r.price == null ? '' : String(r.price), 'aria-label': r.name + ' price' });
+        var mrp = h('input', { type: 'number', inputmode: 'numeric', min: '50', step: '1', value: r.mrp == null ? '' : String(r.mrp), placeholder: 'none', 'aria-label': r.name + ' MRP' });
+        return h('div', { class: 'sw', style: 'flex-direction:column;align-items:stretch' }, h('b', {}, r.name),
+          h('div', { style: 'display:flex;gap:8px;align-items:end;flex-wrap:wrap' },
+            h('div', { style: 'flex:1 1 90px' }, h('label', {}, 'Price ₹'), price), h('div', { style: 'flex:1 1 90px' }, h('label', {}, 'MRP ₹ (crossed out)'), mrp),
+            h('button', { class: 'btn small', onclick: function (e) {
+              var p = Number(price.value), m = mrp.value === '' ? null : Number(mrp.value);
+              if (!confirm(r.name + ': price ₹' + p + (m ? ' (MRP ₹' + m + ')' : ' (no MRP shown)') + '. Update the shop now?')) return;
+              e.target.disabled = true;
+              api('/admin/api/prices', { method: 'POST', body: { slug: r.slug, price: price.value, mrp: mrp.value } }).then(function (x) { toast(x.ok ? r.name + ' updated' : (x.error || 'Failed'), 5000); openPrices(); });
+            } }, 'Save')));
+      });
+      ownerPanel('Prices', [note, section('Selling price per unit, GST included'), h('div', { class: 'sec' }, rows)]);
+    });
+  }
   function openTeam() {
     api('/admin/api/team').then(function (j) {
       if (!j.ok) return toast(j.error);
@@ -490,7 +511,7 @@ a{color:var(--terra)}
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { save({ active: true }, { email: email.value, name: name.value, role: role.value, active: true }, e.target); } }, 'Add')))]);
     });
   }
-  $('stockBtn').onclick = openStock; $('teamBtn').onclick = openTeam;
+  $('priceBtn').onclick = openPrices; $('stockBtn').onclick = openStock; $('teamBtn').onclick = openTeam;
 
   if (token) start(); else showLogin();
 })();

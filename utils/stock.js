@@ -23,7 +23,8 @@ function refresh() {
 }
 
 // Call before reading isAvailable() in an async request handler; cheap when the cache is fresh.
-async function ensureFresh() { if (Date.now() - loadedAt > TTL_MS) await refresh(); }
+// Also keeps the price table fresh: every place that checks stock before pricing a cart gets both in one call.
+async function ensureFresh() { await Promise.all([Date.now() - loadedAt > TTL_MS ? refresh() : null, require('./prices').ensureFresh()]); }
 
 // null = not loaded yet (catalog falls back to its hard-coded list)
 const soldOutSlugs = () => soldOut;

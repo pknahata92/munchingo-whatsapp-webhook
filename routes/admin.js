@@ -72,6 +72,8 @@ router.post('/admin/api/orders/:id/resend-invoice', owner, wrap(async (req) => a
 router.post('/admin/api/orders/:id/undo', owner, wrap(async (req) => actions.undoStep(enc(req))));
 router.get('/admin/api/stock', owner, wrap(async () => ({ stock: await actions.stockList() })));
 router.post('/admin/api/stock', owner, wrap(async (req) => actions.setStock({ slug: (req.body || {}).slug, available: (req.body || {}).available, actor: req.admin })));
+router.get('/admin/api/prices', owner, wrap(async () => actions.priceList()));
+router.post('/admin/api/prices', owner, wrap(async (req) => actions.setPrice({ ...(req.body || {}), actor: req.admin })));
 router.get('/admin/api/team', owner, wrap(async () => ({ team: await actions.listTeam() })));
 router.post('/admin/api/team', owner, wrap(async (req) => actions.saveTeamMember({ ...(req.body || {}), actor: req.admin })));
 

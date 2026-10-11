@@ -350,4 +350,23 @@ async function setStock({ slug, available, actor }) {
   return {};
 }
 
-module.exports = { retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+// ── Prices (owner only) ──
+const PRICE_ROWS = [['atta-original', 'Atta Original'], ['atta-ajwain', 'Atta Ajwain'], ['atta-kesari', 'Atta Kesari'], ['atta-lite-sugar', 'Atta Sugar-Lite'], ['trio-gift-set', 'Trio Gift Set (3 boxes)'], ['full-range-set', 'Full Range Gift Set (4 boxes)']];
+async function priceList() {
+  const prices = require('./prices');
+  await prices.refresh();
+  const book = require('./catalog').priceBook();
+  return { live: prices.isOn(), rows: PRICE_ROWS.map(([slug, name]) => ({ slug, name, price: book[slug] ? book[slug].price : null, mrp: book[slug] ? book[slug].mrp : null })) };
+}
+async function setPrice({ slug, price, mrp, actor }) {
+  if (!PRICE_ROWS.some((r) => r[0] === slug)) throw new AdminError('Unknown product.');
+  const p = Number(price), m = mrp === '' || mrp == null ? null : Number(mrp);
+  if (!Number.isInteger(p) || p < 50 || p > 10000) throw new AdminError('Price must be a whole number of rupees between 50 and 10,000.');
+  if (m != null && (!Number.isInteger(m) || m < p || m > 20000)) throw new AdminError('MRP must be a whole number and not less than the price (leave it empty for no strike-through).');
+  const before = (await priceList()).rows.find((r) => r.slug === slug);
+  await require('./prices').save({ slug, price: p, mrp: m, actor: actor.email });
+  console.log(`[ADMIN] ${actor.email} set ${slug}: Rs ${before && before.price} -> Rs ${p} (MRP ${m})`);
+  return {};
+}
+
+module.exports = { priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

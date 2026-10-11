@@ -70,6 +70,12 @@ const PRODUCTS = [
   },
 ];
 
+// The price list the bot sends reads the same admin-controlled prices as the website (the order itself is priced by the
+// WhatsApp catalogue in Meta Commerce Manager, which has to be kept in step by hand).
+const SLUG_BY_ID = { 'original-atta-cookie': 'atta-original', 'kesari-atta-cookie': 'atta-kesari', 'lite-sugar-atta-cookie': 'atta-lite-sugar', 'ajwain-atta-cookie': 'atta-ajwain' };
+const livePrice = (p) => { try { return require('../utils/catalog').priceForSlug(SLUG_BY_ID[p.id]) || p.price; } catch (_) { return p.price; } };
+const liveMrp = (p) => { try { const m = require('../utils/catalog').mrpForSlug(SLUG_BY_ID[p.id]); return m == null ? null : m; } catch (_) { return p.mrp; } };
+
 // ── Retailer ID → product lookup ──────────────────────────────────────────────
 const RETAILER_MAP = Object.fromEntries(PRODUCTS.map((p) => [p.retailerId, p]));
 
@@ -244,8 +250,12 @@ async function sendShippingInfo(to) {
 
 // ── Price list ────────────────────────────────────────────────────────────────
 async function sendPriceList(to) {
+  await require('../utils/prices').ensureFresh().catch(() => {});
   const lines = PRODUCTS.map(
-    (p) => `${p.emoji} *${p.name}*\n   ~~₹${p.mrp}~~ → *₹${p.price}* (250g pack)`
+    (p) => {
+      const price = livePrice(p), mrp = liveMrp(p);
+      return `${p.emoji} *${p.name}*\n   ${mrp && mrp > price ? `~~₹${mrp}~~ → ` : ''}*₹${price}* (250g pack)`;
+    }
   ).join('\n\n');
 
   await wa.sendButtons(
