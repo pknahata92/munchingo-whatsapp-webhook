@@ -279,6 +279,19 @@ const TEMPLATES = [
       'We pack and dispatch every order within 48 hours of payment. Delivery time after that depends on your location and the courier. ' +
       "We'll message you if anything changes.\n\nThank you for choosing pure ghee, no compromise. \u{1F64F}" + SIGN.replace('\n\n', '\n'),
   },
+  // ── F. Payment reminder (sent from the admin's "WhatsApp from Munchingo" button on an unpaid order) ──
+  {
+    key: 'payment_reminder',
+    name: 'munchingo_payment_reminder',
+    trigger: 'manual', // admin: unpaid order > Waiting for payment > WhatsApp
+    when: 'A customer started an order but has not paid. Sends the payable link from the Munchingo number (works outside the 24-hour window).',
+    params: ['customer_name', 'order_id', 'amount', 'pay_link', 'valid_until'],
+    example: ['Aarav', 'MNG-4821-0310', '900', 'https://rzp.io/rzp/AbCd1234', '12 Oct, 5:45 pm'],
+    body:
+      'Hi {{1}}, your Munchingo order {{2}} is saved, but the payment is not complete yet.\n\n' +
+      '*Amount:* \u20B9{{3}}\n\nYou can pay securely here: {{4}}\n\n' +
+      'This link works until {{5}}. If you need a fresh link or any help, just reply here and we will sort it out.' + SIGN,
+  },
 ];
 
 for (const t of TEMPLATES) {

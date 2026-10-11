@@ -402,22 +402,23 @@ a{color:var(--terra)}
     var box = h('div', { class: 'paybox' });
     box.appendChild(h('p', { class: 'muted', style: 'margin:0' }, 'Placed ' + ageText(o.created_at) + ' ago. The customer has not paid. Send them the link: the order stays reserved until it is paid or cancelled.'));
     var acts = h('div', { class: 'acts' });
-    function getLink(fresh, email, btn, then, failed) {
+    function getLink(fresh, email, btn, then, failed, whatsapp) {
       if (btn) btn.disabled = true;
-      return api('/admin/api/orders/' + encodeURIComponent(o.id) + '/payment-link', { method: 'POST', body: { fresh: !!fresh, email: !!email } }).then(function (j) {
+      return api('/admin/api/orders/' + encodeURIComponent(o.id) + '/payment-link', { method: 'POST', body: { fresh: !!fresh, email: !!email, whatsapp: !!whatsapp } }).then(function (j) {
         if (btn) btn.disabled = false;
         if (!j.ok) { if (failed) failed(); return toast(j.error || 'Could not get the payment link', 7000); }
         then(j);
       }).catch(function (e) { if (btn) btn.disabled = false; if (failed) failed(); toast('Could not reach the server: ' + e.message, 6000); });
     }
     if (o.email) acts.appendChild(h('button', { class: 'btn small', onclick: function (e) { if (!confirm('Email the payment link to ' + o.email + '?')) return; getLink(false, true, e.target, function (j) { toast('Payment link emailed to ' + o.email + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }); } }, 'Email link'));
-    acts.appendChild(h('button', { class: 'btn small' + (o.email ? ' ghost' : ''), onclick: function (e) {
+    acts.appendChild(h('button', { class: 'btn small', onclick: function (e) { if (!confirm('Send the payment link to +' + o.phone + ' on WhatsApp from the Munchingo number?')) return; getLink(false, false, e.target, function (j) { toast('Sent on WhatsApp from Munchingo to +' + o.phone + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }, null, true); } }, 'WhatsApp (Munchingo)'));
+    acts.appendChild(h('button', { class: 'btn ghost small', title: 'Opens WhatsApp on THIS computer or phone, from your personal number', onclick: function (e) {
       var w = window.open('', '_blank');
       getLink(false, false, e.target, function (j) {
         var url = 'https://wa.me/' + encodeURIComponent(o.phone) + '?text=' + encodeURIComponent(waText(o, j.url, j.validUntilText));
         if (w) w.location = url; else window.location = url;
       }, function () { if (w) w.close(); });
-    } }, 'WhatsApp message'));
+    } }, 'Personal WhatsApp'));
     acts.appendChild(h('button', { class: 'btn ghost small', onclick: function (e) { getLink(false, false, e.target, function (j) { copyText(j.url); toast('Payment link copied', 3500); }); } }, 'Copy link'));
     acts.appendChild(h('button', { class: 'btn ghost small', title: 'Cancels the old link and makes a new one valid for 24 hours', onclick: function (e) { if (!confirm('Make a NEW payment link? The old one will stop working.')) return; getLink(true, false, e.target, function (j) { copyText(j.url); toast('New link made and copied. Valid until ' + j.validUntilText, 6000); load(); }); } }, 'New link'));
     box.appendChild(acts);
@@ -439,7 +440,7 @@ a{color:var(--terra)}
     var canEdit = o.state === 'topack' || o.state === 'packed';
     if (canEdit) addr.querySelector('.acts').appendChild(h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Correct delivery address (the old one is kept in the timeline):', o.address); if (v != null && v.trim() !== o.address) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/address', { address: v }, 'Address updated'); } }, 'Edit address'));
     p.appendChild(section('Ship to', kv([['Name', o.name], ['Phone', '+' + o.phone]]), addr,
-      h('div', { class: 'acts' }, h('a', { class: 'btn small', href: 'https://wa.me/' + encodeURIComponent(o.phone), target: '_blank', rel: 'noopener', style: 'text-decoration:none' }, 'WhatsApp'), h('a', { class: 'btn ghost small', href: 'tel:+' + o.phone, style: 'text-decoration:none' }, 'Call'))));
+      h('div', { class: 'acts' }, h('a', { class: 'btn small', title: 'Opens WhatsApp from your own number', href: 'https://wa.me/' + encodeURIComponent(o.phone), target: '_blank', rel: 'noopener', style: 'text-decoration:none' }, 'Chat (personal WhatsApp)'), h('a', { class: 'btn ghost small', href: 'tel:+' + o.phone, style: 'text-decoration:none' }, 'Call'))));
 
     p.appendChild(section('Payment & invoice', kv([['Payment', o.payment_id || 'not paid'], ['Invoice', o.invoice_no ? o.invoice_no + ' (' + (o.supply === 'intra' ? 'CGST+SGST' : 'IGST') + ')' : ''], ['Email', o.email || 'none given'], ['Refunded', o.refunded ? inr(o.refunded) : ''], ['Sent', o.sent ? 'Email ' + (o.sent.email ? '✓' : (o.email ? '✗ not sent' : '–')) + ' · WhatsApp ' + (o.sent.whatsapp ? '✓' : '✗') + ' · Zoho ' + (o.sent.zoho ? '✓' : '✗') : '']]),
       o.invoice_no ? h('div', { class: 'acts' },
@@ -468,7 +469,7 @@ a{color:var(--terra)}
     if (o.state === 'unpaid') p.appendChild(payPanel(o));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled', payment_link_emailed: 'Payment link emailed', payment_link_regenerated: 'New payment link made' }[e.event] || e.event);
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled', payment_link_emailed: 'Payment link emailed', payment_link_whatsapped: 'Payment link sent on WhatsApp (Munchingo)', payment_link_regenerated: 'New payment link made' }[e.event] || e.event);
       return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';

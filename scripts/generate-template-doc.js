@@ -9,6 +9,7 @@ const groups = [
   ['C', 'Damaged / wrong / stale claims', ['claim_received','claim_need_photo','claim_replacement','claim_refund','claim_declined','replacement_shipped']],
   ['D', 'Delivery failures', ['delivery_delay','delivery_failed','returned_to_us','shipment_lost']],
   ['E', 'Order confirmation v2 (48-hour dispatch)', ['order_confirmed']],
+  ['F', 'Payment reminder (unpaid order, sent from the admin)', ['payment_reminder']],
 ];
 let o = `# Munchingo WhatsApp Refund, Claim & Delivery-Failure Templates
 
@@ -33,6 +34,7 @@ On a customer's first WhatsApp chat the bot asks **English / हिन्दी*
 | Situation | Template |
 |---|---|
 | Payment received | \`order_confirmed\` (v2) — **auto** |
+| Order started but not paid | \`payment_reminder\` — admin button "WhatsApp (Munchingo)" on an unpaid order |
 | You refund in Razorpay (full / partial) | \`refund_full\` / \`refund_partial\` — **auto** |
 | Customer asks to cancel a paid order | \`cancel_by_customer\`, then refund in Razorpay |
 | You cancel (stock, pincode, address) | \`cancel_by_us\`, then refund |

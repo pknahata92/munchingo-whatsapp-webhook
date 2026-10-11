@@ -98,6 +98,11 @@ async function login(email) {
   const pul = (await call('/orders', s.token)).j.orders.find((x) => x.id === U); ok(pul && pul.state === 'unpaid' && /rzp\.io/.test(pul.pay_url), 'unpaid order exposes its link to the admin');
   ok(!(await call('/orders', s.token)).j.orders.find((x) => x.id === 'MNG-AAAA-1010').pay_url, 'paid orders do not expose a payment link');
 
+  const pw1 = await payLink(U, s.token, { whatsapp: true }); ok(pw1.j.ok && pw1.j.whatsapped === true, 'staff can send the link on WhatsApp from the Munchingo number');
+  const pw2 = await payLink('MNG-WAFA-1011', s.token, { whatsapp: true }); ok(pw2.s === 502 && /Munchingo number/.test(pw2.j.error) && /Email/.test(pw2.j.error), 'a failed WhatsApp send gives a clear message and an alternative');
+  const pev2 = (await call(`/orders/${U}`, o.token)).j.order.events.map((e) => e.event); ok(pev2.includes('payment_link_whatsapped'), 'WhatsApp send is written to the timeline');
+  const pw3 = await payLink('MNG-AAAA-1010', s.token, { whatsapp: true }); ok(pw3.s === 409, 'no WhatsApp reminder for a paid order');
+
   // team: disable staff -> immediately locked out
   ok((await call('/team', o.token, { email: 'staff@example.com', role: 'staff', active: false })).j.ok, 'owner disables staff');
   ok((await call('/orders', s.token)).s === 401, 'disabled staff locked out at once');

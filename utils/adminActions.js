@@ -193,7 +193,7 @@ async function cancelUnpaid(orderId, actor) {
 // An unpaid order: give the admin the payable link (to email, WhatsApp or copy), or make a fresh one.
 // The link Razorpay made at checkout works for 24 hours. We reuse it while it still has more than 4 hours left;
 // otherwise (or when `fresh` is set) the old link is cancelled and a new one issued, so only one link is ever payable.
-async function sendPaymentLink({ orderId, fresh = false, email = false, actor }) {
+async function sendPaymentLink({ orderId, fresh = false, email = false, whatsapp = false, actor }) {
   const { order, shaped } = await getOrderDetail(orderId);
   if (order.status === 'pending_address') throw new AdminError('This order has no delivery address yet, so there is no payment link to send.', 409);
   if (order.status !== 'pending_payment') throw new AdminError(`Order is "${order.status}", so it is not waiting for payment.`, 409);
@@ -226,8 +226,24 @@ async function sendPaymentLink({ orderId, fresh = false, email = false, actor })
     emailed = true;
     await logEvent(orderId, 'payment_link_emailed', actor, { meta: { to: order.customer_email } });
   }
+  // From the Munchingo WhatsApp number, as an approved template (a plain message would only reach customers who wrote to us in the last 24 hours).
+  let whatsapped = false;
+  if (whatsapp) {
+    try {
+      await require('./refundTemplates').sendScenario(order.customer_phone, 'payment_reminder', {
+        customer_name: String(order.customer_name || 'there').trim().split(/\s+/)[0] || 'there', order_id: orderId, amount: Number(order.total),
+        pay_link: url, valid_until: validUntilText,
+      });
+      whatsapped = true;
+      await logEvent(orderId, 'payment_link_whatsapped', actor, { meta: { to: order.customer_phone } });
+    } catch (err) {
+      const why = (err.response && err.response.data && err.response.data.error && err.response.data.error.message) || err.message;
+      console.error('[ADMIN] payment reminder WhatsApp failed:', why);
+      throw new AdminError('WhatsApp could not send this from the Munchingo number (' + String(why).slice(0, 140) + '). The reminder template may still be in Meta review. Use Email, or "Personal WhatsApp" instead.' + (regenerated ? ' A fresh payment link WAS made and is ready to copy.' : ''), 502);
+    }
+  }
   bust();
-  return { url, regenerated, emailed, validUntil: validUntil.toISOString(), validUntilText };
+  return { url, regenerated, emailed, whatsapped, validUntil: validUntil.toISOString(), validUntilText };
 }
 
 async function resendInvoice(orderId, actor) {

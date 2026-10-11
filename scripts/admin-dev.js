@@ -29,6 +29,7 @@ const orders = [
   mk('MNG-CCCC-1009', 1500, 'paid', { shipped_at: new Date(now - 1000000).toISOString(), carrier: 'Delhivery', awb: '1234567890' }),
   mk('MNG-DDDD-1009', 1700, 'pending_payment', { payment_id: null, payment_link_id: 'plink_1', payment_link_url: 'https://rzp.io/rzp/OLD' }),
   mk('MNG-UUUU-1011', 20, 'pending_payment', { payment_id: null, payment_link_id: 'plink_2', payment_link_url: 'https://rzp.io/rzp/FRESH', total: 900, discount_amount: 0, coupon_code: null, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 3, item_price: 300, unit: '250g' }] }),
+  mk('MNG-WAFA-1011', 25, 'pending_payment', { payment_id: null, payment_link_id: 'plink_4', payment_link_url: 'https://rzp.io/rzp/WAFA', customer_phone: '919999900000' }),
   mk('MNG-NOEM-1011', 30, 'pending_payment', { payment_id: null, payment_link_id: 'plink_3', payment_link_url: 'https://rzp.io/rzp/NOEM', customer_email: null }),
   mk('MNG-EEEE-1008', 3000, 'cancelled', {}),
 ];
@@ -70,6 +71,7 @@ stub('utils/mailer.js', {
   sendPaymentReminderEmail: async ({ email, paymentUrl }) => console.log('[dev] payment reminder ->', email, paymentUrl),
   sendCustomerConfirmationEmail: async ({ order }) => console.log('[dev] invoice email ->', order.customer_email),
 });
+stub('utils/refundTemplates.js', { sendScenario: async (to, key, data) => { if (to === '919999900000') throw new Error('Template name does not exist in the translation'); console.log('[dev] WhatsApp template', key, '->', to, JSON.stringify(data)); return { ok: true }; } });
 stub('utils/zohoBooks.js', { configured: () => true, syncPaidOrder: async () => ({ invoiceId: 'zoho_inv_dev' }), syncCreditNote: async () => ({ creditNoteId: 'zoho_cn_dev' }) });
 stub('utils/razorpay.js', {
   createRefund: async ({ paymentId, amountPaise, notes }) => { console.log('[dev] Razorpay refund', paymentId, amountPaise, notes); return { id: 'rfnd_dev_' + Date.now(), status: 'processed' }; },
