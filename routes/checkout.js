@@ -22,12 +22,11 @@ const { createSubscription, attachSubscriptionToOrder } = require('../utils/subs
 const SUBSCRIPTION_DISCOUNT_PCT = 8;
 const SUBSCRIPTION_FREQUENCY_DAYS = 30;
 
-// Minimum order for the automated (nationwide courier) checkout, counted in BOXES:
-// the courier mailer packs hold 3-4 boxes, so smaller orders are not fulfilled through
-// this system (singles are arranged manually/hyperlocally). A Trio gift set counts as
-// 3 boxes and the Full Range set as 4 - see boxesForSlug in utils/catalog.js.
-// Keep equal to MIN_BOXES in the website's js/cart.js.
-const MIN_BOXES = 3;
+// Minimum order for the automated (nationwide courier) checkout, in RUPEES of items before any discount.
+// 12 Oct 2026: replaced the 3-box minimum. Prices are Rs 300/350 per box, a Trio is Rs 739 and the Full Range Rs 999, so this lets
+// through every 3-box order, both gift sets and a pair of Rs 350 boxes. Smaller orders are handled on WhatsApp (hyperlocal/manual).
+// Keep equal to MIN_ORDER_VALUE in the website's js/cart.js.
+const MIN_ORDER_VALUE = 700;
 
 // Helpers
 function generateOrderId() {
@@ -135,12 +134,12 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       // the client's submitted total (see normaliseItems for why).
       const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
 
-      // Minimum order for the automated (nationwide courier) checkout, in boxes.
-      const totalBoxes = enrichedItems.reduce((n, i) => n + i.quantity * boxesForSlug(i.slug), 0);
-      if (totalBoxes < MIN_BOXES) {
+      // Minimum order for the automated (nationwide courier) checkout, in rupees of items before any discount.
+      if (realTotal < MIN_ORDER_VALUE) {
+        const shortBy = MIN_ORDER_VALUE - realTotal;
         return res.status(400).json({
           ok: false,
-          error: `Online orders start at ${MIN_BOXES} boxes. Please add ${MIN_BOXES - totalBoxes} more box${MIN_BOXES - totalBoxes === 1 ? '' : 'es'} (or pick a gift set), or message us on WhatsApp directly for a smaller order.`,
+          error: `Online orders start at \u20B9${MIN_ORDER_VALUE}. Please add \u20B9${shortBy} more, or message us on WhatsApp directly for a smaller order.`,
         });
       }
 

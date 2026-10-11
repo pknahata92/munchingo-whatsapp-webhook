@@ -69,7 +69,7 @@ const TRIO_NAME = 'Trio Gift Set';
 
 /**
  * How many physical boxes one unit of this slug is: singles 1, Trio gift set 3,
- * Full Range gift set 4. The minimum order is counted in boxes (see MIN_BOXES in routes/checkout.js).
+ * Full Range gift set 4. The minimum order is a rupee value (see MIN_ORDER_VALUE in routes/checkout.js); box counts are only used for packing.
  */
 function boxesForSlug(slug) {
   if (slug === 'full-range-set') return 4;
