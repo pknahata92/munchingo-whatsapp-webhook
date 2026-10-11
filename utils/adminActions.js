@@ -109,6 +109,12 @@ async function getOrderDetail(orderId) {
   const cns = await db.getCreditNotesByOrder(orderId).catch(() => []);
   const shaped = shapeOrder(o, invoice, cns);
   shaped.events = (await db.listOrderEvents(orderId)).map((e) => ({ event: e.event, from: e.from_state, to: e.to_state, by: e.actor_name || e.actor_email || '', at: e.created_at, meta: e.meta || null }));
+  if (shaped.state === 'unpaid') {
+    // When the payable link stops working: 24 h after the order, or after the last fresh link made from the admin.
+    const lastFresh = shaped.events.filter((e) => e.event === 'payment_link_regenerated').pop();
+    shaped.link_until = new Date(new Date(lastFresh ? lastFresh.at : o.created_at).getTime() + 24 * 3_600_000).toISOString();
+    try { shaped.lang = await require('./langPrefs').getLang(o.customer_phone); } catch (e) { shaped.lang = 'en'; }
+  }
   return { order: o, invoice, shaped };
 }
 
@@ -193,7 +199,7 @@ async function cancelUnpaid(orderId, actor) {
 // An unpaid order: give the admin the payable link (to email, WhatsApp or copy), or make a fresh one.
 // The link Razorpay made at checkout works for 24 hours. We reuse it while it still has more than 4 hours left;
 // otherwise (or when `fresh` is set) the old link is cancelled and a new one issued, so only one link is ever payable.
-async function sendPaymentLink({ orderId, fresh = false, email = false, whatsapp = false, actor }) {
+async function sendPaymentLink({ orderId, fresh = false, email = false, whatsapp = false, lang = null, actor }) {
   const { order, shaped } = await getOrderDetail(orderId);
   if (order.status === 'pending_address') throw new AdminError('This order has no delivery address yet, so there is no payment link to send.', 409);
   if (order.status !== 'pending_payment') throw new AdminError(`Order is "${order.status}", so it is not waiting for payment.`, 409);
@@ -212,7 +218,9 @@ async function sendPaymentLink({ orderId, fresh = false, email = false, whatsapp
     await logEvent(orderId, 'payment_link_regenerated', actor);
   }
   const validUntil = new Date(madeAt + 24 * 3_600_000);
-  const validUntilText = validUntil.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+  const useLang = lang === 'hi' ? 'hi' : lang === 'en' ? 'en' : null;
+  const fmt = (loc) => validUntil.toLocaleString(loc, { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+  const validUntilText = fmt('en-IN');
 
   let emailed = false;
   if (email) {
@@ -232,8 +240,8 @@ async function sendPaymentLink({ orderId, fresh = false, email = false, whatsapp
     try {
       await require('./refundTemplates').sendScenario(order.customer_phone, 'payment_reminder', {
         customer_name: String(order.customer_name || 'there').trim().split(/\s+/)[0] || 'there', order_id: orderId, amount: Number(order.total),
-        pay_link: url, valid_until: validUntilText,
-      });
+        pay_link: url, valid_until: useLang === 'hi' ? fmt('hi-IN') : validUntilText,
+      }, useLang || undefined);
       whatsapped = true;
       await logEvent(orderId, 'payment_link_whatsapped', actor, { meta: { to: order.customer_phone } });
     } catch (err) {
@@ -243,7 +251,7 @@ async function sendPaymentLink({ orderId, fresh = false, email = false, whatsapp
     }
   }
   bust();
-  return { url, regenerated, emailed, whatsapped, validUntil: validUntil.toISOString(), validUntilText };
+  return { url, regenerated, emailed, whatsapped, whatsappLang: whatsapped ? (useLang || 'auto') : null, validUntil: validUntil.toISOString(), validUntilText, validUntilTextHi: fmt('hi-IN') };
 }
 
 async function resendInvoice(orderId, actor) {

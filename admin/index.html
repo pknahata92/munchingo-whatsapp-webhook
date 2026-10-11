@@ -394,17 +394,35 @@ a{color:var(--terra)}
       .catch(function (e) { if (w) w.close(); toast('Could not open the invoice: ' + e.message, 6000); });
   }
   // Unpaid order: get the payable link and send it to the customer.
-  function waText(o, url, until) {
-    var first = String(o.name || '').trim().split(/\s+/)[0] || 'there';
+  function waText(o, url, until, lang) {
+    var first = String(o.name || '').trim().split(/\s+/)[0] || (lang === 'hi' ? 'जी' : 'there');
+    if (lang === 'hi') return 'नमस्ते ' + first + ', Munchingo की ओर से 🍪 आपका ऑर्डर ' + o.id + ' (' + inr(o.total) + ') सेव हो गया है, लेकिन भुगतान अभी पूरा नहीं हुआ है। आप यहाँ सुरक्षित रूप से भुगतान कर सकते हैं: ' + url + (until ? ' (' + until + ' तक)' : '') + '\nलिंक न खुले तो यहीं जवाब दें, हम मदद करेंगे।';
     return 'Hi ' + first + ', this is Munchingo 🍪 Your order ' + o.id + ' (' + inr(o.total) + ') is saved but the payment is not complete yet. You can pay securely here: ' + url + (until ? ' (works until ' + until + ')' : '') + '\nIf the link does not open, just reply here and we will help.';
   }
+  function leftText(ms) { if (ms <= 0) return null; var m = Math.floor(ms / 60000), h = Math.floor(m / 60); return h >= 1 ? h + ' h ' + (m % 60) + ' min' : m + ' min'; }
   function payPanel(o) {
     var box = h('div', { class: 'paybox' });
     box.appendChild(h('p', { class: 'muted', style: 'margin:0' }, 'Placed ' + ageText(o.created_at) + ' ago. The customer has not paid. Send them the link: the order stays reserved until it is paid or cancelled.'));
+    var lang = o.lang === 'hi' ? 'hi' : 'en';
+    var cd = h('p', { style: 'margin:8px 0 0;font-weight:600' });
+    function tick() {
+      var left = o.link_until ? leftText(new Date(o.link_until).getTime() - Date.now()) : null;
+      cd.textContent = o.link_until ? (left ? '⏱ Link works for another ' + left : '⌛ This link has EXPIRED. Tap "New link" (or any send button: a fresh link is made automatically).') : '';
+      cd.style.color = o.link_until && !left ? '#F29B8E' : '';
+    }
+    tick(); var timer = setInterval(function () { if (!document.body.contains(cd)) return clearInterval(timer); tick(); }, 30000);
+    box.appendChild(cd);
+    var langRow = h('div', { class: 'acts', style: 'align-items:center' }, h('span', { class: 'muted' }, 'Message language:'));
+    ['en', 'hi'].forEach(function (L) {
+      var b = h('button', { class: 'btn small' + (lang === L ? '' : ' ghost'), onclick: function () { lang = L; [].forEach.call(langRow.querySelectorAll('button'), function (x) { x.className = 'btn small' + (x.dataset.l === lang ? '' : ' ghost'); }); } }, L === 'en' ? 'English' : 'हिन्दी');
+      b.dataset.l = L; langRow.appendChild(b);
+    });
+    langRow.appendChild(h('span', { class: 'muted', style: 'font-size:12px' }, o.lang === 'hi' ? 'Customer chose Hindi earlier.' : 'Customer has not chosen yet (English is the default). Email is always English.'));
+    box.appendChild(langRow);
     var acts = h('div', { class: 'acts' });
     function getLink(fresh, email, btn, then, failed, whatsapp) {
       if (btn) btn.disabled = true;
-      return api('/admin/api/orders/' + encodeURIComponent(o.id) + '/payment-link', { method: 'POST', body: { fresh: !!fresh, email: !!email, whatsapp: !!whatsapp } }).then(function (j) {
+      return api('/admin/api/orders/' + encodeURIComponent(o.id) + '/payment-link', { method: 'POST', body: { fresh: !!fresh, email: !!email, whatsapp: !!whatsapp, lang: lang } }).then(function (j) {
         if (btn) btn.disabled = false;
         if (!j.ok) { if (failed) failed(); return toast(j.error || 'Could not get the payment link', 7000); }
         then(j);
@@ -415,7 +433,7 @@ a{color:var(--terra)}
     acts.appendChild(h('button', { class: 'btn ghost small', title: 'Opens WhatsApp on THIS computer or phone, from your personal number', onclick: function (e) {
       var w = window.open('', '_blank');
       getLink(false, false, e.target, function (j) {
-        var url = 'https://wa.me/' + encodeURIComponent(o.phone) + '?text=' + encodeURIComponent(waText(o, j.url, j.validUntilText));
+        var url = 'https://wa.me/' + encodeURIComponent(o.phone) + '?text=' + encodeURIComponent(waText(o, j.url, lang === 'hi' ? j.validUntilTextHi : j.validUntilText, lang));
         if (w) w.location = url; else window.location = url;
       }, function () { if (w) w.close(); });
     } }, 'Personal WhatsApp'));

@@ -103,6 +103,12 @@ async function login(email) {
   const pev2 = (await call(`/orders/${U}`, o.token)).j.order.events.map((e) => e.event); ok(pev2.includes('payment_link_whatsapped'), 'WhatsApp send is written to the timeline');
   const pw3 = await payLink('MNG-AAAA-1010', s.token, { whatsapp: true }); ok(pw3.s === 409, 'no WhatsApp reminder for a paid order');
 
+  const pwh = await payLink(U, s.token, { whatsapp: true, lang: 'hi' }); ok(pwh.j.ok && pwh.j.whatsappLang === 'hi' && !!pwh.j.validUntilTextHi, 'Hindi can be chosen per send');
+  const pwa = await payLink(U, s.token, { whatsapp: true }); ok(pwa.j.ok && pwa.j.whatsappLang === 'auto', 'no language chosen = the customer\'s saved language (default English)');
+  const det = (await call(`/orders/${U}`, o.token)).j.order; ok(!!det.link_until && new Date(det.link_until) > new Date() && (det.lang === 'en' || det.lang === 'hi'), 'unpaid order detail carries link expiry and saved language');
+  const detOld = (await call('/orders/MNG-WAFA-1011', o.token)).j.order; ok(!!detOld.link_until, 'link expiry present on every unpaid order');
+  const detPaid = (await call(`/orders/${A}`, o.token)).j.order; ok(!detPaid.link_until, 'paid orders have no link expiry');
+
   // team: disable staff -> immediately locked out
   ok((await call('/team', o.token, { email: 'staff@example.com', role: 'staff', active: false })).j.ok, 'owner disables staff');
   ok((await call('/orders', s.token)).s === 401, 'disabled staff locked out at once');
