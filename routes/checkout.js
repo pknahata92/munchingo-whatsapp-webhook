@@ -8,9 +8,10 @@ const { createPaymentLink, orderIdFromReference } = require('../utils/razorpay')
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('../utils/database');
 const { sendContactFormEmail } = require('../utils/mailer');
 const { ordersOpen, CLOSED_MESSAGE } = require('../utils/launch');
-const { priceForSlug, isAvailable, nameForSlug, boxesForSlug, BASE_SLUGS } = require('../utils/catalog');
+const { priceForSlug, isAvailable, nameForSlug, boxesForSlug, isValidTrioSlug, BASE_SLUGS } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 const { validateCoupon } = require('../utils/coupons');
+const { priceCart } = require('../utils/offers');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
 
 // "Subscribe & Save" — flat discount on every renewal (see
@@ -65,6 +66,9 @@ function normaliseItems(cartItems) {
           }
           if (priceForSlug(c.slug) == null) {
                 return { error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' };
+          }
+          if (typeof c.slug === 'string' && c.slug.startsWith('trio-gift-set') && !isValidTrioSlug(c.slug)) {
+                return { error: 'A Trio Gift Set holds 3 different flavours. Please rebuild it from the gift set picker and try again.' };
           }
           if (!isAvailable(c.slug)) {
                 return { error: `Sorry, "${nameForSlug(c.slug)}" is currently sold out. Please remove it from your cart and try again.` };
@@ -162,23 +166,16 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       // realTotal, the server-computed pre-discount total, not the client's.
       // Mutually exclusive with Subscribe & Save — a subscribing order always
       // gets the flat subscription discount instead, never both stacked.
-      let finalTotal = realTotal;
-      let discountAmount = 0;
-      let appliedCouponCode = null;
-      if (subscribe) {
-        discountAmount = Math.round(realTotal * (SUBSCRIPTION_DISCOUNT_PCT / 100));
-        finalTotal = realTotal - discountAmount;
-      } else if (couponCode) {
-        const cartSlugs = enrichedItems.map((i) => i.slug);
-        const singlesTotal = enrichedItems.filter((i) => BASE_SLUGS.includes(i.slug)).reduce((n, i) => n + i.item_price * i.quantity, 0);
-        const couponResult = await validateCoupon(couponCode, { cartSlugs, realTotal, singlesTotal, customerPhone });
-        if (!couponResult.ok) {
-          return res.status(400).json({ ok: false, error: couponResult.error });
-        }
-        finalTotal = couponResult.finalTotal;
-        discountAmount = couponResult.discountAmount;
-        appliedCouponCode = couponResult.coupon.code;
+      // One discount per order: Subscribe & Save, else the larger of the stock-up tier and the code (utils/offers.js).
+      const priced = await priceCart({ items: enrichedItems, couponCode: couponCode || null, customerPhone, subscribe: !!subscribe, subscriptionPct: SUBSCRIPTION_DISCOUNT_PCT });
+      if (priced.couponError) {
+        return res.status(400).json({ ok: false, error: priced.couponError });
       }
+      const finalTotal = priced.finalTotal;
+      const discountAmount = priced.discount ? priced.discount.amount : 0;
+      // Only a code that actually won is recorded as used (redemption is written in the payment webhook).
+      const appliedCouponCode = priced.discount && priced.discount.kind === 'coupon' ? priced.discount.code : null;
+      const offerLabel = priced.discount && priced.discount.kind === 'tier' ? priced.discount.label : null;
 
       const orderId = generateOrderId();
           const timestamp = new Date().toISOString();
@@ -195,6 +192,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
               timestamp,
               couponCode: appliedCouponCode,
               discountAmount,
+              offerLabel,
               giftNote: String(giftNote || '').trim().slice(0, 300) || null,
       });
           // Structured parts (state drives CGST/SGST vs IGST on the invoice). Strings only, length-capped.
@@ -295,6 +293,30 @@ router.post('/api/validate-coupon', rateLimit({ windowMs: 60_000, max: 10 }), as
           console.error('[VALIDATE-COUPON] Error:', err.message);
           res.status(500).json({ ok: false, error: 'Could not check that code right now. Please try again.' });
     }
+});
+
+// POST /api/quote
+// Body: { items, code?, phone?, subscribe? }. What the checkout page shows: the one discount the customer gets (stock-up
+// tier or code, whichever is bigger), the payable amount, and how much more of single boxes unlocks the next tier.
+// Creates nothing. /api/checkout re-prices with the same function, so the page and the charge always agree.
+router.post('/api/quote', rateLimit({ windowMs: 60_000, max: 30 }), async (req, res) => {
+  try {
+    const { items, code, phone, subscribe } = req.body || {};
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ ok: false, error: 'Missing items' });
+    await require('../utils/stock').ensureFresh();
+    const { items: enriched, error } = normaliseItems(items);
+    if (error) return res.status(400).json({ ok: false, error });
+    const p = await priceCart({ items: enriched, couponCode: code || null, customerPhone: phone ? normalisePhone(phone) : null, subscribe: !!subscribe, subscriptionPct: SUBSCRIPTION_DISCOUNT_PCT });
+    const d = p.discount;
+    res.json({
+      ok: true, total: p.realTotal, singles: p.singles, finalTotal: p.finalTotal, next: p.next, tiers: p.tiers, couponError: p.couponError,
+      discount: d ? { kind: d.kind, amount: d.amount, label: d.label, code: d.code } : null,
+      couponBeaten: !!(d && d.kind === 'tier' && d.beat && d.beat.kind === 'coupon'),
+    });
+  } catch (err) {
+    console.error('[QUOTE] Error:', err.message);
+    res.status(500).json({ ok: false, error: 'Could not work out the price right now. Please try again.' });
+  }
 });
 
 // POST /api/contact

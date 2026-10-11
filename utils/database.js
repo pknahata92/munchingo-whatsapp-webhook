@@ -20,7 +20,7 @@ function db() {
  * Persist a new order. Status = 'pending_address' so the bot
  * knows to collect delivery info next.
  */
-async function saveOrder({ orderId, customerPhone, customerName, customerEmail, items, total, currency, timestamp, couponCode, discountAmount, giftNote }) {
+async function saveOrder({ orderId, customerPhone, customerName, customerEmail, items, total, currency, timestamp, couponCode, discountAmount, giftNote, offerLabel }) {
   const { data, error } = await db()
     .from('orders')
     .insert({
@@ -36,6 +36,7 @@ async function saveOrder({ orderId, customerPhone, customerName, customerEmail, 
       coupon_code:     couponCode || null,
       discount_amount: discountAmount || null,
       gift_note:       giftNote || null,
+      ...(offerLabel ? { offer_label: offerLabel } : {}),
     })
     .select()
     .single();
@@ -463,7 +464,43 @@ async function deleteCouponRow(code) {
   if (error) throw new Error(error.message);
 }
 
+// ── Offers v3 (offers_migration.sql) ─────────────────────────────────────────
+let _offersReady = { at: 0, ok: false };
+async function offersReady() {
+  if (Date.now() - _offersReady.at < 60_000) return _offersReady.ok;
+  const a = await db().from('coupons').select('first_order_only').limit(1);
+  const b = await db().from('spend_tiers').select('id').limit(1);
+  _offersReady = { at: Date.now(), ok: !a.error && !b.error };
+  return _offersReady.ok;
+}
+async function listSpendTiers() {
+  const { data, error } = await db().from('spend_tiers').select('*').order('min_singles', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function insertSpendTier(row) {
+  const { data, error } = await db().from('spend_tiers').insert(row).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+async function updateSpendTier(id, fields) {
+  const { data, error } = await db().from('spend_tiers').update(fields).eq('id', id).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+async function deleteSpendTier(id) {
+  const { error } = await db().from('spend_tiers').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+// Paid orders that used a code, for "orders · sales" per code on the Coupons screen.
+async function listCouponOrderTotals() {
+  const { data, error } = await db().from('orders').select('coupon_code, total').not('coupon_code', 'is', null).not('payment_id', 'is', null).limit(10000);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 module.exports = {
+  offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
   listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, listStock, setStock, getCouponUsage,
   listRecentOrders,

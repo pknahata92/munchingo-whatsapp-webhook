@@ -4,10 +4,10 @@
 // slug the website's Add-to-Bag buttons use (js/cart.js). Never trust a
 // price/total submitted by the client — always look it up here.
 const PRICES = {
-  'atta-original':   259,
-  'atta-kesari':      299,
-  'atta-lite-sugar':  299,
-  'atta-ajwain':      259,
+  'atta-original':   300,
+  'atta-kesari':      350,
+  'atta-lite-sugar':  350,
+  'atta-ajwain':      300,
   'full-range-set':   999,
 };
 
@@ -15,6 +15,23 @@ const PRICES = {
 // (e.g. "trio-gift-set-ajwain-kesari-original") but the price is flat.
 const TRIO_PREFIX = 'trio-gift-set';
 const TRIO_PRICE = 739;
+const TRIO_TOKENS = ['ajwain', 'kesari', 'lite-sugar', 'original'];
+
+// A gift set never holds two boxes of the same flavour: a Trio is exactly 3 DIFFERENT flavours (the website builder and
+// bag already enforce this; this stops a hand-made request such as "trio-gift-set-original-original-original" paying
+// the Trio price for 3 of one flavour). Slug = prefix + the 3 flavour tokens in alphabetical order.
+function isValidTrioSlug(slug) {
+  if (typeof slug !== 'string' || !slug.startsWith(TRIO_PREFIX + '-')) return false;
+  let rest = slug.slice(TRIO_PREFIX.length + 1);
+  const found = [];
+  while (rest) {
+    const t = TRIO_TOKENS.find((tok) => rest === tok || rest.startsWith(tok + '-'));
+    if (!t) return false;
+    found.push(t);
+    rest = rest.slice(t.length + 1);
+  }
+  return found.length === 3 && new Set(found).size === 3 && found.join('-') === [...found].sort().join('-');
+}
 
 // Manual stock control for the website's checkout path only. WhatsApp's own
 // catalog ordering flow already reflects stock status set in Meta Commerce
@@ -121,4 +138,4 @@ function isAvailable(slug) {
 }
 
 module.exports = {
-  boxesForSlug, priceForSlug, mrpForSlug, priceBook, isAvailable, nameForSlug, BASE_SLUGS };
+  isValidTrioSlug, boxesForSlug, priceForSlug, mrpForSlug, priceBook, isAvailable, nameForSlug, BASE_SLUGS };

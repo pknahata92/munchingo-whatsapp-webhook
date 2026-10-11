@@ -50,6 +50,13 @@ async function validateCoupon(code, { cartSlugs, realTotal, singlesTotal, custom
       return { ok: false, error: 'This code is for a specific customer and cannot be used with this number.' };
     }
   }
+  // "New customers only" (offers_migration.sql): refused when this number already has a paid order.
+  if (coupon.first_order_only) {
+    if (!customerPhone) return { ok: false, error: 'Please enter your mobile number first. This code is for first orders.' };
+    const { data: prior, error: priorError } = await db().from('orders').select('order_id').eq('customer_phone', customerPhone).not('payment_id', 'is', null).limit(1);
+    if (priorError) { console.error('[COUPONS] first-order check error:', priorError.message); return { ok: false, error: 'Could not check that code right now. Please try again.' }; }
+    if (prior && prior.length) return { ok: false, error: 'This code is for first orders only.' };
+  }
   if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
     return { ok: false, error: 'That code has expired.' };
   }

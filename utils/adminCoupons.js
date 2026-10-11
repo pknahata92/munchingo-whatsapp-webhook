@@ -97,6 +97,7 @@ function conditions(c) {
   if (c.starts_at) out.push(`from ${istDate(c.starts_at)}`);
   if (c.expires_at) out.push(`valid till ${istDate(c.expires_at)}`);
   if (c.allowed_phone) out.push('only for one customer');
+  if (c.first_order_only) out.push('new customers only');
   return out;
 }
 
@@ -105,18 +106,19 @@ function shareText(c, lang) {
   const min = Number(c.min_order_value) > 0 ? ` on orders of ${rupee(c.min_order_value)} or more` : '';
   const scope = c.scope_slug === 'singles-only' ? ' (single boxes, not gift sets)' : c.scope_slug ? ` (orders with the ${scopeLabel(c.scope_slug).replace(/^Orders that include (a |the )?/i, '')})` : '';
   const till = c.expires_at ? ` Valid till ${istDate(c.expires_at)}.` : '';
+  const first = c.first_order_only ? ' For your first order.' : '';
   const once = c.max_uses_per_customer === 1 ? ' One use per customer.' : '';
   const mine = c.allowed_phone ? ' This code is just for you.' : '';
   if (lang === 'hi') {
     const offHi = c.type === 'percent' ? `${Number(c.value)}% की छूट${c.max_discount_amount != null ? ` (अधिकतम ${rupee(c.max_discount_amount)})` : ''}` : `${rupee(c.value)} की छूट`;
     const minHi = Number(c.min_order_value) > 0 ? ` (${rupee(c.min_order_value)} या उससे ऊपर के ऑर्डर पर)` : '';
     const setHi = c.scope_slug === 'singles-only' ? ' (सिर्फ़ अलग-अलग डिब्बों पर, गिफ़्ट सेट पर नहीं)' : '';
-    return `🍪 Munchingo: munchingo.com पर चेकआउट में कोड ${c.code} लगाएँ और ${offHi} पाएँ${minHi}${setHi}.${c.expires_at ? ` ${istDate(c.expires_at)} तक मान्य.` : ''}${c.max_uses_per_customer === 1 ? ' हर ग्राहक के लिए एक बार.' : ''}${c.allowed_phone ? ' यह कोड सिर्फ़ आपके लिए है.' : ''}`;
+    return `🍪 Munchingo: munchingo.com पर चेकआउट में कोड ${c.code} लगाएँ और ${offHi} पाएँ${minHi}${setHi}.${c.expires_at ? ` ${istDate(c.expires_at)} तक मान्य.` : ''}${c.first_order_only ? ' सिर्फ़ पहले ऑर्डर पर.' : ''}${c.max_uses_per_customer === 1 ? ' हर ग्राहक के लिए एक बार.' : ''}${c.allowed_phone ? ' यह कोड सिर्फ़ आपके लिए है.' : ''}`;
   }
-  return `🍪 Munchingo: use code ${c.code} at checkout on munchingo.com for ${off}${min}${scope}.${till}${once}${mine}`;
+  return `🍪 Munchingo: use code ${c.code} at checkout on munchingo.com for ${off}${min}${scope}.${till}${first}${once}${mine}`;
 }
 
-function shape(c, red) {
+function shape(c, red, sl) {
   const r = red || { count: 0, given: 0, customers: 0 };
   return {
     code: c.code, status: status(c), active: !!c.active, type: c.type, value: Number(c.value),
@@ -126,12 +128,15 @@ function shape(c, red) {
     startsAt: c.starts_at || null, expiresAt: c.expires_at || null, phone: c.allowed_phone || '', note: c.note || '', createdBy: c.created_by || '',
     createdAt: c.created_at, benefit: benefit(c), conditions: conditions(c),
     redeemed: r.count, discountGiven: r.given, customers: r.customers,
+    firstOrderOnly: !!c.first_order_only, orders: sl ? sl.orders : 0, sales: sl ? sl.sales : 0, avgOrder: sl && sl.orders ? Math.round(sl.sales / sl.orders) : 0,
     shareEn: shareText(c, 'en'), shareHi: shareText(c, 'hi'),
   };
 }
 
 async function list() {
-  const [rows, reds, ready] = await Promise.all([db.listCoupons(), db.listCouponRedemptions().catch(() => []), db.couponColumnsReady().catch(() => false)]);
+  const [rows, reds, ready, orderRows] = await Promise.all([db.listCoupons(), db.listCouponRedemptions().catch(() => []), db.couponColumnsReady().catch(() => false), db.listCouponOrderTotals().catch(() => [])]);
+  const sales = {};
+  for (const o of orderRows) { const s = sales[o.coupon_code] || (sales[o.coupon_code] = { orders: 0, sales: 0 }); s.orders++; s.sales += Number(o.total || 0); }
   const agg = {};
   for (const r of reds) {
     const a = agg[r.coupon_code] || (agg[r.coupon_code] = { count: 0, given: 0, phones: new Set() });
@@ -139,7 +144,7 @@ async function list() {
   }
   return {
     ready,
-    coupons: rows.map((c) => { const a = agg[c.code]; return shape(c, a ? { count: a.count, given: a.given, customers: a.phones.size } : null); }),
+    coupons: rows.map((c) => { const a = agg[c.code]; return shape(c, a ? { count: a.count, given: a.given, customers: a.phones.size } : null, sales[c.code]); }),
     scopes: SCOPES, limits: LIMITS,
   };
 }
@@ -165,6 +170,7 @@ function buildRow(input, existing) {
   if (i.expiresAt !== undefined) row.expires_at = parseDate(i.expiresAt, 'The expiry date', true);
   if (i.phone !== undefined) extras.allowed_phone = i.phone === '' || i.phone == null ? null : normalisePhone(i.phone);
   if (i.note !== undefined) extras.note = String(i.note || '').trim().slice(0, 200) || null;
+  if (i.firstOrderOnly !== undefined) extras.first_order_only = !!i.firstOrderOnly;
   if (row.expires_at && Date.parse(row.expires_at) < Date.now() && (i.expiresAt !== undefined)) throw new AdminError('That expiry date has already passed.');
   const start = extras.starts_at !== undefined ? extras.starts_at : (existing && existing.starts_at);
   const end = row.expires_at !== undefined ? row.expires_at : (existing && existing.expires_at);
@@ -181,6 +187,8 @@ async function create(input, actor) {
   if (!['percent', 'flat'].includes(String(inp.type))) throw new AdminError('Choose percent off or a flat rupee amount.');
   if (inp.value === undefined || inp.value === null || inp.value === '') throw new AdminError('Enter the discount (a percentage, or rupees).');
   const { row, extras } = buildRow({ maxUses: null, ...inp }, { type: undefined });
+  if (extras.first_order_only && !(await db.offersReady().catch(() => false))) throw new AdminError('"New customers only" needs offers_migration.sql to be run in Supabase first.', 409);
+  if (!extras.first_order_only) delete extras.first_order_only;   // keep inserts working before the migration
   const ready = await db.couponColumnsReady().catch(() => false);
   const wantsExtras = Object.values(extras).some((v) => v != null);
   if (wantsExtras && !ready) throw new AdminError(NEEDS_MIGRATION, 409);
@@ -198,11 +206,11 @@ async function update(codeRaw, patch, actor) {
   if (!existing) throw new AdminError('No such coupon.', 404);
   const fields = {};
   if (patch.active !== undefined) fields.active = !!patch.active;
-  const editKeys = ['value', 'maxDiscount', 'minOrder', 'scope', 'maxUses', 'perCustomer', 'startsAt', 'expiresAt', 'phone', 'note', 'type'];
+  const editKeys = ['value', 'maxDiscount', 'minOrder', 'scope', 'maxUses', 'perCustomer', 'startsAt', 'expiresAt', 'phone', 'note', 'type', 'firstOrderOnly'];
   if (editKeys.some((k) => patch[k] !== undefined)) {
     const { row, extras } = buildRow(patch, existing);
     const ready = await db.couponColumnsReady().catch(() => false);
-    if (Object.values(extras).some((v) => v != null) && !ready) throw new AdminError(NEEDS_MIGRATION, 409);
+    if (Object.entries(extras).some(([k, v]) => k !== 'first_order_only' && v != null) && !ready) throw new AdminError(NEEDS_MIGRATION, 409);
     const changed = {};
     for (const k of Object.keys(patch)) {
       const map = { value: 'value', maxDiscount: 'max_discount_amount', minOrder: 'min_order_value', scope: 'scope_slug', maxUses: 'max_uses', perCustomer: 'max_uses_per_customer', expiresAt: 'expires_at', type: 'type' };
@@ -210,6 +218,7 @@ async function update(codeRaw, patch, actor) {
     }
     if (patch.type !== undefined) changed.max_discount_amount = row.max_discount_amount == null ? null : row.max_discount_amount;
     Object.assign(fields, changed);
+    if (extras.first_order_only !== undefined && !(await db.offersReady().catch(() => false))) throw new AdminError('"New customers only" needs offers_migration.sql to be run in Supabase first.', 409);
     if (ready) Object.assign(fields, extras);
   }
   if (!Object.keys(fields).length) throw new AdminError('Nothing to change.');
@@ -230,4 +239,4 @@ async function remove(codeRaw, actor) {
   return { code };
 }
 
-module.exports = { list, create, update, remove, generateCode, status, shape, shareText, SCOPES, LIMITS };
+module.exports = { list, create, update, remove, generateCode, status, shape, shareText, parseDate, SCOPES, LIMITS };

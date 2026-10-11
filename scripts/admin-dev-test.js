@@ -146,6 +146,20 @@ async function login(email) {
   ok(!(await cp('', o.token)).j.ready, 'list reports the migration as missing');
   await fetch('http://localhost:8430/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: true }) });
 
+  // ── stock-up tiers (owner only) ──
+  const op = (p, tok, body) => call('/offers' + p, tok, body);
+  ok((await op('', s.token)).s === 403, 'staff cannot see tiers');
+  const tl = (await op('', o.token)).j; ok(tl.ok && tl.ready && tl.tiers.length === 1 && tl.tiers[0].min === 1500 && tl.tiers[0].off === 100 && tl.tiers[0].status === 'live', 'owner lists tiers');
+  const t2 = await op('', o.token, { min: 2000, off: 200, endsAt: '2031-12-31' }); ok(t2.j.ok && t2.j.tier.min === 2000 && /2031/.test(t2.j.tier.endsAt), 'owner adds a tier with an end date');
+  ok(!(await op('', o.token, { min: 1000, off: 400 })).j.ok, 'a tier above 20% of its spend is refused');
+  ok(!(await op('', o.token, { min: 2000, off: 150 })).j.ok, 'two tiers at the same spend are refused');
+  const tp = await op('/' + t2.j.tier.id, o.token, { active: false }); ok(tp.j.ok && tp.j.tier.status === 'paused', 'pause a tier');
+  ok((await op('/' + t2.j.tier.id + '/delete', o.token, {})).j.ok && (await op('', o.token)).j.tiers.length === 1, 'delete a tier');
+  // new customers only + sales per code
+  const nc = await cp('', o.token, { type: 'flat', value: 100, minOrder: 900, firstOrderOnly: true, expiresAt: '2031-01-31' });
+  ok(nc.j.ok && nc.j.coupon.firstOrderOnly === true && nc.j.coupon.conditions.includes('new customers only') && /first order/.test(nc.j.coupon.shareEn), 'a code can be for new customers only');
+  const f10b = (await cp('', o.token)).j.coupons.find((c) => c.code === 'FOUNDING10'); ok(f10b.orders > 0 && f10b.sales > 0 && f10b.avgOrder > 0, 'each code shows orders, sales and average order');
+
   // team: disable staff -> immediately locked out
   ok((await call('/team', o.token, { email: 'staff@example.com', role: 'staff', active: false })).j.ok, 'owner disables staff');
   ok((await call('/orders', s.token)).s === 401, 'disabled staff locked out at once');

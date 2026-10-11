@@ -10,6 +10,8 @@ process.env.ADMIN_EMAILS = 'owner@example.com';
 const team = [{ email: 'staff@example.com', name: 'Staff', role: 'staff', active: true, created_at: new Date().toISOString() }];
 const events = [];
 const priceRows = [{ slug: 'atta-original', price: 300, mrp: 300 }, { slug: 'atta-ajwain', price: 300, mrp: 300 }, { slug: 'atta-kesari', price: 350, mrp: 350 }, { slug: 'atta-lite-sugar', price: 350, mrp: 350 }, { slug: 'trio-gift-set', price: 739, mrp: null }, { slug: 'full-range-set', price: 999, mrp: null }];
+const spendTiers = [{ id: 1, min_singles: 1500, discount: 100, label: null, starts_at: null, ends_at: null, active: true, created_at: '2026-10-12T00:00:00Z' }];
+let tierSeq = 1;
 const coupons = [
   { code: 'FOUNDING10', type: 'percent', value: 10, max_discount_amount: 100, min_order_value: 0, scope_slug: null, max_uses: 100, uses_count: 3, max_uses_per_customer: 1, expires_at: '2026-12-31T18:29:59Z', active: true, created_at: '2026-09-01T00:00:00Z' },
   { code: 'OLD5', type: 'flat', value: 50, min_order_value: 499, scope_slug: null, max_uses: null, uses_count: 0, max_uses_per_customer: 1, expires_at: '2026-01-01T00:00:00Z', active: true, created_at: '2026-01-01T00:00:00Z' },
@@ -68,6 +70,12 @@ stub('utils/database.js', {
   listPrices: async () => priceRows,
   setPrice: async ({ slug, price, mrp }) => { const r = priceRows.find((x) => x.slug === slug); if (r) { r.price = price; r.mrp = mrp; } else priceRows.push({ slug, price, mrp }); },
   updateOrderPaymentLink: async (id, { paymentLinkId, paymentLinkUrl }) => Object.assign(orders.find((o) => o.order_id === id), { payment_link_id: paymentLinkId, payment_link_url: paymentLinkUrl }),
+  offersReady: async () => global.__couponCols !== false,
+  listSpendTiers: async () => spendTiers.slice().sort((a, b) => a.min_singles - b.min_singles),
+  insertSpendTier: async (row) => { const r = { id: ++tierSeq, created_at: new Date().toISOString(), active: true, ...row }; spendTiers.push(r); return r; },
+  updateSpendTier: async (id, f) => Object.assign(spendTiers.find((t) => String(t.id) === String(id)), f),
+  deleteSpendTier: async (id) => { const i = spendTiers.findIndex((t) => String(t.id) === String(id)); if (i >= 0) spendTiers.splice(i, 1); },
+  listCouponOrderTotals: async () => orders.filter((o) => o.coupon_code && o.payment_id).map((o) => ({ coupon_code: o.coupon_code, total: o.total })),
   couponColumnsReady: async () => global.__couponCols !== false,
   listCoupons: async () => coupons.slice().reverse(),
   listCouponRedemptions: async () => couponReds,

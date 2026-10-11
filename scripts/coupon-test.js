@@ -4,12 +4,13 @@
 const path = require('path');
 process.env.SUPABASE_URL = 'x'; process.env.SUPABASE_SERVICE_ROLE_KEY = 'x';
 let COUPON = null, REDEEMED = 0;
+let PRIOR_PAID = false;
 const chain = (table) => {
   const q = { _t: table, _n: 0 };
   const api = {
-    select: () => api, eq: () => { q._n++; return api; },
+    select: () => api, eq: () => { q._n++; return api; }, not: () => api, limit: () => api,
     maybeSingle: async () => ({ data: q._t === 'coupons' ? COUPON : null, error: null }),
-    then: (res) => res({ count: REDEEMED, error: null }),
+    then: (res) => res(q._t === 'orders' ? { data: PRIOR_PAID ? [{ order_id: 'MNG-OLD' }] : [], error: null } : { count: REDEEMED, error: null }),
   };
   return api;
 };
@@ -44,5 +45,8 @@ const ctx = (extra) => ({ cartSlugs: ['trio-gift-set-ajwain-kesari-original'], r
   COUPON = { ...SO }; r = await validateCoupon('t', ctx({ cartSlugs: ['atta-original', 'atta-kesari', 'atta-ajwain'], realTotal: 950, singlesTotal: 950 })); ok(r.ok && r.discountAmount === 95, 'singles-only: an all-singles order gets the full discount');
   COUPON = { ...SO, min_order_value: 800 }; r = await validateCoupon('t', ctx({ cartSlugs: ['atta-original', 'full-range-set'], realTotal: 1299, singlesTotal: 300 })); ok(!r.ok && /of single boxes/.test(r.error), 'singles-only: the minimum counts single boxes only');
   COUPON = { ...SO, type: 'flat', value: 100 }; r = await validateCoupon('t', ctx({ cartSlugs: ['atta-original', 'full-range-set'], realTotal: 1299, singlesTotal: 60 })); ok(r.ok && r.discountAmount === 60, 'singles-only: a flat discount never exceeds the singles in the order');
+  COUPON = { ...base, first_order_only: true }; PRIOR_PAID = false; r = await validateCoupon('t', ctx()); ok(r.ok, 'first-order code: a new customer can use it');
+  PRIOR_PAID = true; r = await validateCoupon('t', ctx()); ok(!r.ok && /first order/.test(r.error), 'first-order code: a returning customer is refused'); PRIOR_PAID = false;
+  r = await validateCoupon('t', ctx({ customerPhone: null })); ok(!r.ok && /mobile number first/.test(r.error), 'first-order code: asks for the number when it is missing');
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

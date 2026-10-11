@@ -556,7 +556,7 @@ a{color:var(--terra)}
       var STAT = { live: ['LIVE', '#2F7A4B'], paused: ['PAUSED', '#8A7765'], expired: ['EXPIRED', '#B5584B'], used_up: ['USED UP', '#B5584B'], scheduled: ['SCHEDULED', '#B8860B'] };
       var istPlus = function (n) { return new Date(Date.now() + 19800000 + n * 86400000).toISOString().slice(0, 10); };
       var fmtDate = function (iso) { return new Date(iso + 'T12:00:00+05:30').toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }); };
-      var st = { kind: 'percent', days: 30, who: 'anyone' };
+      var st = { kind: 'percent', who: 'anyone' };
       var el = {};
       function seg(opts, get, set) {
         var wrap = h('div', { class: 'acts', style: 'margin:4px 0 0' });
@@ -569,54 +569,76 @@ a{color:var(--terra)}
       el.value = h('input', { type: 'number', inputmode: 'decimal', min: '1', step: '1', value: '10', style: 'max-width:110px' });
       el.code = h('input', { placeholder: 'making a code…', maxlength: '24', style: 'text-transform:uppercase;flex:1' });
       el.phone = h('input', { type: 'tel', inputmode: 'tel', placeholder: "Customer's mobile number" });
-      el.noSets = h('input', { type: 'checkbox', style: 'width:auto;margin-right:8px' });
+      el.withSets = h('input', { type: 'checkbox', style: 'width:auto;margin-right:8px' });
       el.cap = h('input', { type: 'number', inputmode: 'numeric', min: '1', placeholder: 'no cap' });
       el.min = h('input', { type: 'number', inputmode: 'numeric', min: '0', value: '0' });
       el.scope = h('select', {}, j.scopes.filter(function (x) { return x.slug !== 'singles-only'; }).map(function (x) { return h('option', { value: x.slug }, x.label); }));
       el.maxUses = h('input', { type: 'number', inputmode: 'numeric', min: '1', placeholder: 'unlimited' });
       el.per = h('input', { type: 'number', inputmode: 'numeric', min: '1', value: '1', placeholder: 'unlimited' });
-      el.starts = h('input', { type: 'date' });
+      el.starts = h('input', { type: 'date', value: istPlus(0), style: 'max-width:170px' });
+      el.ends = h('input', { type: 'date', value: istPlus(7), style: 'max-width:170px' });
+      el.noEnd = h('input', { type: 'checkbox', style: 'width:auto;margin-right:8px' });
       el.note = h('input', { maxlength: '200', placeholder: 'Only you see this, e.g. "apology for Hera"' });
       var capWrap = h('div', {}, lbl('Highest discount in ₹ (optional)'), el.cap, h('small', { class: 'muted' }, 'Stops a percentage getting too big on a large order'));
       var phoneWrap = h('div', { hidden: true }, el.phone, h('small', { class: 'muted' }, 'Only this number can use the code'));
       var until = h('small', { class: 'muted', style: 'display:block;margin-top:4px' });
       var preview = h('p', { style: 'margin:12px 0 0;font-weight:600' });
-
+      var setsWarn = h('small', { style: 'display:block;margin-top:4px' });
+      var scopeWrap = h('div', {}, lbl('Only orders that include'), el.scope);
+      function days(a, b) { return Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1; }
       function refresh() {
         capWrap.style.display = st.kind === 'percent' ? '' : 'none';
         phoneWrap.hidden = st.who !== 'one';
-        until.textContent = st.days ? 'Works until the end of ' + fmtDate(istPlus(st.days)) : 'Works until you pause or delete it';
-        var v = Number(el.value.value) || 0, cap = Number(el.cap.value) || 0, base = el.noSets.checked ? 1000 : 739, d;
-        if (st.kind === 'percent') { d = Math.round(base * v / 100); if (cap) d = Math.min(d, cap); } else d = v;
-        d = Math.max(0, Math.min(d, base));
+        el.ends.disabled = el.noEnd.checked;
+        scopeWrap.style.display = el.withSets.checked ? '' : 'none';
+        var s = el.starts.value || istPlus(0), e = el.ends.value;
+        until.textContent = el.noEnd.checked
+          ? 'Live from ' + fmtDate(s) + ', 12:00 am until you pause it'
+          : (e ? 'Live from ' + fmtDate(s) + ', 12:00 am to ' + fmtDate(e) + ', 11:59 pm (India time) · ' + days(s, e) + ' day' + (days(s, e) === 1 ? '' : 's') : 'Pick an end date');
+        setsWarn.textContent = el.withSets.checked
+          ? '⚠ Gift sets are already about 23% below single-box prices. A Trio earns about ₹80–140 after courier.'
+          : 'In a mixed cart the discount and the minimum order use single boxes only.';
+        setsWarn.style.color = el.withSets.checked ? '#F29B8E' : '';
+        var v = Number(el.value.value) || 0, cap = Number(el.cap.value) || 0;
+        var off = function (base) { var d = st.kind === 'percent' ? Math.round(base * v / 100) : v; if (st.kind === 'percent' && cap) d = Math.min(d, cap); return Math.max(0, Math.min(d, base)); };
+        var a1 = off(1600), bBase = el.withSets.checked ? 1599 : 600, b1 = off(bBase);
         var big = (st.kind === 'percent' && v > 25) || (st.kind === 'flat' && v > 300);
-        preview.textContent = v ? 'Example: ' + (el.noSets.checked ? '₹1,000 of single boxes' : '₹739 Trio') + ' → −' + inr(d) + ' = ' + inr(base - d) + (big ? '   ⚠ Large discount, check your margin' : '') : 'Enter the discount to see an example.';
+        preview.textContent = v
+          ? 'Example: 5 single boxes ₹1,600 → −' + inr(a1) + ' = ' + inr(1600 - a1) + ' · Full Range + 2 singles ₹1,599 → −' + inr(b1) + (el.withSets.checked ? '' : ' (set not discounted)') + (big ? '   ⚠ Large discount, check your margin' : '')
+          : 'Enter the discount to see an example.';
         preview.style.color = big ? '#F29B8E' : '';
       }
-      [el.value, el.cap, el.noSets].forEach(function (x) { x.addEventListener('input', refresh); x.addEventListener('change', refresh); });
+      [el.value, el.cap, el.withSets, el.starts, el.ends, el.noEnd].forEach(function (x) { x.addEventListener('input', refresh); x.addEventListener('change', refresh); });
       function newCode() { api('/admin/api/coupons/generate').then(function (g) { if (g.ok) el.code.value = g.code; }); }
       newCode();
 
       var kindSeg = seg([['percent', '% off'], ['flat', '₹ off']], function () { return st.kind; }, function (v) { st.kind = v; });
-      var daysSeg = seg([[7, '7 days'], [30, '30 days'], [90, '90 days'], [0, 'No end']], function () { return st.days; }, function (v) { st.days = v; });
-      var whoSeg = seg([['anyone', 'Anyone'], ['one', 'One person']], function () { return st.who; }, function (v) { st.who = v; });
+      var quick = h('div', { class: 'acts', style: 'margin:4px 0 0' }, [[1, '+1 day'], [7, '+1 week'], [30, '+1 month']].map(function (q) {
+        return h('button', { type: 'button', class: 'btn small ghost', onclick: function () { var s0 = el.starts.value || istPlus(0); el.ends.value = new Date(Date.parse(s0 + 'T00:00:00Z') + q[0] * 86400000).toISOString().slice(0, 10); el.noEnd.checked = false; refresh(); } }, q[1]);
+      }));
+      var whoSeg = seg([['anyone', 'Anyone'], ['new', 'New customers only'], ['one', 'One person']], function () { return st.who; }, function (v) { st.who = v; });
 
       var more = h('details', { style: 'margin:14px 0 0' }, h('summary', { style: 'cursor:pointer;color:var(--terra);font-weight:600' }, 'More options'),
-        capWrap, lbl('Minimum order in ₹'), el.min, lbl('Applies to'), el.scope, lbl('Total uses, across everyone'), el.maxUses, lbl('Uses per customer'), el.per,
-        lbl('Starts on (optional)'), el.starts, lbl('Private note'), el.note);
+        capWrap, lbl('Minimum order in ₹'), el.min, scopeWrap, lbl('Total uses, across everyone'), el.maxUses, lbl('Uses per customer'), el.per,
+        lbl('Private note (what is this code for? e.g. "IG creator Hera")'), el.note);
 
       var create = h('button', { class: 'btn', style: 'margin-top:16px', onclick: function (e) {
+        if (!el.noEnd.checked && !el.ends.value) return toast('Pick an end date, or tick "Keep running".', 5000);
         var body = { code: el.code.value.trim(), type: st.kind, value: el.value.value, maxDiscount: st.kind === 'percent' ? el.cap.value : '', minOrder: el.min.value,
-          scope: el.noSets.checked ? 'singles-only' : el.scope.value, maxUses: el.maxUses.value, perCustomer: el.per.value, startsAt: el.starts.value,
-          expiresAt: st.days ? istPlus(st.days) : '', phone: st.who === 'one' ? el.phone.value.trim() : '', note: el.note.value.trim() };
+          scope: el.withSets.checked ? el.scope.value : 'singles-only', maxUses: el.maxUses.value, perCustomer: el.per.value,
+          startsAt: el.starts.value && el.starts.value > istPlus(0) ? el.starts.value : '', expiresAt: el.noEnd.checked ? '' : el.ends.value,
+          phone: st.who === 'one' ? el.phone.value.trim() : '', firstOrderOnly: st.who === 'new', note: el.note.value.trim() };
         if (st.who === 'one' && !body.phone) return toast("Enter the customer's mobile number, or choose Anyone.", 5000);
-        var what = (st.kind === 'percent' ? body.value + '% off' + (body.maxDiscount ? ' (up to ₹' + body.maxDiscount + ')' : '') : '₹' + body.value + ' off') + (el.noSets.checked ? ', not on gift sets' : '') + (body.phone ? ', only for ' + body.phone : ', for anyone') + (st.days ? ', for ' + st.days + ' days' : ', no end date');
+        var what = (st.kind === 'percent' ? body.value + '% off' + (body.maxDiscount ? ' (up to ₹' + body.maxDiscount + ')' : '') : '₹' + body.value + ' off')
+          + (el.withSets.checked ? ', gift sets included' : ', single boxes only')
+          + (st.who === 'one' ? ', only for ' + body.phone : st.who === 'new' ? ', new customers only' : ', for anyone')
+          + ', ' + until.textContent;
         if (!confirm('Create ' + (body.code ? body.code.toUpperCase() : 'a new code') + ': ' + what + '?')) return;
         e.target.disabled = true;
         api('/admin/api/coupons', { method: 'POST', body: body }).then(function (r) {
           e.target.disabled = false;
           if (!r.ok) return toast(r.error || 'Could not create the coupon', 8000);
-          state.newCoupon = r.coupon.code; toast('Coupon ' + r.coupon.code + ' is live', 5000); openCoupons();
+          state.newCoupon = r.coupon.code; toast('Coupon ' + r.coupon.code + (r.coupon.status === 'scheduled' ? ' is scheduled' : ' is live'), 5000); openCoupons();
         });
       } }, 'Create coupon');
 
@@ -624,9 +646,11 @@ a{color:var(--terra)}
         lbl('Discount'), h('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el.value, kindSeg),
         lbl('Code'), h('div', { style: 'display:flex;gap:8px' }, el.code, h('button', { type: 'button', class: 'btn ghost small', onclick: newCode }, 'New code')),
         h('small', { class: 'muted' }, 'Customers type this at checkout. You can type your own.'),
-        lbl('Valid for'), daysSeg, until,
+        lbl('When'), h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:center' }, h('span', {}, 'Starts'), el.starts, h('span', {}, 'Ends'), el.ends), quick,
+        h('label', { style: 'display:flex;align-items:center;margin-top:8px;font-weight:500;text-transform:none;letter-spacing:0' }, el.noEnd, 'Keep running until I pause it (only for always-on codes)'),
+        until,
         lbl('Who can use it'), whoSeg, phoneWrap,
-        h('label', { style: 'display:flex;align-items:center;margin-top:14px;font-weight:500;text-transform:none;letter-spacing:0' }, el.noSets, "Don't apply to gift sets (Trio, Full Range)"),
+        h('label', { style: 'display:flex;align-items:center;margin-top:14px;font-weight:500;text-transform:none;letter-spacing:0' }, el.withSets, 'Also give this discount on gift sets (Trio, Full Range)'), setsWarn,
         preview, more, create);
       refresh();
 
@@ -638,21 +662,50 @@ a{color:var(--terra)}
           h('div', { class: 'acts' },
             h('button', { class: 'btn ghost small', onclick: function () { copyText(c.shareHi, 'Message'); } }, 'हिन्दी message'),
             h('button', { class: 'btn ghost small', onclick: function (e) { post(c.code, { active: !c.active }, c.active ? c.code + ' paused' : c.code + ' is live again', e.target); } }, c.active ? 'Pause' : 'Resume'),
-            h('button', { class: 'btn ghost small', onclick: function (e) { var v = prompt('New last day as YYYY-MM-DD (empty = no end):', c.expiresAt ? c.expiresAt.slice(0, 10) : ''); if (v == null) return; post(c.code, { expiresAt: v.trim() }, 'Date updated', e.target); } }, 'Change end date'),
+            (function () { var d = h('input', { type: 'date', value: c.expiresAt ? new Date(Date.parse(c.expiresAt) + 19800000).toISOString().slice(0, 10) : '', style: 'max-width:160px' });
+              return h('span', { style: 'display:inline-flex;gap:6px;align-items:center' }, d, h('button', { class: 'btn ghost small', onclick: function (e) { post(c.code, { expiresAt: d.value }, d.value ? 'Ends ' + fmtDate(d.value) : 'No end date', e.target); } }, 'Save end date')); })(),
             h('button', { class: 'btn ghost small', onclick: function (e) { var v = prompt('Total uses allowed (empty = unlimited):', c.maxUses == null ? '' : String(c.maxUses)); if (v == null) return; post(c.code, { maxUses: v.trim() }, 'Limit updated', e.target); } }, 'Change limit'),
             canDelete ? h('button', { class: 'btn red small', onclick: function (e) { if (!confirm('Delete ' + c.code + '? It has never been used.')) return; e.target.disabled = true; api('/admin/api/coupons/' + encodeURIComponent(c.code) + '/delete', { method: 'POST', body: {} }).then(function (r) { toast(r.ok ? c.code + ' deleted' : (r.error || 'Could not delete'), 5000); openCoupons(); }); } }, 'Delete') : null));
         return h('div', { class: 'sw', style: 'flex-direction:column;align-items:stretch;gap:6px' + (c.code === state.newCoupon ? ';outline:2px solid #F5C970;border-radius:12px' : '') },
           h('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap' }, h('b', { style: 'font-size:18px;letter-spacing:.05em' }, c.code), h('span', { class: 'badge', style: 'background:' + s2[1] + '33;color:' + s2[1] }, s2[0])),
           h('div', {}, c.benefit + (c.conditions.length ? ' · ' + c.conditions.join(' · ') : '')),
-          h('div', { class: 'muted' }, 'Used ' + c.uses + (c.maxUses != null ? ' of ' + c.maxUses : '') + (c.discountGiven ? ' · ' + inr(c.discountGiven) + ' given' : '') + (c.phone ? ' · only for +' + c.phone : '') + (c.note ? ' · ' + c.note : '')),
+          h('div', { class: 'muted' }, 'Used ' + c.uses + (c.maxUses != null ? ' of ' + c.maxUses : '') + (c.discountGiven ? ' · ' + inr(c.discountGiven) + ' given' : '') + (c.orders ? ' · ' + c.orders + ' order' + (c.orders === 1 ? '' : 's') + ' · ' + inr(c.sales) + ' sales · avg ' + inr(c.avgOrder) : '') + (c.phone ? ' · only for +' + c.phone : '') + (c.note ? ' · ' + c.note : '')),
           h('div', { class: 'acts' },
             h('button', { class: 'btn small', onclick: function () { copyText(c.code, 'Code'); } }, 'Copy code'),
             h('button', { class: 'btn ghost small', onclick: function () { copyText(c.shareEn, 'Message'); } }, 'Copy message')),
           extra);
       });
-      var note = j.ready ? null : h('p', { class: 'note' }, 'To use notes, start dates and "only for this phone", run coupons_admin_migration.sql in Supabase once.');
-      ownerPanel('Coupons', [note, section('New coupon', form), section('Your coupons (' + j.coupons.length + ')', cards.length ? cards : h('p', { class: 'muted' }, 'No coupons yet.'))].filter(Boolean));
-      state.newCoupon = null;
+      var note = j.ready ? null : h('p', { class: 'note' }, 'To use notes, start dates and "only for this phone", run coupons_admin_migration.sql (or offers_migration.sql) in Supabase once.');
+      api('/admin/api/offers').then(function (tj) {
+        var tierSec;
+        if (!tj.ok || !tj.ready) tierSec = h('p', { class: 'note' }, (tj && tj.note) || 'Stock-up tiers need offers_migration.sql to be run in Supabase first.');
+        else {
+          var tMin = h('input', { type: 'number', inputmode: 'numeric', min: '600', step: '50', placeholder: '1500', style: 'max-width:110px' });
+          var tOff = h('input', { type: 'number', inputmode: 'numeric', min: '1', step: '10', placeholder: '100', style: 'max-width:90px' });
+          var tS = h('input', { type: 'date', style: 'max-width:160px' }), tE = h('input', { type: 'date', style: 'max-width:160px' });
+          var tpost = function (p, b, msg, btn) { if (btn) btn.disabled = true; api('/admin/api/offers' + p, { method: 'POST', body: b }).then(function (r) { if (btn) btn.disabled = false; if (!r.ok) return toast(r.error || 'Could not save', 7000); toast(msg, 3500); openCoupons(); }); };
+          var trows = tj.tiers.map(function (t) {
+            var s3 = STAT[t.status] || [t.status.toUpperCase(), '#8A7765'];
+            return h('div', { class: 'sw', style: 'display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap' },
+              h('b', {}, 'Spend ' + inr(t.min) + ' → save ' + inr(t.off)),
+              h('span', { class: 'badge', style: 'background:' + s3[1] + '33;color:' + s3[1] }, s3[0]),
+              h('span', { class: 'muted' }, (t.startsAt ? 'from ' + fmtDate(new Date(Date.parse(t.startsAt) + 19800000).toISOString().slice(0, 10)) + ' ' : '') + (t.endsAt ? 'until ' + fmtDate(new Date(Date.parse(t.endsAt) + 19800000).toISOString().slice(0, 10)) : 'no end')),
+              h('div', { class: 'acts', style: 'margin:0' },
+                h('button', { class: 'btn ghost small', onclick: function (e) { tpost('/' + t.id, { active: !t.active }, t.active ? 'Tier paused' : 'Tier is live again', e.target); } }, t.active ? 'Pause' : 'Resume'),
+                h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Delete the ₹' + t.min + ' tier?')) tpost('/' + t.id + '/delete', {}, 'Tier deleted', e.target); } }, 'Delete')));
+          });
+          var addBtn = h('button', { class: 'btn small', onclick: function (e) {
+            if (!confirm('Add: spend ' + inr(Number(tMin.value)) + ' on single boxes → save ' + inr(Number(tOff.value)) + '?')) return;
+            tpost('', { min: tMin.value, off: tOff.value, startsAt: tS.value, endsAt: tE.value }, 'Tier added', e.target);
+          } }, 'Add tier');
+          tierSec = h('div', {}, h('p', { class: 'muted' }, 'Automatic, no code needed. Counts single boxes only (gift sets are already at their best price). The customer gets this or their code, whichever saves more.'),
+            trows.length ? h('div', {}, trows) : h('p', { class: 'muted' }, 'No tiers yet.'),
+            h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px' }, h('span', {}, 'Spend at least ₹'), tMin, h('span', {}, 'on single boxes → save ₹'), tOff),
+            h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px' }, h('span', {}, 'Starts (optional)'), tS, h('span', {}, 'Ends (optional)'), tE, addBtn));
+        }
+        ownerPanel('Coupons', [note, section('New coupon', form), section('Your coupons (' + j.coupons.length + ')', cards.length ? cards : h('p', { class: 'muted' }, 'No coupons yet.')), section('Stock-up tiers (automatic)', tierSec)].filter(Boolean));
+        state.newCoupon = null;
+      });
     });
   }
   function openTeam() {

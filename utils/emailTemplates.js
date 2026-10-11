@@ -14,10 +14,10 @@ const C = { navy: '#0B2D50', gold: '#CEAD5E', terra: '#A35A34', terraDeep: '#864
 const FONT = "'Poppins','Helvetica Neue',Helvetica,Arial,sans-serif";
 
 const FLAVOURS = [
-  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', price: 259, img: 'email-original.jpg' },
-  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', price: 299, img: 'email-kesari.jpg' },
-  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', price: 259, img: 'email-ajwain.jpg' },
-  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 299, img: 'email-lite.jpg' },
+  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', price: 300, img: 'email-original.jpg' },
+  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', price: 350, img: 'email-kesari.jpg' },
+  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', price: 300, img: 'email-ajwain.jpg' },
+  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 350, img: 'email-lite.jpg' },
 ];
 
 function esc(str) {
@@ -102,7 +102,7 @@ function shell({ preheader = '', title, subtitle = '', body, promo = 'full', bou
   </td></tr>
   <tr><td style="padding:22px 28px 30px;text-align:center;font-family:${FONT};font-size:12px;line-height:1.7;color:${C.ink2};">
     <div style="font-family:Georgia,'Times New Roman',serif;font-size:17px;color:${C.terra};margin-bottom:6px;">Tiny Treats, Mighty Flavors.</div>
-    Questions? WhatsApp <a href="https://wa.me/919988992024" style="color:${C.terra};text-decoration:none;font-weight:600;">+91 99889 92024</a> &middot; <a href="mailto:info.munchingo@gmail.com" style="color:${C.terra};text-decoration:none;font-weight:600;">info.munchingo@gmail.com</a> &middot; <a href="https://instagram.com/munchingo.delhi" style="color:${C.terra};text-decoration:none;font-weight:600;">@munchingo.delhi</a><br>
+    Questions? WhatsApp <a href="https://wa.me/919988992024" style="color:${C.terra};text-decoration:none;font-weight:600;">+91 99889 92024</a> &middot; <a href="mailto:info.munchingo@gmail.com" style="color:${C.terra};text-decoration:none;font-weight:600;">info.munchingo@gmail.com</a> &middot; <a href="https://instagram.com/munchingo.india" style="color:${C.terra};text-decoration:none;font-weight:600;">@munchingo.india</a><br>
     Baked in small batches in Bikaner &middot; Made in India &middot; Vegetarian<br>
     <span style="color:#8A7765;">Munchingo, H. No. 43, Sector 14, Faridabad, Haryana 121007 &middot; GSTIN 06AIIPN5005C2ZP &middot; FSSAI Lic. 10826003000333</span>
   </td></tr>
