@@ -469,7 +469,7 @@ let _offersReady = { at: 0, ok: false };
 async function offersReady() {
   if (Date.now() - _offersReady.at < 60_000) return _offersReady.ok;
   const a = await db().from('coupons').select('first_order_only').limit(1);
-  const b = await db().from('spend_tiers').select('id').limit(1);
+  const b = await db().from('spend_tiers').select('id, percent, max_discount').limit(1);
   _offersReady = { at: Date.now(), ok: !a.error && !b.error };
   return _offersReady.ok;
 }

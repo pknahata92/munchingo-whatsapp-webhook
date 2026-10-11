@@ -25,6 +25,11 @@ create table if not exists spend_tiers (
 );
 alter table spend_tiers enable row level security;   -- service role only, like coupons
 
+-- Percentage tiers ("10% off single boxes over Rs 1,500, up to Rs 300"): percent + cap; flat tiers keep using `discount`.
+alter table spend_tiers add column if not exists percent      numeric check (percent is null or (percent > 0 and percent <= 100));
+alter table spend_tiers add column if not exists max_discount numeric check (max_discount is null or max_discount > 0);
+alter table spend_tiers alter column discount drop not null;   -- a percentage tier has no flat amount
+
 -- Which automatic offer an order got (coupon orders keep using coupon_code).
 alter table orders add column if not exists offer_label text;
 

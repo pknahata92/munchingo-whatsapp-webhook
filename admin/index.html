@@ -682,25 +682,39 @@ a{color:var(--terra)}
         else {
           var tMin = h('input', { type: 'number', inputmode: 'numeric', min: '600', step: '50', placeholder: '1500', style: 'max-width:110px' });
           var tOff = h('input', { type: 'number', inputmode: 'numeric', min: '1', step: '10', placeholder: '100', style: 'max-width:90px' });
+          var tPct = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '20', step: '1', placeholder: '10', style: 'max-width:80px' });
+          var tCap = h('input', { type: 'number', inputmode: 'numeric', min: '1', step: '10', placeholder: '300', style: 'max-width:90px' });
+          var tKind = 'percent';
           var tS = h('input', { type: 'date', style: 'max-width:160px' }), tE = h('input', { type: 'date', style: 'max-width:160px' });
           var tpost = function (p, b, msg, btn) { if (btn) btn.disabled = true; api('/admin/api/offers' + p, { method: 'POST', body: b }).then(function (r) { if (btn) btn.disabled = false; if (!r.ok) return toast(r.error || 'Could not save', 7000); toast(msg, 3500); openCoupons(); }); };
           var trows = tj.tiers.map(function (t) {
             var s3 = STAT[t.status] || [t.status.toUpperCase(), '#8A7765'];
             return h('div', { class: 'sw', style: 'display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap' },
-              h('b', {}, 'Spend ' + inr(t.min) + ' → save ' + inr(t.off)),
+              h('b', {}, t.pct ? t.pct + '% off over ' + inr(t.min) + (t.cap ? ', up to ' + inr(t.cap) : '') : 'Spend ' + inr(t.min) + ' → save ' + inr(t.off)),
               h('span', { class: 'badge', style: 'background:' + s3[1] + '33;color:' + s3[1] }, s3[0]),
               h('span', { class: 'muted' }, (t.startsAt ? 'from ' + fmtDate(new Date(Date.parse(t.startsAt) + 19800000).toISOString().slice(0, 10)) + ' ' : '') + (t.endsAt ? 'until ' + fmtDate(new Date(Date.parse(t.endsAt) + 19800000).toISOString().slice(0, 10)) : 'no end')),
               h('div', { class: 'acts', style: 'margin:0' },
                 h('button', { class: 'btn ghost small', onclick: function (e) { tpost('/' + t.id, { active: !t.active }, t.active ? 'Tier paused' : 'Tier is live again', e.target); } }, t.active ? 'Pause' : 'Resume'),
                 h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Delete the ₹' + t.min + ' tier?')) tpost('/' + t.id + '/delete', {}, 'Tier deleted', e.target); } }, 'Delete')));
           });
+          var pctBox = h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px' }, h('span', {}, 'Spend at least ₹'), tMin, h('span', {}, 'on single boxes → get'), tPct, h('span', {}, '% off, up to ₹'), tCap);
+          var flatBox = h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px' }, h('span', {}, 'Spend at least ₹'), tMin.cloneNode(), h('span', {}, 'on single boxes → save ₹'), tOff);
+          var flatMin = flatBox.children[1];
+          flatBox.style.display = 'none';
+          var kindBtns = h('div', { class: 'acts', style: 'margin:6px 0 0' });
+          [['percent', '% off (with a cap)'], ['flat', 'Flat ₹ off']].forEach(function (k) {
+            var b = h('button', { type: 'button', class: 'btn small' + (k[0] === tKind ? '' : ' ghost'), onclick: function () { tKind = k[0]; pctBox.style.display = tKind === 'percent' ? 'flex' : 'none'; flatBox.style.display = tKind === 'flat' ? 'flex' : 'none'; [].forEach.call(kindBtns.children, function (x) { x.className = 'btn small' + (x.dataset.k === tKind ? '' : ' ghost'); }); } }, k[1]);
+            b.dataset.k = k[0]; kindBtns.appendChild(b);
+          });
           var addBtn = h('button', { class: 'btn small', onclick: function (e) {
-            if (!confirm('Add: spend ' + inr(Number(tMin.value)) + ' on single boxes → save ' + inr(Number(tOff.value)) + '?')) return;
-            tpost('', { min: tMin.value, off: tOff.value, startsAt: tS.value, endsAt: tE.value }, 'Tier added', e.target);
+            var body = tKind === 'percent' ? { min: tMin.value, percent: tPct.value, cap: tCap.value, startsAt: tS.value, endsAt: tE.value } : { min: flatMin.value, off: tOff.value, startsAt: tS.value, endsAt: tE.value };
+            var what = tKind === 'percent' ? tPct.value + '% off over ' + inr(Number(tMin.value)) + ' of single boxes, up to ' + inr(Number(tCap.value)) : 'spend ' + inr(Number(flatMin.value)) + ' on single boxes, save ' + inr(Number(tOff.value));
+            if (!confirm('Add: ' + what + '?')) return;
+            tpost('', body, 'Tier added', e.target);
           } }, 'Add tier');
           tierSec = h('div', {}, h('p', { class: 'muted' }, 'Automatic, no code needed. Counts single boxes only (gift sets are already at their best price). The customer gets this or their code, whichever saves more.'),
             trows.length ? h('div', {}, trows) : h('p', { class: 'muted' }, 'No tiers yet.'),
-            h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px' }, h('span', {}, 'Spend at least ₹'), tMin, h('span', {}, 'on single boxes → save ₹'), tOff),
+            h('p', { class: 'muted', style: 'margin:14px 0 0' }, 'Add a tier'), kindBtns, pctBox, flatBox,
             h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px' }, h('span', {}, 'Starts (optional)'), tS, h('span', {}, 'Ends (optional)'), tE, addBtn));
         }
         ownerPanel('Coupons', [note, section('New coupon', form), section('Your coupons (' + j.coupons.length + ')', cards.length ? cards : h('p', { class: 'muted' }, 'No coupons yet.')), section('Stock-up tiers (automatic)', tierSec)].filter(Boolean));

@@ -29,19 +29,32 @@ function invalidate() { loadedAt = 0; cache = null; }
 function liveTiers(rows, now = Date.now()) {
   return (rows || [])
     .filter((t) => t.active && (!t.starts_at || Date.parse(t.starts_at) <= now) && (!t.ends_at || Date.parse(t.ends_at) >= now))
-    .map((t) => ({ id: t.id, min: Number(t.min_singles), off: Number(t.discount), label: t.label || null }))
+    .map((t) => ({ id: t.id, min: Number(t.min_singles), off: Number(t.discount) || 0, pct: Number(t.percent) || 0, cap: t.max_discount == null ? null : Number(t.max_discount), label: t.label || null }))
     .sort((a, b) => a.min - b.min);
+}
+// What a tier is worth on this much spend on single boxes: a flat rupee amount, or a percentage (rounded, then capped).
+function tierAmount(t, singles) {
+  if (!t.pct) return t.off;
+  const d = Math.round(singles * t.pct / 100);
+  return t.cap != null ? Math.min(d, t.cap) : d;
 }
 function bestTier(tiers, singles) {
   let best = null;
-  for (const t of tiers) if (singles >= t.min && (!best || t.off > best.off)) best = t;
+  let bestAmt = -1;
+  for (const t of tiers) {
+    if (singles < t.min) continue;
+    const a = tierAmount(t, singles);
+    if (a > bestAmt) { best = t; bestAmt = a; }
+  }
   return best;
 }
 function nextTier(tiers, singles, current) {
-  const t = tiers.find((x) => x.min > singles && x.off > (current ? current.off : 0));
-  return t ? { need: t.min - singles, off: t.off, min: t.min } : null;
+  const cur = current ? current.off : 0;
+  const t = tiers.find((x) => x.min > singles && tierAmount(x, x.min) > cur);
+  return t ? { need: t.min - singles, off: tierAmount(t, t.min), min: t.min, pct: t.pct || null } : null;
 }
-const tierLabel = (t) => t.label || `Spend ₹${t.min.toLocaleString('en-IN')} on single boxes`;
+const rs = (n) => '₹' + Number(n).toLocaleString('en-IN');
+const tierLabel = (t) => t.label || (t.pct ? `${t.pct}% off single boxes over ${rs(t.min)}` : `Spend ${rs(t.min)} on single boxes`);
 
 function chooseDiscount({ tier, coupon }) {
   const t = tier ? { kind: 'tier', amount: tier.off, label: tierLabel(tier), code: null } : null;
@@ -59,7 +72,7 @@ async function priceCart({ items, couponCode, customerPhone, subscribe, subscrip
   }
   const tiers = liveTiers(await tierRows());
   const hit = bestTier(tiers, singles);
-  const tier = hit ? { ...hit, off: Math.min(hit.off, singles) } : null;
+  const tier = hit ? { ...hit, off: Math.min(tierAmount(hit, singles), singles) } : null;
   let coupon = null;
   let couponError = null;
   if (couponCode) {
@@ -69,8 +82,8 @@ async function priceCart({ items, couponCode, customerPhone, subscribe, subscrip
   const discount = chooseDiscount({ tier, coupon });
   return {
     realTotal, singles, discount, finalTotal: realTotal - (discount ? discount.amount : 0),
-    next: nextTier(tiers, singles, tier), tiers: tiers.map((t) => ({ min: t.min, off: t.off })), couponError,
+    next: nextTier(tiers, singles, tier), tiers: tiers.map((t) => ({ min: t.min, off: tierAmount(t, t.min), pct: t.pct || null, cap: t.cap })), couponError,
   };
 }
 
-module.exports = { priceCart, invalidate, liveTiers, bestTier, nextTier, chooseDiscount, tierLabel };
+module.exports = { priceCart, invalidate, liveTiers, tierAmount, bestTier, nextTier, chooseDiscount, tierLabel };

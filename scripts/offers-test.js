@@ -70,5 +70,23 @@ const run = async (items, extra) => { offers.invalidate(); return offers.priceCa
   r = await run([it('atta-original', 5, 300)]);
   ok(r.discount === null && r.finalTotal === 1500, 'missing table (migration not run) means no tiers, no crash');
 
+  // percentage tier: 10% off singles over Rs 1,500, up to Rs 300
+  dbStub.listSpendTiers = async () => TIERS;
+  TIERS = [{ id: 7, min_singles: 1500, discount: null, percent: 10, max_discount: 300, active: true }];
+  r = await run([it('atta-original', 4, 300), it('atta-kesari', 1, 350)]);
+  ok(r.singles === 1550 && r.discount.amount === 155 && r.finalTotal === 1395 && /10% off/.test(r.discount.label), 'percent tier: 10% of 1,550');
+  r = await run([it('atta-original', 7, 300)]);
+  ok(r.discount.amount === 210 && r.next === null, 'percent tier: 10% of 2,100 = 210, nothing higher to nudge');
+  r = await run([it('atta-original', 12, 300)]);
+  ok(r.discount.amount === 300 && r.finalTotal === 3300, 'percent tier: capped at 300');
+  r = await run([it('atta-original', 4, 300)]);
+  ok(r.discount === null && r.next && r.next.need === 300 && r.next.off === 150 && r.next.pct === 10, 'percent tier: nudge shows what 1,500 earns (150)');
+  r = await run([it('full-range-set', 1, 999), it('atta-original', 6, 300)]);
+  ok(r.singles === 1800 && r.discount.amount === 180 && r.finalTotal === 2619, 'percent tier: on single boxes only, the set is not discounted');
+  COUPON = () => ({ ok: true, coupon: { code: 'BIGC' }, discountAmount: 250, finalTotal: 1550 });
+  r = await run([it('atta-original', 6, 300)], { couponCode: 'bigc' });
+  ok(r.discount.kind === 'coupon' && r.discount.amount === 250, 'percent tier: a bigger code still wins');
+  COUPON = null;
+
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

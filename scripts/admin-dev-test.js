@@ -155,6 +155,13 @@ async function login(email) {
   ok(!(await op('', o.token, { min: 2000, off: 150 })).j.ok, 'two tiers at the same spend are refused');
   const tp = await op('/' + t2.j.tier.id, o.token, { active: false }); ok(tp.j.ok && tp.j.tier.status === 'paused', 'pause a tier');
   ok((await op('/' + t2.j.tier.id + '/delete', o.token, {})).j.ok && (await op('', o.token)).j.tiers.length === 1, 'delete a tier');
+  const pt = await op('', o.token, { min: 1500, percent: 10, cap: 300 }); ok(!pt.j.ok && /already a tier/.test(pt.j.error), 'a percentage tier at an existing spend is refused');
+  const pt2 = await op('', o.token, { min: 2500, percent: 10, cap: 300 }); ok(pt2.j.ok && pt2.j.tier.pct === 10 && pt2.j.tier.cap === 300 && pt2.j.tier.off === null, 'owner adds a percentage tier (10% up to 300)');
+  ok(!(await op('', o.token, { min: 2600, percent: 50, cap: 300 })).j.ok, 'a percentage above 20 is refused');
+  ok(!(await op('', o.token, { min: 2700, percent: 10 })).j.ok, 'a percentage tier needs a cap');
+  ok((await op('/' + pt2.j.tier.id, o.token, { cap: 250 })).j.tier.cap === 250, 'change the cap');
+  ok(!(await op('/' + pt2.j.tier.id, o.token, { off: 100 })).j.ok, 'a percentage tier has no flat amount to change');
+  ok((await op('/' + pt2.j.tier.id + '/delete', o.token, {})).j.ok, 'delete the percentage tier');
   // new customers only + sales per code
   const nc = await cp('', o.token, { type: 'flat', value: 100, minOrder: 900, firstOrderOnly: true, expiresAt: '2031-01-31' });
   ok(nc.j.ok && nc.j.coupon.firstOrderOnly === true && nc.j.coupon.conditions.includes('new customers only') && /first order/.test(nc.j.coupon.shareEn), 'a code can be for new customers only');
