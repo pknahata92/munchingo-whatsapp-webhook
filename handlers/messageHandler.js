@@ -237,6 +237,9 @@ async function sendShippingInfo(to) {
     to,
     `🚚 *Munchingo delivers across India!*\n\n` +
       `📍 We ship to all major cities & tier-2 towns\n` +
+      (require('./../utils/launch').isPreorder()
+        ? `🗓️ Orders placed now are *pre-orders*: dispatched from ${require('./../utils/launch').dispatchLabel()}\n`
+        : `⏱️ We dispatch within 48 hours of payment\n`) +
       `⏱️ Delivery time depends on your location — we'll share an estimate when you order\n` +
       `✅ No separate delivery charge — price is all-inclusive (${MIN_BOXES}-box minimum order)\n` +
       `📦 Orders are packed & sealed securely\n\n` +
@@ -675,7 +678,10 @@ async function completeAddressCollection(to, pendingOrder, address, email) {
       `💳 *Pay for your Munchingo Order*\n\n` +
         `*Order #${pendingOrder.order_id}* — ₹${pendingOrder.total} _(incl. 5% GST)_\n\n` +
         `👉 ${paymentLinkUrl}\n\n` +
-        `Link valid for 24 hours. We'll confirm & ship once payment is received! 🍪`
+        `Link valid for 24 hours. ` +
+        (require('../utils/launch').isPreorder()
+          ? `This is a *pre-order*: it will be dispatched from ${require('../utils/launch').dispatchLabel()}, and we'll confirm once payment is received! 🍪`
+          : `We'll confirm & dispatch within 48 hours of payment! 🍪`)
     );
   } catch (err) {
     console.error('[RAZORPAY] Failed to create payment link:', err.message);
