@@ -322,7 +322,7 @@ a{color:var(--terra)}
         html = j.orders.map(function (o) {
           return '<div class="slip">' + (o.gift_note ? '<div class="gift">🎁 Write on the card:<br>' + esc(o.gift_note) + '</div>' : '')
             + '<h1>' + esc(o.id) + '</h1><table>' + o.items.map(function (i) { return '<tr><td class="big">' + i.qty + ' ×</td><td><b>' + esc(i.name) + '</b>' + (i.contents ? '<br><small>' + esc(i.contents) + '</small>' : '') + '</td></tr>'; }).join('') + '</table>'
-            + '<p><b>Ship to</b><br>' + esc(o.name) + '<br>' + esc(o.address) + '<br>+' + esc(o.phone) + '</p><p><small>' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · packed by ____________ · ' + esc(new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })) + '</small></p></div>';
+            + '<p><b>Ship to</b><br>' + esc(o.ship_name || o.name) + '<br>' + esc(o.address) + '<br>+' + esc(o.ship_phone || o.phone) + (o.gift_for ? '<br><small>Gift from ' + esc(o.name) + '</small>' : '') + '</p><p><small>' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · packed by ____________ · ' + esc(new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })) + '</small></p></div>';
         }).join('');
       }
       w.document.open(); w.document.write('<!doctype html><title>' + (kind === 'pick' ? 'Pick list' : 'Packing slips') + '</title><style>' + css + '</style>' + html); w.document.close(); w.focus(); setTimeout(function () { w.print(); }, 300);
@@ -392,7 +392,7 @@ a{color:var(--terra)}
     items.appendChild(h('div', { class: 'line' }, h('b', {}, 'Total · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es')), h('b', {}, inr(o.total))));
     p.appendChild(section('Order', items));
 
-    var addr = h('div', {}, h('div', {}, o.address || '—'), h('div', { class: 'acts' }, o.address ? h('button', { class: 'btn ghost small', onclick: function () { copyText(o.name + '\n' + o.address + '\n+' + o.phone); } }, 'Copy label') : null));
+    var addr = h('div', {}, h('div', {}, o.address || '—'), h('div', { class: 'acts' }, o.address ? h('button', { class: 'btn ghost small', onclick: function () { copyText((o.ship_name || o.name) + '\n' + o.address + '\n+' + (o.ship_phone || o.phone)); } }, 'Copy label') : null));
     var canEdit = o.state === 'topack' || o.state === 'packed';
     if (canEdit) addr.querySelector('.acts').appendChild(h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Correct delivery address (the old one is kept in the timeline):', o.address); if (v != null && v.trim() !== o.address) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/address', { address: v }, 'Address updated'); } }, 'Edit address'));
     p.appendChild(section('Ship to', kv([['Name', o.name], ['Phone', '+' + o.phone]]), addr,

@@ -21,6 +21,7 @@ const mk = (id, mins, status, extra) => ({ order_id: id, created_at: new Date(no
 const orders = [
   mk('MNG-AAAA-1010', 30, 'paid', { gift_note: 'Happy Birthday to Prashant' }),
   mk('MNG-BBBB-1010', 90, 'paid', { total: 518, discount_amount: 0, coupon_code: null, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 2, item_price: 259, unit: '250g' }] }),
+  mk('MNG-GGGG-1010', 55, 'paid', { gift_note: 'Happy Diwali', delivery_address: { raw: 'Flat 4, Bandra, Mumbai, Maharashtra - 400050', state: 'Maharashtra', recipientName: 'Anita Rao', recipientPhone: '919820012345' } }),
   mk('MNG-FFFF-1010', 50, 'paid', { total: 777, discount_amount: 0, coupon_code: null, items: [{ slug: 'atta-kesari', productName: 'Atta Kesari', quantity: 3, item_price: 299, unit: '250g' }] }),
   mk('MNG-GGGG-1008', 4000, 'paid', { packed_at: new Date(now - 3000000).toISOString(), packed_by: 'Staff' }),
   mk('MNG-HHHH-1007', 6000, 'paid', { shipped_at: new Date(now - 4000000).toISOString(), delivered_at: new Date(now - 1000000).toISOString(), carrier: 'Delhivery', awb: '99887766' }),

@@ -98,7 +98,7 @@ function normalisePhone(rawPhone) {
 // (who submits once), tight enough to blunt scripted abuse.
 router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
-          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts, previewKey } = req.body;
+          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts, recipient, previewKey } = req.body;
 
       // Orders open at launch (see utils/launch.js); the owner can test earlier with the preview key.
       if (!ordersOpen(previewKey)) {
@@ -116,6 +116,10 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
           if (customerPhone.length < 12) {
                   return res.status(400).json({ ok: false, error: 'Phone number looks invalid - include a 10-digit number' });
           }
+
+      if (recipient && typeof recipient === 'object' && (!String(recipient.name || '').trim() || normalisePhone(recipient.phone).length < 12)) {
+        return res.status(400).json({ ok: false, error: 'Please add the recipient\'s name and a 10-digit mobile number, or untick the gift option.' });
+      }
 
       await require('../utils/stock').ensureFresh();
       const { items: enrichedItems, error: itemsError } = normaliseItems(items);
@@ -196,6 +200,13 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
           const parts = {};
           for (const k of ['state', 'city', 'pincode']) {
             if (addressParts && typeof addressParts[k] === 'string') parts[k] = addressParts[k].trim().slice(0, 60);
+          }
+          // Gift: who the parcel is for. Lives inside the address JSON (no schema change). The buyer keeps the
+          // receipt/invoice; the courier label, slips and owner emails use this person. Never messaged by us.
+          if (recipient && typeof recipient === 'object') {
+            const rName = String(recipient.name || '').trim().slice(0, 80);
+            const rPhone = normalisePhone(recipient.phone);
+            if (rName && rPhone.length >= 12) { parts.recipientName = rName; parts.recipientPhone = rPhone; }
           }
           await updateOrderAddress(orderId, address, parts);
 

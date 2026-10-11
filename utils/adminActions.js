@@ -54,6 +54,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
     created_at: o.created_at, paid_at: o.status === 'paid' || o.payment_id ? ((money && money.paidAt && money.paidAt[o.payment_id]) || o.updated_at) : null,
     name: o.customer_name, phone: o.customer_phone, email: o.customer_email || '',
     address: (o.delivery_address && o.delivery_address.raw) || '', gift_note: o.gift_note || '',
+    ship_name: (o.delivery_address && o.delivery_address.recipientName) || o.customer_name, ship_phone: (o.delivery_address && o.delivery_address.recipientPhone) || o.customer_phone, gift_for: !!(o.delivery_address && o.delivery_address.recipientName),
     coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
     payment_id: o.payment_id || '', boxes: items.reduce((n, i) => n + i.boxes, 0), items,
     sent: invoice ? { email: !!invoice.email_sent_at, whatsapp: !!invoice.wa_sent_at, zoho: !!invoice.zoho_synced_at && creditNotes.every((c) => !!c.zoho_credit_note_id) } : null,

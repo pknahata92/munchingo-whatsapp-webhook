@@ -81,6 +81,11 @@ async function login(email) {
   ok(typeof cat.isAvailable === 'function', 'catalog loads');
   await call('/stock', o.token, { slug: 'atta-kesari', available: true });
 
+  // gift: the label/ship-to uses the recipient, the buyer is kept
+  const gl = (await call('/orders', o.token)).j; const g = (gl.orders || gl.rows || []).find((x) => x.id === 'MNG-GGGG-1010');
+  ok(g && g.gift_for === true && g.ship_name === 'Anita Rao' && g.ship_phone === '919820012345' && /Customer/.test(g.name), 'gift order exposes recipient as ship-to, buyer kept');
+  const plain = (gl.orders || gl.rows || []).find((x) => x.id === 'MNG-AAAA-1010'); ok(plain && plain.gift_for === false && plain.ship_name === plain.name, 'normal order ships to the buyer');
+
   // team: disable staff -> immediately locked out
   ok((await call('/team', o.token, { email: 'staff@example.com', role: 'staff', active: false })).j.ok, 'owner disables staff');
   ok((await call('/orders', s.token)).s === 401, 'disabled staff locked out at once');

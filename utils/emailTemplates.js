@@ -228,6 +228,7 @@ function ownerPaidHtml({ order, invoice }) {
   const total = invoice ? invoice.totalPaise / 100 : order.total;
   const items = order.items || [];
   const addr = (order.delivery_address && order.delivery_address.raw) || '';
+  const rcp = order.delivery_address && order.delivery_address.recipientName ? order.delivery_address : null;
   const pack = Object.entries(flavourTotals(items)).map(([n, q]) => `<tr><td style="padding:5px 0;font-family:${FONT};font-size:14px;color:${C.ink};">${esc(n)}</td><td style="padding:5px 0;font-family:${FONT};font-size:14px;font-weight:700;color:${C.ink};text-align:right;">&times; ${q}</td></tr>`).join('');
   const boxes = items.reduce((n, i) => n + (Number(i.quantity) || 0) * boxesIn(i), 0);
   const row = (k, v) => `<tr><td style="padding:5px 0;color:#8A7765;width:92px;vertical-align:top;font-family:${FONT};font-size:13px;">${k}</td><td style="padding:5px 0;font-family:${FONT};font-size:13px;color:${C.ink};">${v}</td></tr>`;
@@ -238,7 +239,7 @@ function ownerPaidHtml({ order, invoice }) {
     <tr><td style="padding:18px 26px 6px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">Pack</div>
       <table role="presentation" width="100%" style="border-top:1px solid ${C.line};">${pack}</table></td></tr>
     <tr><td style="padding:12px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">Ship to</div>
-      <table role="presentation" width="100%">${row('Name', esc(order.customer_name))}${row('Address', esc(addr))}${row('Phone', '+' + esc(order.customer_phone) + ` &middot; <a href="https://wa.me/${esc(order.customer_phone)}" style="color:${C.terra};">WhatsApp</a>`)}${row('Email', esc(order.customer_email || 'not given'))}</table></td></tr>
+      <table role="presentation" width="100%">${rcp ? row('Deliver to', esc(rcp.recipientName) + ' &middot; +' + esc(rcp.recipientPhone)) + row('Gift from', esc(order.customer_name) + ' &middot; +' + esc(order.customer_phone)) : row('Name', esc(order.customer_name))}${row('Address', esc(addr))}${rcp ? '' : row('Phone', '+' + esc(order.customer_phone) + ` &middot; <a href="https://wa.me/${esc(order.customer_phone)}" style="color:${C.terra};">WhatsApp</a>`)}${row('Email', esc(order.customer_email || 'not given'))}</table></td></tr>
     <tr><td style="padding:12px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">Order</div>
       ${summaryTable({ items, totalRupees: total, discountRupees: Number(order.discount_amount || 0), couponCode: order.coupon_code })}</td></tr>
     <tr><td style="padding:14px 26px 24px;font-family:${FONT};font-size:12px;color:#8A7765;line-height:1.7;">Invoice ${invoice ? esc(invoice.invoiceNo) + ' &middot; PDF attached &middot; ' + (invoice.supplyType === 'intra' ? 'CGST + SGST' : 'IGST') + ' &middot; ' + esc(invoice.placeOfSupply) : 'not generated (see the Render logs)'}<br>The customer has been sent their confirmation and invoice by email${order.customer_email ? '' : ' (none: no email given)'} and WhatsApp.</td></tr>
@@ -299,7 +300,7 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
     return `<div style="border:1px solid ${C.line};border-radius:12px;background:${C.paper};padding:14px 16px;margin-bottom:10px;font-family:${FONT};font-size:13px;line-height:1.6;color:${C.ink};">
       <b style="color:${C.terra};">${esc(o.order_id)}</b> &middot; ${money(o.total)}${i ? ' &middot; ' + esc(i.invoice_no) : ''}${o.coupon_code ? ' &middot; ' + esc(o.coupon_code) : ''}<br>
       <b>${esc(o.customer_name)}</b> &middot; +${esc(o.customer_phone)}<br>${lines}<br>
-      <span style="color:#8A7765;">Ship to:</span> ${esc(addr)}
+      <span style="color:#8A7765;">Ship to:</span> ${o.delivery_address && o.delivery_address.recipientName ? '<b>' + esc(o.delivery_address.recipientName) + '</b> +' + esc(o.delivery_address.recipientPhone) + ' (gift from ' + esc(o.customer_name) + '), ' : ''}${esc(addr)}
       ${o.gift_note ? `<br><span style="color:${C.terra};">&#127873; ${esc(o.gift_note)}</span>` : ''}</div>`;
   }).join('');
   const refundTotal = creditNotes.reduce((n, c) => n + c.amount_paise, 0) / 100;
