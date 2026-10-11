@@ -21,6 +21,7 @@ const SCOPES = [
   { slug: '', label: 'Any order' },
   { slug: 'trio-gift-set', label: 'Orders that include a Trio Gift Set' },
   { slug: 'full-range-set', label: 'Orders that include the Full Range Gift Set' },
+  { slug: 'singles-only', label: 'Single boxes only (not gift sets)' },
 ];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no 0/O/1/I so a code can be read out over the phone
 const LIMITS = { percentMax: 60, flatMax: 2000, minOrderMax: 20000 };
@@ -86,7 +87,8 @@ function scopeLabel(slug) { const s = SCOPES.find((x) => x.slug === (slug || '')
 function conditions(c) {
   const out = [];
   if (Number(c.min_order_value) > 0) out.push(`orders of ${rupee(c.min_order_value)} or more`);
-  if (c.scope_slug) out.push(scopeLabel(c.scope_slug).toLowerCase());
+  if (c.scope_slug === 'singles-only') out.push('not on gift sets');
+  else if (c.scope_slug) out.push(scopeLabel(c.scope_slug).toLowerCase());
   if (c.max_uses === 1) out.push('single use');
   else {
     if (c.max_uses_per_customer != null) out.push(c.max_uses_per_customer === 1 ? 'one use per customer' : `${c.max_uses_per_customer} uses per customer`);
@@ -101,14 +103,15 @@ function conditions(c) {
 function shareText(c, lang) {
   const off = benefit(c);
   const min = Number(c.min_order_value) > 0 ? ` on orders of ${rupee(c.min_order_value)} or more` : '';
-  const scope = c.scope_slug ? ` (orders with the ${scopeLabel(c.scope_slug).replace(/^Orders that include (a |the )?/i, '')})` : '';
+  const scope = c.scope_slug === 'singles-only' ? ' (single boxes, not gift sets)' : c.scope_slug ? ` (orders with the ${scopeLabel(c.scope_slug).replace(/^Orders that include (a |the )?/i, '')})` : '';
   const till = c.expires_at ? ` Valid till ${istDate(c.expires_at)}.` : '';
   const once = c.max_uses_per_customer === 1 ? ' One use per customer.' : '';
   const mine = c.allowed_phone ? ' This code is just for you.' : '';
   if (lang === 'hi') {
     const offHi = c.type === 'percent' ? `${Number(c.value)}% की छूट${c.max_discount_amount != null ? ` (अधिकतम ${rupee(c.max_discount_amount)})` : ''}` : `${rupee(c.value)} की छूट`;
     const minHi = Number(c.min_order_value) > 0 ? ` (${rupee(c.min_order_value)} या उससे ऊपर के ऑर्डर पर)` : '';
-    return `🍪 Munchingo: munchingo.com पर चेकआउट में कोड ${c.code} लगाएँ और ${offHi} पाएँ${minHi}.${c.expires_at ? ` ${istDate(c.expires_at)} तक मान्य.` : ''}${c.max_uses_per_customer === 1 ? ' हर ग्राहक के लिए एक बार.' : ''}${c.allowed_phone ? ' यह कोड सिर्फ़ आपके लिए है.' : ''}`;
+    const setHi = c.scope_slug === 'singles-only' ? ' (सिर्फ़ अलग-अलग डिब्बों पर, गिफ़्ट सेट पर नहीं)' : '';
+    return `🍪 Munchingo: munchingo.com पर चेकआउट में कोड ${c.code} लगाएँ और ${offHi} पाएँ${minHi}${setHi}.${c.expires_at ? ` ${istDate(c.expires_at)} तक मान्य.` : ''}${c.max_uses_per_customer === 1 ? ' हर ग्राहक के लिए एक बार.' : ''}${c.allowed_phone ? ' यह कोड सिर्फ़ आपके लिए है.' : ''}`;
   }
   return `🍪 Munchingo: use code ${c.code} at checkout on munchingo.com for ${off}${min}${scope}.${till}${once}${mine}`;
 }

@@ -113,7 +113,7 @@ async function login(email) {
   const cp = (path, tok, body, method) => call('/coupons' + path, tok, body, method);
   ok((await cp('', s.token)).s === 403, 'staff cannot list coupons');
   ok((await cp('', s.token, { type: 'percent', value: 10 })).s === 403, 'staff cannot create coupons');
-  const cl = (await cp('', o.token)).j; ok(cl.ok && cl.coupons.length === 2 && cl.scopes.length === 3, 'owner lists coupons with scopes');
+  const cl = (await cp('', o.token)).j; ok(cl.ok && cl.coupons.length === 2 && cl.scopes.length === 4, 'owner lists coupons with scopes');
   const f10 = cl.coupons.find((c) => c.code === 'FOUNDING10'); ok(f10 && f10.status === 'live' && f10.redeemed === 3 && f10.discountGiven === 264 && f10.customers === 3 && /10% off \(up to .100\)/.test(f10.benefit), 'usage stats and wording for FOUNDING10');
   ok(cl.coupons.find((c) => c.code === 'OLD5').status === 'expired', 'an old code shows as expired');
   const gen = (await cp('/generate?prefix=ig', o.token)).j; ok(gen.ok && /^IG-[A-HJ-NP-Z2-9]{5}$/.test(gen.code), 'generated code is readable: ' + gen.code);
@@ -131,6 +131,9 @@ async function login(email) {
   ok((await cp('', o.token, { code: 'PASTDATE', type: 'flat', value: 10, expiresAt: '2020-01-01' })).s === 400, 'expiry in the past refused');
   ok((await cp('', o.token, { code: 'BACKWARDS', type: 'flat', value: 10, startsAt: '2030-02-01', expiresAt: '2030-01-01' })).s === 400, 'start after expiry refused');
   ok((await cp('', o.token, { code: 'BADSCOPE', type: 'flat', value: 10, scope: 'atta-original' })).s === 400, 'unsupported scope refused');
+  const so = await cp('', o.token, { code: 'NOSETS10', type: 'percent', value: 10, scope: 'singles-only', expiresAt: '2030-01-31' });
+  ok(so.j.ok && so.j.coupon.scope === 'singles-only' && so.j.coupon.conditions.includes('not on gift sets') && /not gift sets/.test(so.j.coupon.shareEn) && /गिफ़्ट सेट/.test(so.j.coupon.shareHi), 'a code can exclude gift sets; wording appears in the card and in both share messages');
+  ok((await cp('/NOSETS10/delete', o.token, {})).j.ok, 'cleanup of the gift-set test code');
   const pz = await cp('/FRIEND-HERA', o.token, { active: false }); ok(pz.j.ok && pz.j.coupon.status === 'paused', 'pause');
   const rz = await cp('/FRIEND-HERA', o.token, { active: true, expiresAt: '2031-06-30', maxUses: 5, note: 'now for 5 people' }); ok(rz.j.ok && rz.j.coupon.status === 'live' && rz.j.coupon.maxUses === 5 && /2031/.test(rz.j.coupon.expiresAt) && rz.j.coupon.note === 'now for 5 people', 'resume + extend + edit limits and note');
   ok((await cp('/FRIEND-HERA', o.token, { value: 99 })).s === 400, 'editing the discount is also range-checked');

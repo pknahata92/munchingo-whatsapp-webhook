@@ -37,5 +37,12 @@ const ctx = (extra) => ({ cartSlugs: ['trio-gift-set-ajwain-kesari-original'], r
   r = await validateCoupon('t', ctx({ customerPhone: null })); ok(!r.ok && /mobile number first/.test(r.error), 'phone lock: asks for the number when it is missing');
   COUPON = { ...base }; delete COUPON.starts_at; delete COUPON.allowed_phone; r = await validateCoupon('t', ctx()); ok(r.ok, 'rows without the new columns behave as before');
   COUPON = { ...base, type: 'flat', value: 100, max_discount_amount: null, scope_slug: null, min_order_value: 0 }; r = await validateCoupon('T', ctx({ realTotal: 80 })); ok(r.ok && r.discountAmount === 80 && r.finalTotal === 0, 'a discount can never exceed the order');
+  // 'singles-only' = not applicable on gift sets
+  const SO = { ...base, scope_slug: 'singles-only', min_order_value: 0, max_discount_amount: null, value: 10 };
+  COUPON = { ...SO }; r = await validateCoupon('t', ctx({ cartSlugs: ['atta-original', 'trio-gift-set-ajwain-kesari-lite-sugar'], realTotal: 1039, singlesTotal: 300 })); ok(r.ok && r.discountAmount === 30 && r.finalTotal === 1009, 'singles-only: 10% of the 300 of singles, not of 1,039');
+  COUPON = { ...SO }; r = await validateCoupon('t', ctx({ cartSlugs: ['trio-gift-set-ajwain-kesari-original'], realTotal: 739, singlesTotal: 0 })); ok(!r.ok && /does not apply to gift sets/.test(r.error), 'singles-only: an order of only gift sets is refused with a clear message');
+  COUPON = { ...SO }; r = await validateCoupon('t', ctx({ cartSlugs: ['atta-original', 'atta-kesari', 'atta-ajwain'], realTotal: 950, singlesTotal: 950 })); ok(r.ok && r.discountAmount === 95, 'singles-only: an all-singles order gets the full discount');
+  COUPON = { ...SO, min_order_value: 800 }; r = await validateCoupon('t', ctx({ cartSlugs: ['atta-original', 'full-range-set'], realTotal: 1299, singlesTotal: 300 })); ok(!r.ok && /of single boxes/.test(r.error), 'singles-only: the minimum counts single boxes only');
+  COUPON = { ...SO, type: 'flat', value: 100 }; r = await validateCoupon('t', ctx({ cartSlugs: ['atta-original', 'full-range-set'], realTotal: 1299, singlesTotal: 60 })); ok(r.ok && r.discountAmount === 60, 'singles-only: a flat discount never exceeds the singles in the order');
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

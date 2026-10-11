@@ -27,7 +27,7 @@ function db() {
  * @param {{ cartSlugs: string[], realTotal: number, customerPhone: string }} ctx
  * @returns {{ ok: true, coupon: object, discountAmount: number, finalTotal: number } | { ok: false, error: string }}
  */
-async function validateCoupon(code, { cartSlugs, realTotal, customerPhone }) {
+async function validateCoupon(code, { cartSlugs, realTotal, singlesTotal, customerPhone }) {
   const normalisedCode = String(code || '').trim().toUpperCase();
   if (!normalisedCode) return { ok: false, error: 'Enter a promo code.' };
 
@@ -56,10 +56,18 @@ async function validateCoupon(code, { cartSlugs, realTotal, customerPhone }) {
   if (coupon.max_uses != null && coupon.uses_count >= coupon.max_uses) {
     return { ok: false, error: 'That code has reached its usage limit.' };
   }
-  if (realTotal < (coupon.min_order_value || 0)) {
-    return { ok: false, error: `This code needs a minimum order of ₹${coupon.min_order_value}.` };
+  // scope 'singles-only' = "do not apply to gift sets": the discount (and the minimum order) are worked out on single boxes only.
+  const singlesOnly = coupon.scope_slug === 'singles-only';
+  const base = singlesOnly ? Math.max(0, Number(singlesTotal) || 0) : realTotal;
+  if (singlesOnly && base <= 0) {
+    return { ok: false, error: 'This code does not apply to gift sets. Add single boxes to use it.' };
   }
-  if (coupon.scope_slug) {
+  if (base < (coupon.min_order_value || 0)) {
+    return { ok: false, error: singlesOnly
+      ? `This code needs at least ₹${coupon.min_order_value} of single boxes (gift sets are not included).`
+      : `This code needs a minimum order of ₹${coupon.min_order_value}.` };
+  }
+  if (coupon.scope_slug && !singlesOnly) {
     // Exact match, OR prefix match for dynamic slugs like the Trio set
     // ("trio-gift-set-ajwain-kesari-original") — a plain .includes() check
     // would never match a scope_slug of 'trio-gift-set' since no real cart
@@ -86,7 +94,7 @@ async function validateCoupon(code, { cartSlugs, realTotal, customerPhone }) {
 
   let discountAmount;
   if (coupon.type === 'percent') {
-    discountAmount = Math.round(realTotal * (coupon.value / 100));
+    discountAmount = Math.round(base * (coupon.value / 100));
     // Cap keeps a percentage code from giving away too much on a big order —
     // e.g. FOUNDING10 is 10% off with a ₹100 ceiling, so it stays a genuine
     // 10% on small first orders but tapers off (not a flat ₹100) above ~₹1,000.
@@ -97,7 +105,7 @@ async function validateCoupon(code, { cartSlugs, realTotal, customerPhone }) {
     discountAmount = Math.round(coupon.value);
   }
   // Never let a discount exceed the order total or push it negative.
-  discountAmount = Math.max(0, Math.min(discountAmount, realTotal));
+  discountAmount = Math.max(0, Math.min(discountAmount, base));
 
   return { ok: true, coupon, discountAmount, finalTotal: realTotal - discountAmount };
 }

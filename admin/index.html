@@ -549,54 +549,69 @@ a{color:var(--terra)}
       ownerPanel('Prices', [note, section('Selling price per unit, GST included'), h('div', { class: 'sec' }, rows)]);
     });
   }
-  // ── Coupons (owner): make codes with their own rules, share them, pause / extend / delete ──
+  // ── Coupons (owner): a short form for the common case, the rest under "More options" ──
   function openCoupons() {
     api('/admin/api/coupons').then(function (j) {
       if (!j.ok) return toast(j.error);
       var STAT = { live: ['LIVE', '#2F7A4B'], paused: ['PAUSED', '#8A7765'], expired: ['EXPIRED', '#B5584B'], used_up: ['USED UP', '#B5584B'], scheduled: ['SCHEDULED', '#B8860B'] };
       var istPlus = function (n) { return new Date(Date.now() + 19800000 + n * 86400000).toISOString().slice(0, 10); };
-      var f = {};
-      var field = function (label, el, hint) { return h('div', { style: 'flex:1 1 150px;min-width:140px' }, h('label', {}, label), el, hint ? h('small', { class: 'muted' }, hint) : null); };
-      var row = function () { return h.apply(null, ['div', { style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin:6px 0' }].concat([].slice.call(arguments))); };
-      f.prefix = h('input', { placeholder: 'e.g. IG', maxlength: '10', style: 'text-transform:uppercase' });
-      f.code = h('input', { placeholder: 'leave empty to generate', maxlength: '24', style: 'text-transform:uppercase' });
-      f.type = h('select', {}, h('option', { value: 'percent' }, 'Percent off (%)'), h('option', { value: 'flat' }, 'Flat amount off (₹)'));
-      f.value = h('input', { type: 'number', inputmode: 'decimal', min: '1', step: '1', placeholder: 'e.g. 10' });
-      f.cap = h('input', { type: 'number', inputmode: 'numeric', min: '1', placeholder: 'no cap' });
-      f.min = h('input', { type: 'number', inputmode: 'numeric', min: '0', value: '0' });
-      f.scope = h('select', {}, j.scopes.map(function (x) { return h('option', { value: x.slug }, x.label); }));
-      f.maxUses = h('input', { type: 'number', inputmode: 'numeric', min: '1', placeholder: 'unlimited' });
-      f.per = h('input', { type: 'number', inputmode: 'numeric', min: '1', value: '1', placeholder: 'unlimited' });
-      f.starts = h('input', { type: 'date' });
-      f.expires = h('input', { type: 'date' });
-      f.phone = h('input', { type: 'tel', inputmode: 'tel', placeholder: 'only this customer (optional)' });
-      f.note = h('input', { maxlength: '200', placeholder: 'What is it for? Only you see this' });
-      var preview = h('p', { class: 'muted', style: 'margin:6px 0' });
-      var capField = field('Maximum discount ₹', f.cap, 'Stops a percentage getting too big on a large order');
-      function sample(total) {
-        var v = Number(f.value.value) || 0, cap = Number(f.cap.value) || 0, min = Number(f.min.value) || 0, d;
-        if (f.type.value === 'percent') { d = Math.round(total * v / 100); if (cap) d = Math.min(d, cap); } else d = v;
-        d = Math.max(0, Math.min(d, total));
-        return min && total < min ? inr(total) + ': not valid (minimum ' + inr(min) + ')' : inr(total) + ' → −' + inr(d) + ' = ' + inr(total - d);
+      var fmtDate = function (iso) { return new Date(iso + 'T12:00:00+05:30').toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }); };
+      var st = { kind: 'percent', days: 30, who: 'anyone' };
+      var el = {};
+      function seg(opts, get, set) {
+        var wrap = h('div', { class: 'acts', style: 'margin:4px 0 0' });
+        function paint() { [].forEach.call(wrap.children, function (b) { b.className = 'btn small' + (b.dataset.v === String(get()) ? '' : ' ghost'); }); }
+        opts.forEach(function (o) { var b = h('button', { type: 'button', class: 'btn small ghost', onclick: function () { set(o[0]); paint(); refresh(); } }, o[1]); b.dataset.v = String(o[0]); wrap.appendChild(b); });
+        paint(); return wrap;
       }
+      var lbl = function (t) { return h('label', { style: 'margin-top:12px' }, t); };
+
+      el.value = h('input', { type: 'number', inputmode: 'decimal', min: '1', step: '1', value: '10', style: 'max-width:110px' });
+      el.code = h('input', { placeholder: 'making a code…', maxlength: '24', style: 'text-transform:uppercase;flex:1' });
+      el.phone = h('input', { type: 'tel', inputmode: 'tel', placeholder: "Customer's mobile number" });
+      el.noSets = h('input', { type: 'checkbox', style: 'width:auto;margin-right:8px' });
+      el.cap = h('input', { type: 'number', inputmode: 'numeric', min: '1', placeholder: 'no cap' });
+      el.min = h('input', { type: 'number', inputmode: 'numeric', min: '0', value: '0' });
+      el.scope = h('select', {}, j.scopes.filter(function (x) { return x.slug !== 'singles-only'; }).map(function (x) { return h('option', { value: x.slug }, x.label); }));
+      el.maxUses = h('input', { type: 'number', inputmode: 'numeric', min: '1', placeholder: 'unlimited' });
+      el.per = h('input', { type: 'number', inputmode: 'numeric', min: '1', value: '1', placeholder: 'unlimited' });
+      el.starts = h('input', { type: 'date' });
+      el.note = h('input', { maxlength: '200', placeholder: 'Only you see this, e.g. "apology for Hera"' });
+      var capWrap = h('div', {}, lbl('Highest discount in ₹ (optional)'), el.cap, h('small', { class: 'muted' }, 'Stops a percentage getting too big on a large order'));
+      var phoneWrap = h('div', { hidden: true }, el.phone, h('small', { class: 'muted' }, 'Only this number can use the code'));
+      var until = h('small', { class: 'muted', style: 'display:block;margin-top:4px' });
+      var preview = h('p', { style: 'margin:12px 0 0;font-weight:600' });
+
       function refresh() {
-        capField.style.display = f.type.value === 'percent' ? '' : 'none';
-        var v = Number(f.value.value) || 0, big = (f.type.value === 'percent' && v > 25) || (f.type.value === 'flat' && v > 300);
-        preview.textContent = v ? 'Example: ' + sample(739) + ' (Trio) · ' + sample(1300) + (big ? '  ⚠ That is a large discount. Check your margin.' : '') : 'Enter the discount to see an example.';
+        capWrap.style.display = st.kind === 'percent' ? '' : 'none';
+        phoneWrap.hidden = st.who !== 'one';
+        until.textContent = st.days ? 'Works until the end of ' + fmtDate(istPlus(st.days)) : 'Works until you pause or delete it';
+        var v = Number(el.value.value) || 0, cap = Number(el.cap.value) || 0, base = el.noSets.checked ? 1000 : 739, d;
+        if (st.kind === 'percent') { d = Math.round(base * v / 100); if (cap) d = Math.min(d, cap); } else d = v;
+        d = Math.max(0, Math.min(d, base));
+        var big = (st.kind === 'percent' && v > 25) || (st.kind === 'flat' && v > 300);
+        preview.textContent = v ? 'Example: ' + (el.noSets.checked ? '₹1,000 of single boxes' : '₹739 Trio') + ' → −' + inr(d) + ' = ' + inr(base - d) + (big ? '   ⚠ Large discount, check your margin' : '') : 'Enter the discount to see an example.';
         preview.style.color = big ? '#F29B8E' : '';
       }
-      [f.type, f.value, f.cap, f.min].forEach(function (el) { el.addEventListener('input', refresh); el.addEventListener('change', refresh); });
-      function preset(p) { f.type.value = p.type; f.value.value = p.value; f.cap.value = p.cap || ''; f.min.value = p.min || 0; f.maxUses.value = p.maxUses || ''; f.per.value = p.per == null ? '' : p.per; f.expires.value = p.days ? istPlus(p.days) : ''; f.note.value = p.note || ''; f.scope.value = ''; f.phone.value = ''; f.starts.value = ''; refresh(); }
-      var presets = h('div', { class: 'acts' }, h('span', { class: 'muted' }, 'Quick start:'),
-        h('button', { class: 'btn ghost small', onclick: function () { preset({ type: 'percent', value: 10, cap: 100, days: 30, per: 1, note: 'Friend / referral' }); } }, 'Share with friends · 10%'),
-        h('button', { class: 'btn ghost small', onclick: function () { preset({ type: 'flat', value: 100, maxUses: 1, per: 1, days: 14, note: 'Personal, single use' }); } }, 'One person · ₹100 once'),
-        h('button', { class: 'btn ghost small', onclick: function () { preset({ type: 'percent', value: 15, cap: 150, days: 7, per: 1, note: 'Thank-you / apology' }); } }, 'Thank-you · 15%'));
-      var gen = h('button', { class: 'btn ghost small', onclick: function (e) { e.target.disabled = true; api('/admin/api/coupons/generate?prefix=' + encodeURIComponent(f.prefix.value.trim())).then(function (g) { e.target.disabled = false; if (g.ok) f.code.value = g.code; else toast(g.error || 'Could not generate', 5000); }); } }, 'Generate');
-      var expBtns = h('div', { class: 'acts', style: 'margin:4px 0 0' }, [7, 30, 90].map(function (n) { return h('button', { class: 'btn ghost small', onclick: function () { f.expires.value = istPlus(n); } }, '+' + n + ' days'); }).concat([h('button', { class: 'btn ghost small', onclick: function () { f.expires.value = ''; } }, 'no expiry')]));
-      var create = h('button', { class: 'btn', onclick: function (e) {
-        var body = { code: f.code.value.trim(), prefix: f.prefix.value.trim(), type: f.type.value, value: f.value.value, maxDiscount: f.cap.value, minOrder: f.min.value, scope: f.scope.value, maxUses: f.maxUses.value, perCustomer: f.per.value, startsAt: f.starts.value, expiresAt: f.expires.value, phone: f.phone.value.trim(), note: f.note.value.trim() };
-        var what = (body.type === 'percent' ? body.value + '% off' + (body.maxDiscount ? ' (up to ₹' + body.maxDiscount + ')' : '') : '₹' + body.value + ' off') + (body.phone ? ', only for ' + body.phone : '') + (body.expiresAt ? ', until ' + body.expiresAt : ', no expiry') + (body.maxUses ? ', ' + body.maxUses + ' use(s) in total' : ', unlimited uses');
-        if (!confirm('Create ' + (body.code ? body.code.toUpperCase() : 'a generated code') + ': ' + what + '?')) return;
+      [el.value, el.cap, el.noSets].forEach(function (x) { x.addEventListener('input', refresh); x.addEventListener('change', refresh); });
+      function newCode() { api('/admin/api/coupons/generate').then(function (g) { if (g.ok) el.code.value = g.code; }); }
+      newCode();
+
+      var kindSeg = seg([['percent', '% off'], ['flat', '₹ off']], function () { return st.kind; }, function (v) { st.kind = v; });
+      var daysSeg = seg([[7, '7 days'], [30, '30 days'], [90, '90 days'], [0, 'No end']], function () { return st.days; }, function (v) { st.days = v; });
+      var whoSeg = seg([['anyone', 'Anyone'], ['one', 'One person']], function () { return st.who; }, function (v) { st.who = v; });
+
+      var more = h('details', { style: 'margin:14px 0 0' }, h('summary', { style: 'cursor:pointer;color:var(--terra);font-weight:600' }, 'More options'),
+        capWrap, lbl('Minimum order in ₹'), el.min, lbl('Applies to'), el.scope, lbl('Total uses, across everyone'), el.maxUses, lbl('Uses per customer'), el.per,
+        lbl('Starts on (optional)'), el.starts, lbl('Private note'), el.note);
+
+      var create = h('button', { class: 'btn', style: 'margin-top:16px', onclick: function (e) {
+        var body = { code: el.code.value.trim(), type: st.kind, value: el.value.value, maxDiscount: st.kind === 'percent' ? el.cap.value : '', minOrder: el.min.value,
+          scope: el.noSets.checked ? 'singles-only' : el.scope.value, maxUses: el.maxUses.value, perCustomer: el.per.value, startsAt: el.starts.value,
+          expiresAt: st.days ? istPlus(st.days) : '', phone: st.who === 'one' ? el.phone.value.trim() : '', note: el.note.value.trim() };
+        if (st.who === 'one' && !body.phone) return toast("Enter the customer's mobile number, or choose Anyone.", 5000);
+        var what = (st.kind === 'percent' ? body.value + '% off' + (body.maxDiscount ? ' (up to ₹' + body.maxDiscount + ')' : '') : '₹' + body.value + ' off') + (el.noSets.checked ? ', not on gift sets' : '') + (body.phone ? ', only for ' + body.phone : ', for anyone') + (st.days ? ', for ' + st.days + ' days' : ', no end date');
+        if (!confirm('Create ' + (body.code ? body.code.toUpperCase() : 'a new code') + ': ' + what + '?')) return;
         e.target.disabled = true;
         api('/admin/api/coupons', { method: 'POST', body: body }).then(function (r) {
           e.target.disabled = false;
@@ -604,39 +619,39 @@ a{color:var(--terra)}
           state.newCoupon = r.coupon.code; toast('Coupon ' + r.coupon.code + ' is live', 5000); openCoupons();
         });
       } }, 'Create coupon');
-      var form = h('div', {}, presets,
-        row(field('Code', f.code, 'Letters, numbers, dashes. Customers type it at checkout.'), field('Prefix for Generate', f.prefix), h('div', {}, gen)),
-        row(field('Type', f.type), field('Discount', f.value, 'percent, or rupees'), capField),
-        preview,
-        row(field('Minimum order ₹', f.min, '0 = none'), field('Applies to', f.scope, 'The discount is taken off the whole order')),
-        row(field('Total uses', f.maxUses, 'across all customers'), field('Uses per customer', f.per, 'blank = unlimited')),
-        row(field('Starts', f.starts, 'optional'), field('Expires (end of day)', f.expires, 'blank = never'), h('div', {}, expBtns)),
-        row(field('Only for this phone', f.phone, 'a personal code nobody else can use'), field('Note (private)', f.note)),
-        h('div', { class: 'acts' }, create));
+
+      var form = h('div', {},
+        lbl('Discount'), h('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el.value, kindSeg),
+        lbl('Code'), h('div', { style: 'display:flex;gap:8px' }, el.code, h('button', { type: 'button', class: 'btn ghost small', onclick: newCode }, 'New code')),
+        h('small', { class: 'muted' }, 'Customers type this at checkout. You can type your own.'),
+        lbl('Valid for'), daysSeg, until,
+        lbl('Who can use it'), whoSeg, phoneWrap,
+        h('label', { style: 'display:flex;align-items:center;margin-top:14px;font-weight:500;text-transform:none;letter-spacing:0' }, el.noSets, "Don't apply to gift sets (Trio, Full Range)"),
+        preview, more, create);
       refresh();
 
       var post = function (code, body, ok, btn) { if (btn) btn.disabled = true; return api('/admin/api/coupons/' + encodeURIComponent(code), { method: 'POST', body: body }).then(function (r) { if (btn) btn.disabled = false; if (!r.ok) return toast(r.error || 'Could not save', 7000); toast(ok, 3500); openCoupons(); }); };
       var cards = j.coupons.map(function (c) {
-        var st = STAT[c.status] || [c.status.toUpperCase(), '#8A7765'];
+        var s2 = STAT[c.status] || [c.status.toUpperCase(), '#8A7765'];
         var canDelete = c.uses === 0 && c.redeemed === 0;
-        return h('div', { class: 'sw', style: 'flex-direction:column;align-items:stretch;gap:6px' + (c.code === state.newCoupon ? ';outline:2px solid #F5C970;border-radius:12px' : '') },
-          h('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap' }, h('b', { style: 'font-size:18px;letter-spacing:.05em' }, c.code), h('span', { class: 'badge', style: 'background:' + st[1] + '33;color:' + st[1] }, st[0])),
-          h('div', {}, c.benefit + (c.conditions.length ? ' · ' + c.conditions.join(' · ') : '')),
-          h('div', { class: 'muted' }, 'Used ' + c.uses + (c.maxUses != null ? ' of ' + c.maxUses : '') + ' · ' + inr(c.discountGiven) + ' given · ' + c.customers + ' customer' + (c.customers === 1 ? '' : 's')),
-          c.phone ? h('div', { class: 'muted' }, 'Only for +' + c.phone) : null,
-          c.note ? h('div', { class: 'muted' }, '📝 ' + c.note + (c.createdBy ? ' · by ' + c.createdBy : '')) : null,
+        var extra = h('details', { style: 'margin-top:4px' }, h('summary', { style: 'cursor:pointer;color:var(--terra);font-weight:600' }, 'More'),
           h('div', { class: 'acts' },
-            h('button', { class: 'btn small', onclick: function () { copyText(c.code, 'Code'); } }, 'Copy code'),
-            h('button', { class: 'btn ghost small', onclick: function () { copyText(c.shareEn, 'Message'); } }, 'Copy message'),
             h('button', { class: 'btn ghost small', onclick: function () { copyText(c.shareHi, 'Message'); } }, 'हिन्दी message'),
             h('button', { class: 'btn ghost small', onclick: function (e) { post(c.code, { active: !c.active }, c.active ? c.code + ' paused' : c.code + ' is live again', e.target); } }, c.active ? 'Pause' : 'Resume'),
-            h('button', { class: 'btn ghost small', onclick: function (e) { var v = prompt('New expiry date as YYYY-MM-DD (empty = never expires):', c.expiresAt ? c.expiresAt.slice(0, 10) : ''); if (v == null) return; post(c.code, { expiresAt: v.trim() }, 'Expiry updated', e.target); } }, 'Expiry'),
-            h('button', { class: 'btn ghost small', onclick: function (e) { var v = prompt('Total uses allowed (empty = unlimited):', c.maxUses == null ? '' : String(c.maxUses)); if (v == null) return; post(c.code, { maxUses: v.trim() }, 'Usage limit updated', e.target); } }, 'Limit'),
+            h('button', { class: 'btn ghost small', onclick: function (e) { var v = prompt('New last day as YYYY-MM-DD (empty = no end):', c.expiresAt ? c.expiresAt.slice(0, 10) : ''); if (v == null) return; post(c.code, { expiresAt: v.trim() }, 'Date updated', e.target); } }, 'Change end date'),
+            h('button', { class: 'btn ghost small', onclick: function (e) { var v = prompt('Total uses allowed (empty = unlimited):', c.maxUses == null ? '' : String(c.maxUses)); if (v == null) return; post(c.code, { maxUses: v.trim() }, 'Limit updated', e.target); } }, 'Change limit'),
             canDelete ? h('button', { class: 'btn red small', onclick: function (e) { if (!confirm('Delete ' + c.code + '? It has never been used.')) return; e.target.disabled = true; api('/admin/api/coupons/' + encodeURIComponent(c.code) + '/delete', { method: 'POST', body: {} }).then(function (r) { toast(r.ok ? c.code + ' deleted' : (r.error || 'Could not delete'), 5000); openCoupons(); }); } }, 'Delete') : null));
+        return h('div', { class: 'sw', style: 'flex-direction:column;align-items:stretch;gap:6px' + (c.code === state.newCoupon ? ';outline:2px solid #F5C970;border-radius:12px' : '') },
+          h('div', { style: 'display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap' }, h('b', { style: 'font-size:18px;letter-spacing:.05em' }, c.code), h('span', { class: 'badge', style: 'background:' + s2[1] + '33;color:' + s2[1] }, s2[0])),
+          h('div', {}, c.benefit + (c.conditions.length ? ' · ' + c.conditions.join(' · ') : '')),
+          h('div', { class: 'muted' }, 'Used ' + c.uses + (c.maxUses != null ? ' of ' + c.maxUses : '') + (c.discountGiven ? ' · ' + inr(c.discountGiven) + ' given' : '') + (c.phone ? ' · only for +' + c.phone : '') + (c.note ? ' · ' + c.note : '')),
+          h('div', { class: 'acts' },
+            h('button', { class: 'btn small', onclick: function () { copyText(c.code, 'Code'); } }, 'Copy code'),
+            h('button', { class: 'btn ghost small', onclick: function () { copyText(c.shareEn, 'Message'); } }, 'Copy message')),
+          extra);
       });
-      var note = j.ready ? h('p', { class: 'muted' }, 'A code works on the website the moment you create it. The discount comes off the whole order. It cannot be combined with Subscribe & Save. The customer types the code at checkout.')
-        : h('p', { class: 'note' }, 'To use notes, start dates and "only for this phone", run coupons_admin_migration.sql in Supabase once. Everything else works already.');
-      ownerPanel('Coupons', [note, section('New coupon', form), section('Your coupons (' + j.coupons.length + ')', cards.length ? cards : h('p', { class: 'muted' }, 'No coupons yet.'))]);
+      var note = j.ready ? null : h('p', { class: 'note' }, 'To use notes, start dates and "only for this phone", run coupons_admin_migration.sql in Supabase once.');
+      ownerPanel('Coupons', [note, section('New coupon', form), section('Your coupons (' + j.coupons.length + ')', cards.length ? cards : h('p', { class: 'muted' }, 'No coupons yet.'))].filter(Boolean));
       state.newCoupon = null;
     });
   }

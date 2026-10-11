@@ -8,7 +8,7 @@ const { createPaymentLink, orderIdFromReference } = require('../utils/razorpay')
 const { saveOrder, updateOrderAddress, updateOrderPaymentLink, getOrder } = require('../utils/database');
 const { sendContactFormEmail } = require('../utils/mailer');
 const { ordersOpen, CLOSED_MESSAGE } = require('../utils/launch');
-const { priceForSlug, isAvailable, nameForSlug, boxesForSlug } = require('../utils/catalog');
+const { priceForSlug, isAvailable, nameForSlug, boxesForSlug, BASE_SLUGS } = require('../utils/catalog');
 const { rateLimit } = require('../utils/rateLimit');
 const { validateCoupon } = require('../utils/coupons');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
@@ -170,7 +170,8 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
         finalTotal = realTotal - discountAmount;
       } else if (couponCode) {
         const cartSlugs = enrichedItems.map((i) => i.slug);
-        const couponResult = await validateCoupon(couponCode, { cartSlugs, realTotal, customerPhone });
+        const singlesTotal = enrichedItems.filter((i) => BASE_SLUGS.includes(i.slug)).reduce((n, i) => n + i.item_price * i.quantity, 0);
+        const couponResult = await validateCoupon(couponCode, { cartSlugs, realTotal, singlesTotal, customerPhone });
         if (!couponResult.ok) {
           return res.status(400).json({ ok: false, error: couponResult.error });
         }
@@ -285,7 +286,8 @@ router.post('/api/validate-coupon', rateLimit({ windowMs: 60_000, max: 10 }), as
       const cartSlugs = enrichedItems.map((i) => i.slug);
       const customerPhone = phone ? normalisePhone(phone) : null;
 
-      const result = await validateCoupon(code, { cartSlugs, realTotal, customerPhone });
+      const singlesTotal = enrichedItems.filter((i) => BASE_SLUGS.includes(i.slug)).reduce((n, i) => n + i.item_price * i.quantity, 0);
+      const result = await validateCoupon(code, { cartSlugs, realTotal, singlesTotal, customerPhone });
       if (!result.ok) return res.status(400).json({ ok: false, error: result.error });
 
       res.json({ ok: true, discountAmount: result.discountAmount, finalTotal: result.finalTotal });
