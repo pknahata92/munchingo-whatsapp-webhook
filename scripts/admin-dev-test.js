@@ -86,6 +86,18 @@ async function login(email) {
   ok(g && g.gift_for === true && g.ship_name === 'Anita Rao' && g.ship_phone === '919820012345' && /Customer/.test(g.name), 'gift order exposes recipient as ship-to, buyer kept');
   const plain = (gl.orders || gl.rows || []).find((x) => x.id === 'MNG-AAAA-1010'); ok(plain && plain.gift_for === false && plain.ship_name === plain.name, 'normal order ships to the buyer');
 
+  // unpaid orders: payment link can be sent by staff too
+  const U = 'MNG-UUUU-1011', payLink = (id, tok, b) => call(`/orders/${id}/payment-link`, tok, b || {});
+  const pr1 = await payLink(U, s.token); ok(pr1.j.ok && pr1.j.url === 'https://rzp.io/rzp/FRESH' && pr1.j.regenerated === false && !!pr1.j.validUntilText, 'staff gets the existing link for a recent unpaid order');
+  const pr2 = await payLink(U, s.token, { email: true }); ok(pr2.j.ok && pr2.j.emailed === true, 'staff can email the link');
+  const pr3 = await payLink('MNG-NOEM-1011', s.token, { email: true }); ok(pr3.s === 409, 'email refused when the customer gave no email');
+  const pr4 = await payLink('MNG-DDDD-1009', s.token); ok(pr4.j.ok && pr4.j.regenerated === true && /NEWR$/.test(pr4.j.url), 'a link older than 20h is replaced by a fresh one');
+  const pr5 = await payLink(U, o.token, { fresh: true }); ok(pr5.j.ok && pr5.j.regenerated === true, 'fresh=true always makes a new link');
+  const pr6 = await payLink(A, o.token); ok(pr6.s === 409, 'a paid order has no payment link to send');
+  const pev = (await call(`/orders/${U}`, o.token)).j.order.events.map((e) => e.event); ok(pev.includes('payment_link_emailed') && pev.includes('payment_link_regenerated'), 'link actions are written to the timeline');
+  const pul = (await call('/orders', s.token)).j.orders.find((x) => x.id === U); ok(pul && pul.state === 'unpaid' && /rzp\.io/.test(pul.pay_url), 'unpaid order exposes its link to the admin');
+  ok(!(await call('/orders', s.token)).j.orders.find((x) => x.id === 'MNG-AAAA-1010').pay_url, 'paid orders do not expose a payment link');
+
   // team: disable staff -> immediately locked out
   ok((await call('/team', o.token, { email: 'staff@example.com', role: 'staff', active: false })).j.ok, 'owner disables staff');
   ok((await call('/orders', s.token)).s === 401, 'disabled staff locked out at once');

@@ -34,6 +34,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .card .meta{color:var(--ink2);font-size:13px;margin-top:2px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
 .b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
+.unpaidbar{background:#3A2B12;border:1px solid #8F6B25;color:#FBEFD5;border-radius:12px;padding:12px 14px;margin:10px 0;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.unpaidbar[hidden]{display:none}.unpaidbar b{color:#F5C970}.unpaidbar.hot{background:#4A211C;border-color:#B5584B}.unpaidbar.hot b{color:#FFB4A8}.badge.b-stale{background:#FBE4E0;color:var(--red)}.paybox{background:#2B2118;border:1px solid #5A4630;border-radius:12px;padding:12px 14px;margin:6px 0}.paybox .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:30;overflow:auto}
 .sheet.on{display:block}.panel{background:var(--cream);max-width:640px;margin:0 auto;min-height:100%;padding:16px 16px 40px}
 @media(min-width:700px){.panel{margin:24px auto;min-height:0;border-radius:18px}}
@@ -95,6 +96,7 @@ a{color:var(--terra)}
   <main>
     <div class="money" id="tiles" hidden></div>
     <p class="note" id="moneyNote" hidden></p>
+    <div class="unpaidbar" id="unpaidBar" hidden></div>
     <div class="flow" id="flow"></div>
     <div class="hint" id="hint"></div>
     <div class="chips" id="chips"></div>
@@ -235,11 +237,19 @@ a{color:var(--terra)}
     var hint = STEPS.filter(function (f) { return f[0] === state.filter; })[0];
     var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
     $('hint').hidden = !hint; if (hint) $('hint').textContent = hint[3] + (pre && (state.filter === 'topack' || state.filter === 'packed') ? '  PRE-ORDER PERIOD: pack now if you like, but do NOT ship before ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '.' : '');
+    var ub = $('unpaidBar'), unp = state.orders.filter(function (o) { return o.state === 'unpaid'; });
+    ub.textContent = '';
+    if (unp.length && state.filter !== 'unpaid') {
+      var amt = unp.reduce(function (n, o) { return n + o.total; }, 0), old1h = unp.filter(function (o) { return Date.now() - new Date(o.created_at).getTime() > 3600000; }).length;
+      ub.hidden = false; ub.className = 'unpaidbar' + (old1h ? ' hot' : '');
+      ub.appendChild(h('span', {}, '⏳ ', h('b', {}, unp.length + ' order' + (unp.length === 1 ? '' : 's') + ' waiting for payment'), ' · ' + inr(amt) + (old1h ? ' · ' + old1h + ' over an hour old, worth a nudge' : '')));
+      ub.appendChild(h('button', { class: 'btn small', onclick: function () { state.filter = 'unpaid'; saveView(); render(); } }, 'See them'));
+    } else ub.hidden = true;
     var c = $('chips'); c.textContent = '';
     FILTERS.forEach(function (f) {
       if (f[0] === 'attention' && (state.role !== 'owner' || !state.orders.some(function (o) { return o.needs_attention && o.state !== 'test'; }))) return;
       if (f[0] === 'test' && !cnt('test') && state.filter !== 'test') return;
-      if (state.role !== 'owner' && f[0] !== 'all') return;   // staff only need the four steps
+      if (state.role !== 'owner' && f[0] !== 'all' && f[0] !== 'unpaid') return;   // staff only need the four steps and the unpaid follow-up
       var n = f[0] === 'all' ? state.orders.length : f[0] === 'attention' ? state.orders.filter(function (o) { return o.needs_attention && o.state !== 'test'; }).length : cnt(f[0]);
       c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; saveView(); render(); } }, f[1] + ' ' + n));
     });
@@ -260,7 +270,7 @@ a{color:var(--terra)}
       list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
         h('div', {},
           h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? ' 🎁' : '', o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, '⚠ NO INVOICE') : null), h('span', {}, inr(o.total))),
-          h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '')),
+          h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '')),
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));
     });
@@ -268,7 +278,9 @@ a{color:var(--terra)}
   }
 
   // One-tap next step on the card itself (shipping needs a tracking number, so it opens the order).
+  function ageText(iso) { var m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000)); return m < 60 ? m + ' min' : m < 1440 ? Math.floor(m / 60) + ' h' : Math.floor(m / 1440) + ' d'; }
   function quick(o) {
+    if (o.state === 'unpaid') return h('div', { class: 'qa' }, h('button', { class: 'btn small', onclick: function (e) { e.stopPropagation(); openOrder(o.id); } }, 'Send payment link'));
     var map = { topack: ['Mark packed', 'packed'], packed: ['Ship: enter tracking', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
     if (!m) return null;
     return h('div', { class: 'qa' }, h('button', { class: 'btn small' + (o.state === 'packed' ? ' ghost' : ''), onclick: function (e) {
@@ -381,6 +393,37 @@ a{color:var(--terra)}
       })
       .catch(function (e) { if (w) w.close(); toast('Could not open the invoice: ' + e.message, 6000); });
   }
+  // Unpaid order: get the payable link and send it to the customer.
+  function waText(o, url, until) {
+    var first = String(o.name || '').trim().split(/\s+/)[0] || 'there';
+    return 'Hi ' + first + ', this is Munchingo 🍪 Your order ' + o.id + ' (' + inr(o.total) + ') is saved but the payment is not complete yet. You can pay securely here: ' + url + (until ? ' (works until ' + until + ')' : '') + '\nIf the link does not open, just reply here and we will help.';
+  }
+  function payPanel(o) {
+    var box = h('div', { class: 'paybox' });
+    box.appendChild(h('p', { class: 'muted', style: 'margin:0' }, 'Placed ' + ageText(o.created_at) + ' ago. The customer has not paid. Send them the link: the order stays reserved until it is paid or cancelled.'));
+    var acts = h('div', { class: 'acts' });
+    function getLink(fresh, email, btn, then, failed) {
+      if (btn) btn.disabled = true;
+      return api('/admin/api/orders/' + encodeURIComponent(o.id) + '/payment-link', { method: 'POST', body: { fresh: !!fresh, email: !!email } }).then(function (j) {
+        if (btn) btn.disabled = false;
+        if (!j.ok) { if (failed) failed(); return toast(j.error || 'Could not get the payment link', 7000); }
+        then(j);
+      }).catch(function (e) { if (btn) btn.disabled = false; if (failed) failed(); toast('Could not reach the server: ' + e.message, 6000); });
+    }
+    if (o.email) acts.appendChild(h('button', { class: 'btn small', onclick: function (e) { if (!confirm('Email the payment link to ' + o.email + '?')) return; getLink(false, true, e.target, function (j) { toast('Payment link emailed to ' + o.email + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }); } }, 'Email link'));
+    acts.appendChild(h('button', { class: 'btn small' + (o.email ? ' ghost' : ''), onclick: function (e) {
+      var w = window.open('', '_blank');
+      getLink(false, false, e.target, function (j) {
+        var url = 'https://wa.me/' + encodeURIComponent(o.phone) + '?text=' + encodeURIComponent(waText(o, j.url, j.validUntilText));
+        if (w) w.location = url; else window.location = url;
+      }, function () { if (w) w.close(); });
+    } }, 'WhatsApp message'));
+    acts.appendChild(h('button', { class: 'btn ghost small', onclick: function (e) { getLink(false, false, e.target, function (j) { copyText(j.url); toast('Payment link copied', 3500); }); } }, 'Copy link'));
+    acts.appendChild(h('button', { class: 'btn ghost small', title: 'Cancels the old link and makes a new one valid for 24 hours', onclick: function (e) { if (!confirm('Make a NEW payment link? The old one will stop working.')) return; getLink(true, false, e.target, function (j) { copyText(j.url); toast('New link made and copied. Valid until ' + j.validUntilText, 6000); load(); }); } }, 'New link'));
+    box.appendChild(acts);
+    if (state.role === 'owner') box.appendChild(h('div', { class: 'acts' }, h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order? The payment link will stop working.')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
+    return section('Waiting for payment', box);
+  }
   function draw(o) {
     var p = $('panel'); p.textContent = '';
     p.appendChild(h('div', { class: 'row' }, h('div', { style: 'flex:1' }, h('b', { style: 'font-size:18px' }, o.id), h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase())), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
@@ -422,10 +465,10 @@ a{color:var(--terra)}
     if (state.role === 'owner' && ['packed', 'shipped', 'delivered'].indexOf(o.state) >= 0) p.appendChild(section('Owner', h('p', { class: 'muted' }, 'Made a mistake? Step this order back one stage. The customer is not un-emailed.'),
       h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Undo the last step (' + o.state + ')?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/undo', {}, 'Stepped back', e.target); } }, 'Undo last step')));
     if (state.role === 'owner' && o.status === 'paid' && o.refundable > 0) p.appendChild(refundForm(o));
-    if (o.state === 'unpaid' && state.role === 'owner') p.appendChild(section('Unpaid order', h('p', { class: 'muted' }, 'The customer has not paid. Cancelling closes the payment link.'), h('button', { class: 'btn red small', onclick: function (e) { if (confirm('Cancel this unpaid order?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/cancel', {}, 'Order cancelled', e.target); } }, 'Cancel unpaid order')));
+    if (o.state === 'unpaid') p.appendChild(payPanel(o));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled' }[e.event] || e.event);
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled', payment_link_emailed: 'Payment link emailed', payment_link_regenerated: 'New payment link made' }[e.event] || e.event);
       return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';

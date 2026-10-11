@@ -65,6 +65,7 @@ router.post('/admin/api/orders/:id/note', wrap(async (req) => actions.saveNote(r
 
 // Owner only: money, undo, stock, team.
 router.post('/admin/api/orders/:id/refund', owner, wrap(async (req) => ({ refund: await actions.startRefund({ ...req.body, ...enc(req) }) })));
+router.post('/admin/api/orders/:id/payment-link', wrap(async (req) => actions.sendPaymentLink({ ...enc(req), fresh: !!(req.body || {}).fresh, email: !!(req.body || {}).email })));
 router.post('/admin/api/orders/:id/cancel', owner, wrap(async (req) => actions.cancelUnpaid(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/issue-invoice', owner, wrap(async (req) => actions.issueMissingInvoice(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/retry-zoho', owner, wrap(async (req) => actions.retryZoho(req.params.id, req.admin)));

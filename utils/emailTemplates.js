@@ -205,6 +205,27 @@ function subscriptionRenewalHtml({ customerName, orderId, items, discountPct, to
   });
 }
 
+// ── Customer: your order is waiting for payment ──────────────────────────────
+function paymentReminderHtml({ customerName, orderId, items, total, paymentUrl, validUntilText, preorderText, discountRupees = 0, couponCode = null }) {
+  const first = String(customerName || 'there').trim().split(/\s+/)[0];
+  const body = [
+    card(`
+      <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:10px;">Order ${esc(orderId)} &middot; waiting for payment</div>
+      ${summaryTable({ items, totalRupees: total, discountRupees, couponCode, gstAmount: Math.round((total - total / 1.05) * 100) }).replace('Total paid', 'Total to pay')}
+      <div style="text-align:center;padding:22px 0 4px;">${button(paymentUrl, `Pay &#8377;${total} securely`)}</div>
+      <div style="text-align:center;font-family:${FONT};font-size:12.5px;color:${C.ink2};padding-top:6px;">${validUntilText ? 'This link works until ' + esc(validUntilText) + '.' : ''}</div>`),
+    `<tr><td style="padding:14px 34px 0;font-family:${FONT};font-size:12.5px;line-height:1.6;color:${C.ink2};text-align:center;">${preorderText ? esc(preorderText) + '<br>' : ''}If the link does not open, or you would like to change something, just reply to this email or WhatsApp us at +91 99889 92024 and we will sort it out.</td></tr>`,
+  ].join('');
+  return shell({
+    preheader: `Your Munchingo order ${orderId} is saved. Complete payment to confirm it.`,
+    title: `Your order is saved, ${esc(first)}.`,
+    subtitle: 'One step left: complete the payment and we will take it from there.',
+    body,
+    promo: 'none',
+    boughtSlugs: (items || []).map((i) => i.slug).filter(Boolean),
+  });
+}
+
 // ── Customer: refund ──────────────────────────────────────────────────────────
 function refundHtml({ customerName, orderId, amount, isFull }) {
   const first = String(customerName || 'there').trim().split(/\s+/)[0];
@@ -318,4 +339,4 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
   </table></td></tr></table></body></html>`;
 }
 
-module.exports = { shippedHtml, ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };
+module.exports = { paymentReminderHtml, shippedHtml, ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };

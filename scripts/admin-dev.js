@@ -27,7 +27,9 @@ const orders = [
   mk('MNG-HHHH-1007', 6000, 'paid', { shipped_at: new Date(now - 4000000).toISOString(), delivered_at: new Date(now - 1000000).toISOString(), carrier: 'Delhivery', awb: '99887766' }),
   mk('MNG-TEST-1001', 90000, 'paid', {}),
   mk('MNG-CCCC-1009', 1500, 'paid', { shipped_at: new Date(now - 1000000).toISOString(), carrier: 'Delhivery', awb: '1234567890' }),
-  mk('MNG-DDDD-1009', 1700, 'pending_payment', { payment_id: null, payment_link_id: 'plink_1' }),
+  mk('MNG-DDDD-1009', 1700, 'pending_payment', { payment_id: null, payment_link_id: 'plink_1', payment_link_url: 'https://rzp.io/rzp/OLD' }),
+  mk('MNG-UUUU-1011', 20, 'pending_payment', { payment_id: null, payment_link_id: 'plink_2', payment_link_url: 'https://rzp.io/rzp/FRESH', total: 900, discount_amount: 0, coupon_code: null, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 3, item_price: 300, unit: '250g' }] }),
+  mk('MNG-NOEM-1011', 30, 'pending_payment', { payment_id: null, payment_link_id: 'plink_3', payment_link_url: 'https://rzp.io/rzp/NOEM', customer_email: null }),
   mk('MNG-EEEE-1008', 3000, 'cancelled', {}),
 ];
 const invoices = {};
@@ -57,6 +59,7 @@ stub('utils/database.js', {
   markOrderRefunded: async (id) => { orders.find((o) => o.order_id === id).status = 'cancelled'; },
   listPrices: async () => priceRows,
   setPrice: async ({ slug, price, mrp }) => { const r = priceRows.find((x) => x.slug === slug); if (r) { r.price = price; r.mrp = mrp; } else priceRows.push({ slug, price, mrp }); },
+  updateOrderPaymentLink: async (id, { paymentLinkId, paymentLinkUrl }) => Object.assign(orders.find((o) => o.order_id === id), { payment_link_id: paymentLinkId, payment_link_url: paymentLinkUrl }),
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
@@ -64,12 +67,14 @@ stub('utils/mailer.js', {
   sendAdminCode: async (email, code) => { fs.writeFileSync('/tmp/admin-dev-code-' + email.split('@')[0] + '.txt', code); fs.writeFileSync('/tmp/admin-dev-code.txt', code); console.log('[dev] login code for', email, '=', code); },
   sendShippedEmail: async ({ order }) => console.log('[dev] shipped email ->', order.customer_email),
   sendOwnerPaidEmail: async () => console.log('[dev] owner email'),
+  sendPaymentReminderEmail: async ({ email, paymentUrl }) => console.log('[dev] payment reminder ->', email, paymentUrl),
   sendCustomerConfirmationEmail: async ({ order }) => console.log('[dev] invoice email ->', order.customer_email),
 });
 stub('utils/zohoBooks.js', { configured: () => true, syncPaidOrder: async () => ({ invoiceId: 'zoho_inv_dev' }), syncCreditNote: async () => ({ creditNoteId: 'zoho_cn_dev' }) });
 stub('utils/razorpay.js', {
   createRefund: async ({ paymentId, amountPaise, notes }) => { console.log('[dev] Razorpay refund', paymentId, amountPaise, notes); return { id: 'rfnd_dev_' + Date.now(), status: 'processed' }; },
   expirePaymentLink: async () => true,
+  createPaymentLink: async ({ orderId, regenerated }) => ({ id: 'plink_new_' + Date.now(), url: 'https://rzp.io/rzp/NEW' + (regenerated ? 'R' : '') }),
   listPayments: async () => orders.filter((o) => o.payment_id && o.order_id !== 'MNG-TEST-1001').map((o) => ({ id: o.payment_id, amount: Math.round(o.total * 100), amount_refunded: 0, status: 'captured' })),
 });
 const express = require('express');

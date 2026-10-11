@@ -52,7 +52,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
   return {
     id: o.order_id, state, status: o.status,
     created_at: o.created_at, paid_at: o.status === 'paid' || o.payment_id ? ((money && money.paidAt && money.paidAt[o.payment_id]) || o.updated_at) : null,
-    name: o.customer_name, phone: o.customer_phone, email: o.customer_email || '',
+    name: o.customer_name, phone: o.customer_phone, email: o.customer_email || '', pay_url: state === 'unpaid' ? (o.payment_link_url || '') : '',
     address: (o.delivery_address && o.delivery_address.raw) || '', gift_note: o.gift_note || '',
     ship_name: (o.delivery_address && o.delivery_address.recipientName) || o.customer_name, ship_phone: (o.delivery_address && o.delivery_address.recipientPhone) || o.customer_phone, gift_for: !!(o.delivery_address && o.delivery_address.recipientName),
     coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
@@ -188,6 +188,46 @@ async function cancelUnpaid(orderId, actor) {
   bust();
   await logEvent(orderId, 'cancelled_unpaid', actor);
   return { orderId };
+}
+
+// An unpaid order: give the admin the payable link (to email, WhatsApp or copy), or make a fresh one.
+// The link Razorpay made at checkout works for 24 hours. We reuse it while it still has more than 4 hours left;
+// otherwise (or when `fresh` is set) the old link is cancelled and a new one issued, so only one link is ever payable.
+async function sendPaymentLink({ orderId, fresh = false, email = false, actor }) {
+  const { order, shaped } = await getOrderDetail(orderId);
+  if (order.status === 'pending_address') throw new AdminError('This order has no delivery address yet, so there is no payment link to send.', 409);
+  if (order.status !== 'pending_payment') throw new AdminError(`Order is "${order.status}", so it is not waiting for payment.`, 409);
+  if ((Date.now() - new Date(order.created_at).getTime()) / 86_400_000 > 7) throw new AdminError("This order is more than 7 days old. Cancel it and ask the customer to order again at today's prices.", 409);
+  if (email && !order.customer_email) throw new AdminError('This customer did not give an email address. Use WhatsApp instead.', 409);
+
+  const lastFresh = shaped.events.filter((e) => e.event === 'payment_link_regenerated').pop();
+  let madeAt = new Date(lastFresh ? lastFresh.at : order.created_at).getTime();
+  let url = order.payment_link_url, regenerated = false;
+  if (fresh || !url || (Date.now() - madeAt) / 3_600_000 > 20) {
+    const rz = require('./razorpay');
+    if (order.payment_link_id) await rz.expirePaymentLink(order.payment_link_id);
+    const made = await rz.createPaymentLink({ orderId, amount: order.total, customerPhone: order.customer_phone, customerName: order.customer_name, regenerated: Boolean(order.payment_link_id) });
+    await db.updateOrderPaymentLink(orderId, { paymentLinkId: made.id, paymentLinkUrl: made.url });
+    url = made.url; madeAt = Date.now(); regenerated = true;
+    await logEvent(orderId, 'payment_link_regenerated', actor);
+  }
+  const validUntil = new Date(madeAt + 24 * 3_600_000);
+  const validUntilText = validUntil.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+
+  let emailed = false;
+  if (email) {
+    const launch = require('./launch');
+    await require('./mailer').sendPaymentReminderEmail({
+      email: order.customer_email, customerName: order.customer_name, orderId, items: order.items || [],
+      discountRupees: Number(order.discount_amount || 0), couponCode: order.coupon_code || null,
+      total: Number(order.total), paymentUrl: url, validUntilText,
+      preorderText: launch.isPreorder() ? `This is a pre-order: your box is dispatched from ${launch.dispatchLabel()}.` : '',
+    });
+    emailed = true;
+    await logEvent(orderId, 'payment_link_emailed', actor, { meta: { to: order.customer_email } });
+  }
+  bust();
+  return { url, regenerated, emailed, validUntil: validUntil.toISOString(), validUntilText };
 }
 
 async function resendInvoice(orderId, actor) {
@@ -370,4 +410,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

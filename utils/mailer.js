@@ -226,6 +226,19 @@ async function sendSubscriptionRenewalEmail({ email, customerName, orderId, item
   console.log(`[MAILER] Subscription renewal email sent for #${orderId}`);
 }
 
+async function sendPaymentReminderEmail({ email, customerName, orderId, items, total, paymentUrl, validUntilText, preorderText, discountRupees, couponCode }) {
+  const t = require('./emailTemplates');
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [email],
+    replyTo: process.env.NOTIFY_EMAIL ? [process.env.NOTIFY_EMAIL] : undefined,
+    subject: `Complete your Munchingo order #${orderId}`,
+    html: t.paymentReminderHtml({ customerName, orderId, items, total, paymentUrl, validUntilText, preorderText, discountRupees, couponCode }),
+  });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Payment reminder email sent for #${orderId}`);
+}
+
 async function sendRefundEmail({ email, customerName, orderId, amount, isFull }) {
   const t = require('./emailTemplates');
   const { error } = await resend.emails.send({
@@ -347,4 +360,4 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendAdminCode, sendShippedEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail };
+module.exports = { sendAdminCode, sendShippedEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
