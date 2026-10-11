@@ -29,5 +29,5 @@ insert into product_prices (slug, price, mrp, updated_by) values
   ('atta-kesari',     350, 350, 'migration'),
   ('atta-lite-sugar', 350, 350, 'migration'),
   ('trio-gift-set',   739, null, 'migration'),
-  ('full-range-set',  999, null, 'migration')
+  ('full-range-set',  999, 1300, 'migration')
 on conflict (slug) do nothing;
