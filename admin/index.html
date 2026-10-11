@@ -394,11 +394,6 @@ a{color:var(--terra)}
       .catch(function (e) { if (w) w.close(); toast('Could not open the invoice: ' + e.message, 6000); });
   }
   // Unpaid order: get the payable link and send it to the customer.
-  function waText(o, url, until, lang) {
-    var first = String(o.name || '').trim().split(/\s+/)[0] || (lang === 'hi' ? 'जी' : 'there');
-    if (lang === 'hi') return 'नमस्ते ' + first + ', Munchingo की ओर से 🍪 आपका ऑर्डर ' + o.id + ' (' + inr(o.total) + ') सेव हो गया है, लेकिन भुगतान अभी पूरा नहीं हुआ है। आप यहाँ सुरक्षित रूप से भुगतान कर सकते हैं: ' + url + (until ? ' (' + until + ' तक)' : '') + '\nलिंक न खुले तो यहीं जवाब दें, हम मदद करेंगे।';
-    return 'Hi ' + first + ', this is Munchingo 🍪 Your order ' + o.id + ' (' + inr(o.total) + ') is saved but the payment is not complete yet. You can pay securely here: ' + url + (until ? ' (works until ' + until + ')' : '') + '\nIf the link does not open, just reply here and we will help.';
-  }
   function leftText(ms) { if (ms <= 0) return null; var m = Math.floor(ms / 60000), h = Math.floor(m / 60); return h >= 1 ? h + ' h ' + (m % 60) + ' min' : m + ' min'; }
   function payPanel(o) {
     var box = h('div', { class: 'paybox' });
@@ -431,17 +426,6 @@ a{color:var(--terra)}
     });
     box.appendChild(munch);
     box.appendChild(h('p', { class: 'muted', style: 'font-size:12px;margin:2px 0 8px' }, o.lang === 'hi' ? 'This customer chose Hindi earlier (highlighted).' : 'This customer has not chosen a language yet, so English is highlighted. Pick the one you want.'));
-    var mine = h('div', { class: 'acts', style: 'align-items:center' }, h('span', { class: 'muted' }, 'Or from your own WhatsApp:'));
-    ['en', 'hi'].forEach(function (L) {
-      mine.appendChild(h('button', { class: 'btn ghost small', title: 'Opens WhatsApp on THIS computer or phone, from your personal number, with the ' + NAME[L] + ' message ready', onclick: function (e) {
-        var w = window.open('', '_blank');
-        getLink(false, false, e.target, function (j) {
-          var url = 'https://wa.me/' + encodeURIComponent(o.phone) + '?text=' + encodeURIComponent(waText(o, j.url, L === 'hi' ? j.validUntilTextHi : j.validUntilText, L));
-          if (w) w.location = url; else window.location = url;
-        }, function () { if (w) w.close(); }, false, L);
-      } }, NAME[L]));
-    });
-    box.appendChild(mine);
     var acts = h('div', { class: 'acts' });
     if (o.email) acts.appendChild(h('button', { class: 'btn small', onclick: function (e) { if (!confirm('Email the payment link to ' + o.email + '? (Emails are in English.)')) return; getLink(false, true, e.target, function (j) { toast('Payment link emailed to ' + o.email + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }); } }, 'Email link'));
     acts.appendChild(h('button', { class: 'btn ghost small', onclick: function (e) { getLink(false, false, e.target, function (j) { copyText(j.url); toast('Payment link copied', 3500); }); } }, 'Copy link'));
@@ -465,7 +449,7 @@ a{color:var(--terra)}
     var canEdit = o.state === 'topack' || o.state === 'packed';
     if (canEdit) addr.querySelector('.acts').appendChild(h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Correct delivery address (the old one is kept in the timeline):', o.address); if (v != null && v.trim() !== o.address) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/address', { address: v }, 'Address updated'); } }, 'Edit address'));
     p.appendChild(section('Ship to', kv([['Name', o.name], ['Phone', '+' + o.phone]]), addr,
-      h('div', { class: 'acts' }, h('a', { class: 'btn small', title: 'Opens WhatsApp from your own number', href: 'https://wa.me/' + encodeURIComponent(o.phone), target: '_blank', rel: 'noopener', style: 'text-decoration:none' }, 'Chat (personal WhatsApp)'), h('a', { class: 'btn ghost small', href: 'tel:+' + o.phone, style: 'text-decoration:none' }, 'Call'))));
+      h('div', { class: 'acts' }, (state.role === 'owner' ? h('a', { class: 'btn small', title: 'Opens WhatsApp from your own number', href: 'https://wa.me/' + encodeURIComponent(o.phone), target: '_blank', rel: 'noopener', style: 'text-decoration:none' }, 'Chat (personal WhatsApp)') : null), h('a', { class: 'btn ghost small', href: 'tel:+' + o.phone, style: 'text-decoration:none' }, 'Call'))));
 
     p.appendChild(section('Payment & invoice', kv([['Payment', o.payment_id || 'not paid'], ['Invoice', o.invoice_no ? o.invoice_no + ' (' + (o.supply === 'intra' ? 'CGST+SGST' : 'IGST') + ')' : ''], ['Email', o.email || 'none given'], ['Refunded', o.refunded ? inr(o.refunded) : ''], ['Sent', o.sent ? 'Email ' + (o.sent.email ? '✓' : (o.email ? '✗ not sent' : '–')) + ' · WhatsApp ' + (o.sent.whatsapp ? '✓' : '✗') + ' · Zoho ' + (o.sent.zoho ? '✓' : '✗') : '']]),
       o.invoice_no ? h('div', { class: 'acts' },

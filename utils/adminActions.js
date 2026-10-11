@@ -247,7 +247,7 @@ async function sendPaymentLink({ orderId, fresh = false, email = false, whatsapp
     } catch (err) {
       const why = (err.response && err.response.data && err.response.data.error && err.response.data.error.message) || err.message;
       console.error('[ADMIN] payment reminder WhatsApp failed:', why);
-      throw new AdminError('WhatsApp could not send this from the Munchingo number (' + String(why).slice(0, 140) + '). The reminder template may still be in Meta review. Use Email, or "Personal WhatsApp" instead.' + (regenerated ? ' A fresh payment link WAS made and is ready to copy.' : ''), 502);
+      throw new AdminError('WhatsApp could not send this from the Munchingo number (' + String(why).slice(0, 140) + '). The reminder template may still be in Meta review. Use Email, or tell the customer yourself.' + (regenerated ? ' A fresh payment link WAS made and is ready to copy.' : ''), 502);
     }
   }
   bust();
