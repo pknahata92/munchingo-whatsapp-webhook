@@ -109,6 +109,40 @@ async function login(email) {
   const detOld = (await call('/orders/MNG-WAFA-1011', o.token)).j.order; ok(!!detOld.link_until, 'link expiry present on every unpaid order');
   const detPaid = (await call(`/orders/${A}`, o.token)).j.order; ok(!detPaid.link_until, 'paid orders have no link expiry');
 
+  // ── coupons (owner only) ──
+  const cp = (path, tok, body, method) => call('/coupons' + path, tok, body, method);
+  ok((await cp('', s.token)).s === 403, 'staff cannot list coupons');
+  ok((await cp('', s.token, { type: 'percent', value: 10 })).s === 403, 'staff cannot create coupons');
+  const cl = (await cp('', o.token)).j; ok(cl.ok && cl.coupons.length === 2 && cl.scopes.length === 3, 'owner lists coupons with scopes');
+  const f10 = cl.coupons.find((c) => c.code === 'FOUNDING10'); ok(f10 && f10.status === 'live' && f10.redeemed === 3 && f10.discountGiven === 264 && f10.customers === 3 && /10% off \(up to .100\)/.test(f10.benefit), 'usage stats and wording for FOUNDING10');
+  ok(cl.coupons.find((c) => c.code === 'OLD5').status === 'expired', 'an old code shows as expired');
+  const gen = (await cp('/generate?prefix=ig', o.token)).j; ok(gen.ok && /^IG-[A-HJ-NP-Z2-9]{5}$/.test(gen.code), 'generated code is readable: ' + gen.code);
+  const c1 = await cp('', o.token, { code: 'friend-hera', type: 'percent', value: 15, maxDiscount: 150, minOrder: 700, scope: 'trio-gift-set', maxUses: 1, perCustomer: 1, expiresAt: '2030-01-31', note: 'apology for Hera', phone: '98100 12345' });
+  ok(c1.j.ok && c1.j.coupon.code === 'FRIEND-HERA' && c1.j.coupon.phone === '919810012345' && c1.j.coupon.scope === 'trio-gift-set' && c1.j.coupon.maxUses === 1 && c1.j.coupon.status === 'live', 'owner creates a personal capped coupon');
+  ok(/FRIEND-HERA/.test(c1.j.coupon.shareEn) && /15% off \(up to .150\)/.test(c1.j.coupon.shareEn) && /Trio/.test(c1.j.coupon.shareEn) && /just for you/.test(c1.j.coupon.shareEn), 'English share message carries code, cap, scope and personal line');
+  ok(/FRIEND-HERA/.test(c1.j.coupon.shareHi) && /15%/.test(c1.j.coupon.shareHi) && /[\u0900-\u097F]/.test(c1.j.coupon.shareHi), 'Hindi share message exists');
+  ok((await cp('', o.token, { code: 'FRIEND-HERA', type: 'flat', value: 50 })).s === 409, 'duplicate code refused');
+  const c2 = await cp('', o.token, { type: 'flat', value: 100 }); ok(c2.j.ok && /^MUN-/.test(c2.j.coupon.code) && c2.j.coupon.perCustomer === 1 && c2.j.coupon.maxUses === null, 'empty code is generated; defaults: one use per customer, unlimited total');
+  ok((await cp('', o.token, { code: 'BIG', type: 'percent', value: 90 })).s === 400, 'percent above 60 refused');
+  ok((await cp('', o.token, { code: 'BIGFLAT', type: 'flat', value: 5000 })).s === 400, 'flat above 2000 refused');
+  ok((await cp('', o.token, { code: 'NOVAL', type: 'flat' })).s === 400, 'discount required');
+  ok((await cp('', o.token, { code: 'A', type: 'flat', value: 10 })).s === 400, 'code too short refused');
+  ok((await cp('', o.token, { code: 'BADPHONE', type: 'flat', value: 10, phone: '12345' })).s === 400, 'bad phone refused');
+  ok((await cp('', o.token, { code: 'PASTDATE', type: 'flat', value: 10, expiresAt: '2020-01-01' })).s === 400, 'expiry in the past refused');
+  ok((await cp('', o.token, { code: 'BACKWARDS', type: 'flat', value: 10, startsAt: '2030-02-01', expiresAt: '2030-01-01' })).s === 400, 'start after expiry refused');
+  ok((await cp('', o.token, { code: 'BADSCOPE', type: 'flat', value: 10, scope: 'atta-original' })).s === 400, 'unsupported scope refused');
+  const pz = await cp('/FRIEND-HERA', o.token, { active: false }); ok(pz.j.ok && pz.j.coupon.status === 'paused', 'pause');
+  const rz = await cp('/FRIEND-HERA', o.token, { active: true, expiresAt: '2031-06-30', maxUses: 5, note: 'now for 5 people' }); ok(rz.j.ok && rz.j.coupon.status === 'live' && rz.j.coupon.maxUses === 5 && /2031/.test(rz.j.coupon.expiresAt) && rz.j.coupon.note === 'now for 5 people', 'resume + extend + edit limits and note');
+  ok((await cp('/FRIEND-HERA', o.token, { value: 99 })).s === 400, 'editing the discount is also range-checked');
+  ok((await cp('/NOPE', o.token, { active: false })).s === 404, 'unknown code on update');
+  ok((await cp('/FOUNDING10/delete', o.token, {})).s === 409, 'a used code cannot be deleted');
+  ok((await cp('/FRIEND-HERA/delete', o.token, {})).j.ok && !(await cp('', o.token)).j.coupons.some((c) => c.code === 'FRIEND-HERA'), 'an unused code can be deleted');
+  await fetch('http://localhost:8430/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: false }) });
+  ok((await cp('', o.token, { code: 'WITHNOTE', type: 'flat', value: 10, note: 'x' })).s === 409, 'notes need the migration: clear message when it has not run');
+  ok((await cp('', o.token, { code: 'PLAIN', type: 'flat', value: 10 })).j.ok, 'plain codes still work without the migration');
+  ok(!(await cp('', o.token)).j.ready, 'list reports the migration as missing');
+  await fetch('http://localhost:8430/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: true }) });
+
   // team: disable staff -> immediately locked out
   ok((await call('/team', o.token, { email: 'staff@example.com', role: 'staff', active: false })).j.ok, 'owner disables staff');
   ok((await call('/orders', s.token)).s === 401, 'disabled staff locked out at once');

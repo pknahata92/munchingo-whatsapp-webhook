@@ -40,6 +40,16 @@ async function validateCoupon(code, { cartSlugs, realTotal, customerPhone }) {
   if (error) { console.error('[COUPONS] lookup error:', error.message); return { ok: false, error: 'Could not check that code right now. Please try again.' }; }
   if (!coupon || !coupon.active) return { ok: false, error: 'That code is not valid.' };
 
+  // Optional columns from coupons_admin_migration.sql (undefined on rows when the migration has not run: checks are then skipped).
+  if (coupon.starts_at && new Date(coupon.starts_at) > new Date()) {
+    return { ok: false, error: 'That code is not active yet.' };
+  }
+  if (coupon.allowed_phone) {
+    if (!customerPhone) return { ok: false, error: 'Please enter your mobile number first. This code is for one customer.' };
+    if (String(coupon.allowed_phone).replace(/\D/g, '') !== String(customerPhone).replace(/\D/g, '')) {
+      return { ok: false, error: 'This code is for a specific customer and cannot be used with this number.' };
+    }
+  }
   if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
     return { ok: false, error: 'That code has expired.' };
   }

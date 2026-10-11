@@ -419,7 +419,52 @@ async function setPrice({ slug, price, mrp, actor }) {
   if (h.error) console.error('[DB] price history not recorded:', h.error.message);
 }
 
+// ── Coupons (admin > Coupons) ────────────────────────────────────────────────
+let _couponCols = { at: 0, ok: false };
+async function couponColumnsReady() {
+  if (Date.now() - _couponCols.at < 60_000) return _couponCols.ok;
+  const { error } = await db().from('coupons').select('note,created_by,starts_at,allowed_phone').limit(1);
+  _couponCols = { at: Date.now(), ok: !error };
+  return _couponCols.ok;
+}
+async function listCoupons() {
+  const { data, error } = await db().from('coupons').select('*').order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function listCouponRedemptions() {
+  const { data, error } = await db().from('coupon_redemptions').select('coupon_code, customer_phone, discount_amount').limit(10000);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function getCoupon(code) {
+  const { data, error } = await db().from('coupons').select('*').eq('code', code).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+async function insertCoupon(row) {
+  const { data, error } = await db().from('coupons').insert(row).select().single();
+  if (error) throw new Error(error.message);
+  _couponCols.at = 0;
+  return data;
+}
+async function updateCouponRow(code, fields) {
+  const { data, error } = await db().from('coupons').update(fields).eq('code', code).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+async function countCouponRedemptions(code) {
+  const { count, error } = await db().from('coupon_redemptions').select('id', { count: 'exact', head: true }).eq('coupon_code', code);
+  if (error) throw new Error(error.message);
+  return count || 0;
+}
+async function deleteCouponRow(code) {
+  const { error } = await db().from('coupons').delete().eq('code', code);
+  if (error) throw new Error(error.message);
+}
+
 module.exports = {
+  couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
   listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,

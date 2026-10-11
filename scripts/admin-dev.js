@@ -10,6 +10,13 @@ process.env.ADMIN_EMAILS = 'owner@example.com';
 const team = [{ email: 'staff@example.com', name: 'Staff', role: 'staff', active: true, created_at: new Date().toISOString() }];
 const events = [];
 const priceRows = [{ slug: 'atta-original', price: 300, mrp: 300 }, { slug: 'atta-ajwain', price: 300, mrp: 300 }, { slug: 'atta-kesari', price: 350, mrp: 350 }, { slug: 'atta-lite-sugar', price: 350, mrp: 350 }, { slug: 'trio-gift-set', price: 739, mrp: null }, { slug: 'full-range-set', price: 999, mrp: null }];
+const coupons = [
+  { code: 'FOUNDING10', type: 'percent', value: 10, max_discount_amount: 100, min_order_value: 0, scope_slug: null, max_uses: 100, uses_count: 3, max_uses_per_customer: 1, expires_at: '2026-12-31T18:29:59Z', active: true, created_at: '2026-09-01T00:00:00Z' },
+  { code: 'OLD5', type: 'flat', value: 50, min_order_value: 499, scope_slug: null, max_uses: null, uses_count: 0, max_uses_per_customer: 1, expires_at: '2026-01-01T00:00:00Z', active: true, created_at: '2026-01-01T00:00:00Z' },
+];
+const couponReds = [
+  { coupon_code: 'FOUNDING10', customer_phone: '919810000001', discount_amount: 74 }, { coupon_code: 'FOUNDING10', customer_phone: '919810000002', discount_amount: 100 }, { coupon_code: 'FOUNDING10', customer_phone: '919810000003', discount_amount: 90 },
+];
 const stockRows = ['atta-original', 'atta-kesari', 'atta-lite-sugar', 'atta-ajwain'].map((slug) => ({ slug, available: true }));
 process.env.DIGEST_SECRET = 'dev-only-secret';
 process.env.RESEND_API_KEY = 'x';
@@ -61,6 +68,14 @@ stub('utils/database.js', {
   listPrices: async () => priceRows,
   setPrice: async ({ slug, price, mrp }) => { const r = priceRows.find((x) => x.slug === slug); if (r) { r.price = price; r.mrp = mrp; } else priceRows.push({ slug, price, mrp }); },
   updateOrderPaymentLink: async (id, { paymentLinkId, paymentLinkUrl }) => Object.assign(orders.find((o) => o.order_id === id), { payment_link_id: paymentLinkId, payment_link_url: paymentLinkUrl }),
+  couponColumnsReady: async () => global.__couponCols !== false,
+  listCoupons: async () => coupons.slice().reverse(),
+  listCouponRedemptions: async () => couponReds,
+  getCoupon: async (c) => coupons.find((x) => x.code === c) || null,
+  insertCoupon: async (row) => { const r = { uses_count: 0, created_at: new Date().toISOString(), ...row }; coupons.push(r); return r; },
+  updateCouponRow: async (c, f) => Object.assign(coupons.find((x) => x.code === c), f),
+  countCouponRedemptions: async (c) => couponReds.filter((r) => r.coupon_code === c).length,
+  deleteCouponRow: async (c) => { coupons.splice(coupons.findIndex((x) => x.code === c), 1); },
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
@@ -82,5 +97,6 @@ stub('utils/razorpay.js', {
 const express = require('express');
 const app = express();
 app.use(express.json());
+app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body && req.body.ready); res.json({ ok: true }); });   // practice copy only: pretend the coupons migration has / has not run
 app.use(require('../routes/admin'));
 app.listen(8430, () => console.log('Admin practice copy: http://localhost:8430/admin'));
