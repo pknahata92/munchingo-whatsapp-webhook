@@ -402,41 +402,48 @@ a{color:var(--terra)}
   function leftText(ms) { if (ms <= 0) return null; var m = Math.floor(ms / 60000), h = Math.floor(m / 60); return h >= 1 ? h + ' h ' + (m % 60) + ' min' : m + ' min'; }
   function payPanel(o) {
     var box = h('div', { class: 'paybox' });
+    var saved = o.lang === 'hi' ? 'hi' : 'en';   // the customer's earlier choice, else English
     box.appendChild(h('p', { class: 'muted', style: 'margin:0' }, 'Placed ' + ageText(o.created_at) + ' ago. The customer has not paid. Send them the link: the order stays reserved until it is paid or cancelled.'));
-    var lang = o.lang === 'hi' ? 'hi' : 'en';
     var cd = h('p', { style: 'margin:8px 0 0;font-weight:600' });
     function tick() {
       var left = o.link_until ? leftText(new Date(o.link_until).getTime() - Date.now()) : null;
-      cd.textContent = o.link_until ? (left ? '⏱ Link works for another ' + left : '⌛ This link has EXPIRED. Tap "New link" (or any send button: a fresh link is made automatically).') : '';
+      cd.textContent = o.link_until ? (left ? '⏱ Link works for another ' + left : '⌛ This link has EXPIRED. Any send button below makes a fresh link automatically.') : '';
       cd.style.color = o.link_until && !left ? '#F29B8E' : '';
     }
     tick(); var timer = setInterval(function () { if (!document.body.contains(cd)) return clearInterval(timer); tick(); }, 30000);
     box.appendChild(cd);
-    var langRow = h('div', { class: 'acts', style: 'align-items:center' }, h('span', { class: 'muted' }, 'Message language:'));
-    ['en', 'hi'].forEach(function (L) {
-      var b = h('button', { class: 'btn small' + (lang === L ? '' : ' ghost'), onclick: function () { lang = L; [].forEach.call(langRow.querySelectorAll('button'), function (x) { x.className = 'btn small' + (x.dataset.l === lang ? '' : ' ghost'); }); } }, L === 'en' ? 'English' : 'हिन्दी');
-      b.dataset.l = L; langRow.appendChild(b);
-    });
-    langRow.appendChild(h('span', { class: 'muted', style: 'font-size:12px' }, o.lang === 'hi' ? 'Customer chose Hindi earlier.' : 'Customer has not chosen yet (English is the default). Email is always English.'));
-    box.appendChild(langRow);
-    var acts = h('div', { class: 'acts' });
-    function getLink(fresh, email, btn, then, failed, whatsapp) {
+    function getLink(fresh, email, btn, then, failed, whatsapp, useLang) {
       if (btn) btn.disabled = true;
-      return api('/admin/api/orders/' + encodeURIComponent(o.id) + '/payment-link', { method: 'POST', body: { fresh: !!fresh, email: !!email, whatsapp: !!whatsapp, lang: lang } }).then(function (j) {
+      return api('/admin/api/orders/' + encodeURIComponent(o.id) + '/payment-link', { method: 'POST', body: { fresh: !!fresh, email: !!email, whatsapp: !!whatsapp, lang: useLang || saved } }).then(function (j) {
         if (btn) btn.disabled = false;
         if (!j.ok) { if (failed) failed(); return toast(j.error || 'Could not get the payment link', 7000); }
         then(j);
       }).catch(function (e) { if (btn) btn.disabled = false; if (failed) failed(); toast('Could not reach the server: ' + e.message, 6000); });
     }
-    if (o.email) acts.appendChild(h('button', { class: 'btn small', onclick: function (e) { if (!confirm('Email the payment link to ' + o.email + '?')) return; getLink(false, true, e.target, function (j) { toast('Payment link emailed to ' + o.email + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }); } }, 'Email link'));
-    acts.appendChild(h('button', { class: 'btn small', onclick: function (e) { if (!confirm('Send the payment link to +' + o.phone + ' on WhatsApp from the Munchingo number?')) return; getLink(false, false, e.target, function (j) { toast('Sent on WhatsApp from Munchingo to +' + o.phone + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }, null, true); } }, 'WhatsApp (Munchingo)'));
-    acts.appendChild(h('button', { class: 'btn ghost small', title: 'Opens WhatsApp on THIS computer or phone, from your personal number', onclick: function (e) {
-      var w = window.open('', '_blank');
-      getLink(false, false, e.target, function (j) {
-        var url = 'https://wa.me/' + encodeURIComponent(o.phone) + '?text=' + encodeURIComponent(waText(o, j.url, lang === 'hi' ? j.validUntilTextHi : j.validUntilText, lang));
-        if (w) w.location = url; else window.location = url;
-      }, function () { if (w) w.close(); });
-    } }, 'Personal WhatsApp'));
+    var NAME = { en: 'English', hi: 'हिन्दी' };
+    // One tap = one language, sent straight away from the Munchingo number.
+    var munch = h('div', { class: 'acts', style: 'align-items:center' }, h('b', {}, 'WhatsApp from Munchingo:'));
+    ['en', 'hi'].forEach(function (L) {
+      munch.appendChild(h('button', { class: 'btn small' + (saved === L ? '' : ' ghost'), title: 'Sends the ' + NAME[L] + ' payment reminder from the Munchingo number', onclick: function (e) {
+        if (!confirm('Send the ' + NAME[L] + ' payment reminder to +' + o.phone + ' from the Munchingo WhatsApp number?')) return;
+        getLink(false, false, e.target, function (j) { toast('Sent in ' + NAME[L] + ' from Munchingo to +' + o.phone + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }, null, true, L);
+      } }, NAME[L]));
+    });
+    box.appendChild(munch);
+    box.appendChild(h('p', { class: 'muted', style: 'font-size:12px;margin:2px 0 8px' }, o.lang === 'hi' ? 'This customer chose Hindi earlier (highlighted).' : 'This customer has not chosen a language yet, so English is highlighted. Pick the one you want.'));
+    var mine = h('div', { class: 'acts', style: 'align-items:center' }, h('span', { class: 'muted' }, 'Or from your own WhatsApp:'));
+    ['en', 'hi'].forEach(function (L) {
+      mine.appendChild(h('button', { class: 'btn ghost small', title: 'Opens WhatsApp on THIS computer or phone, from your personal number, with the ' + NAME[L] + ' message ready', onclick: function (e) {
+        var w = window.open('', '_blank');
+        getLink(false, false, e.target, function (j) {
+          var url = 'https://wa.me/' + encodeURIComponent(o.phone) + '?text=' + encodeURIComponent(waText(o, j.url, L === 'hi' ? j.validUntilTextHi : j.validUntilText, L));
+          if (w) w.location = url; else window.location = url;
+        }, function () { if (w) w.close(); }, false, L);
+      } }, NAME[L]));
+    });
+    box.appendChild(mine);
+    var acts = h('div', { class: 'acts' });
+    if (o.email) acts.appendChild(h('button', { class: 'btn small', onclick: function (e) { if (!confirm('Email the payment link to ' + o.email + '? (Emails are in English.)')) return; getLink(false, true, e.target, function (j) { toast('Payment link emailed to ' + o.email + (j.regenerated ? ' (a fresh link was made)' : ''), 5000); load(); }); } }, 'Email link'));
     acts.appendChild(h('button', { class: 'btn ghost small', onclick: function (e) { getLink(false, false, e.target, function (j) { copyText(j.url); toast('Payment link copied', 3500); }); } }, 'Copy link'));
     acts.appendChild(h('button', { class: 'btn ghost small', title: 'Cancels the old link and makes a new one valid for 24 hours', onclick: function (e) { if (!confirm('Make a NEW payment link? The old one will stop working.')) return; getLink(true, false, e.target, function (j) { copyText(j.url); toast('New link made and copied. Valid until ' + j.validUntilText, 6000); load(); }); } }, 'New link'));
     box.appendChild(acts);
