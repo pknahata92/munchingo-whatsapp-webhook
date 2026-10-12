@@ -12,6 +12,7 @@ const { priceForSlug, isAvailable, nameForSlug, boxesForSlug, isValidTrioSlug, B
 const { rateLimit } = require('../utils/rateLimit');
 const { validateCoupon } = require('../utils/coupons');
 const { priceCart } = require('../utils/offers');
+const { checkPincode } = require('../utils/delhivery');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
 
 // "Subscribe & Save" — flat discount on every renewal (see
@@ -141,6 +142,16 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
           ok: false,
           error: `Online orders start at \u20B9${MIN_ORDER_VALUE}. Please add \u20B9${shortBy} more, or message us on WhatsApp directly for a smaller order.`,
         });
+      }
+
+      // Delivery check: refuse only when Delhivery explicitly says it cannot deliver prepaid parcels to this pincode.
+      // Unknown (no token, timeout, outage) never blocks an order.
+      const deliveryPin = String((addressParts && addressParts.pincode) || '').trim();
+      if (/^[0-9]{6}$/.test(deliveryPin)) {
+        const pc = await checkPincode(deliveryPin);
+        if (pc.serviceable === false) {
+          return res.status(400).json({ ok: false, error: `Sorry, we cannot deliver to pincode ${deliveryPin} yet. Please message us on WhatsApp (+91 99889 92024) and we will try to arrange it.` });
+        }
       }
 
       // "Subscribe & Save" requires an email on file — it's the only reliable
@@ -315,6 +326,20 @@ router.post('/api/quote', rateLimit({ windowMs: 60_000, max: 30 }), async (req, 
   } catch (err) {
     console.error('[QUOTE] Error:', err.message);
     res.status(500).json({ ok: false, error: 'Could not work out the price right now. Please try again.' });
+  }
+});
+
+// GET /api/pincode/:pin
+// Can Delhivery deliver a prepaid parcel to this pincode? { ok, pin, valid, serviceable: true | false | null, city, district, state }.
+// serviceable null = unknown (no token yet, or Delhivery did not answer): the website then relies on India Post and does not block.
+router.get('/api/pincode/:pin', rateLimit({ windowMs: 60_000, max: 40 }), async (req, res) => {
+  try {
+    const r = await checkPincode(req.params.pin);
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({ ok: true, pin: r.pin, valid: r.valid, serviceable: r.serviceable, city: r.city || '', district: r.district || '', state: r.state || '', remote: !!r.remote });
+  } catch (err) {
+    console.error('[PINCODE] Error:', err.message);
+    res.json({ ok: true, pin: String(req.params.pin || ''), valid: true, serviceable: null });
   }
 });
 
