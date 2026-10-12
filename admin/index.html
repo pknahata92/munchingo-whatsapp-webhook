@@ -479,7 +479,7 @@ a{color:var(--terra)}
     if (o.state === 'unpaid') p.appendChild(payPanel(o));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled', payment_link_emailed: 'Payment link emailed', payment_link_whatsapped: 'Payment link sent on WhatsApp (Munchingo)', payment_link_regenerated: 'New payment link made' }[e.event] || e.event);
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', delhivery_shipment_created: 'Delhivery shipment created', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled', payment_link_emailed: 'Payment link emailed', payment_link_whatsapped: 'Payment link sent on WhatsApp (Munchingo)', payment_link_regenerated: 'New payment link made' }[e.event] || e.event);
       return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';
@@ -513,7 +513,20 @@ a{color:var(--terra)}
       hint.textContent = (o.email ? (method.value === 'hand' ? 'The customer is emailed that it is on its way by hand.' : method.value === 'porter' ? 'The customer is emailed that Porter is delivering it' + ' (with your link if you paste one).' : 'The customer is emailed with a tracking link.') : 'No customer email, so no email is sent.');
     }
     method.addEventListener('change', sync); sync();
-    return section('Mark shipped', h('label', {}, 'How is it going out?'), method, courierWrap, awbLabel, awb, nowWrap, hint,
+    // One tap for Delhivery: creates the shipment (charges the Delhivery wallet), gets the AWB, marks shipped and emails the customer.
+    var estG = 250 * o.boxes + ({ 1: 120, 2: 180, 3: 240, 4: 300 }[o.boxes] || 0);
+    var weight = h('input', { type: 'number', inputmode: 'numeric', min: '100', max: '5000', placeholder: 'Estimated ' + estG + ' g (weigh the real parcel)' });
+    var dlBox = h('div', { class: 'acts', style: 'flex-direction:column;align-items:stretch;gap:8px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line, #e5ddd0)' },
+      h('label', {}, 'Parcel weight in grams (optional)'), weight,
+      o.boxes > 4 ? h('p', { class: 'muted' }, o.boxes + ' boxes ship as two parcels. Book them in Delhivery One and enter the AWBs below.') : h('button', { class: 'btn small', onclick: function (e) {
+        var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
+        if (pre && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
+        if (!confirm('Create the Delhivery shipment for ' + (o.ship_name || o.name) + '?\n\nThis charges your Delhivery wallet, marks the order shipped and emails the customer the tracking link.')) return;
+        act('/admin/api/orders/' + encodeURIComponent(o.id) + '/delhivery-shipment', { weightGrams: weight.value ? Number(weight.value) : undefined },
+          function (j) { return 'Delhivery shipment created · AWB ' + j.awb + (j.emailed ? ' · customer emailed' : ''); }, e.target);
+      } }, 'Create Delhivery shipment'),
+      h('p', { class: 'muted' }, 'Pickup: request it in Delhivery One. Print the label from there too.'));
+    return section('Mark shipped', dlBox, h('label', {}, 'Or enter the shipment details yourself: how is it going out?'), method, courierWrap, awbLabel, awb, nowWrap, hint,
       h('button', { class: 'btn small', onclick: function (e) {
         if (preNow && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
         act('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'shipped', method: method.value, carrier: method.value === 'other' ? courierName.value : '', awb: awb.value, deliverNow: now.checked },

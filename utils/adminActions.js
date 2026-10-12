@@ -348,6 +348,24 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
   return { state: to, emailed };
 }
 
+// One tap: create the Delhivery shipment (wallet is charged), then mark the order shipped with the new AWB and email the customer.
+// If the shipment exists at Delhivery but the order could not be moved on, the AWB is logged and returned so it is never lost.
+async function createDelhiveryShipment({ orderId, actor, weightGrams }) {
+  const { order, shaped } = await getOrderDetail(orderId);
+  if (order.status !== 'paid' || shaped.state !== 'packed') throw new AdminError(`Mark the order packed first (it is "${shaped.state}").`, 409);
+  const dl = require('./delhiveryShipment');
+  let made;
+  try { made = await dl.createShipment({ order, shaped, weightGrams }); }
+  catch (e) { if (e instanceof dl.ShipmentError) throw new AdminError(e.message, e.status); throw e; }
+  await logEvent(orderId, 'delhivery_shipment_created', actor, { meta: { awb: made.awb, weight: made.weight, pickup: made.pickup } });
+  try {
+    const r = await advance({ orderId, to: 'shipped', actor, method: 'delhivery', awb: made.awb });
+    return { ...r, awb: made.awb, weight: made.weight };
+  } catch (e) {
+    throw new AdminError(`Delhivery shipment ${made.awb} WAS created, but the order could not be marked shipped (${e.message}). Enter ${made.awb} under Mark shipped. Do not create another.`, 409, { awb: made.awb });
+  }
+}
+
 // Owner only: undo the latest step (delivered -> shipped -> packed -> to pack). The customer is not un-emailed.
 async function undoStep({ orderId, actor }) {
   const { order, shaped } = await getOrderDetail(orderId);
@@ -469,4 +487,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

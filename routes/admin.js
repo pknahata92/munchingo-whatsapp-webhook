@@ -58,6 +58,7 @@ router.get('/admin/api/orders/:id', wrap(async (req) => ({ order: (await actions
 
 // Staff and owner: move an order forward, add notes, print.
 router.post('/admin/api/orders/:id/advance', wrap(async (req) => actions.advance({ ...enc(req), to: (req.body || {}).to, carrier: (req.body || {}).carrier, awb: (req.body || {}).awb, method: (req.body || {}).method, deliverNow: !!(req.body || {}).deliverNow })));
+router.post('/admin/api/orders/:id/delhivery-shipment', wrap(async (req) => actions.createDelhiveryShipment({ ...enc(req), weightGrams: (req.body || {}).weightGrams })));
 router.post('/admin/api/orders/bulk-pack', wrap(async (req) => actions.bulkPack({ ids: (req.body || {}).ids, actor: req.admin })));
 router.post('/admin/api/picklist', wrap(async (req) => actions.pickList((req.body || {}).ids)));
 router.post('/admin/api/orders/:id/address', wrap(async (req) => actions.saveAddress({ orderId: req.params.id, address: (req.body || {}).address, actor: req.admin })));

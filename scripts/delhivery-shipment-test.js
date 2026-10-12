@@ -1,0 +1,38 @@
+'use strict';
+// Delhivery shipment creation against a stand-in for Delhivery's API (no token, no network).   node scripts/delhivery-shipment-test.js
+let pass = 0, fail = 0, MODE = 'ok', last = null;
+const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
+global.fetch = async (url, opts) => {
+  last = { url, opts };
+  if (MODE === 'down') throw new Error('ECONNRESET');
+  if (MODE === '401') return { ok: false, status: 401, text: async () => '{}' };
+  if (MODE === 'reject') return { ok: true, status: 200, text: async () => JSON.stringify({ success: false, packages: [{ status: 'Fail', remarks: ['Pincode not serviceable'] }] }) };
+  return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, packages: [{ status: 'Success', waybill: '1234567890123', refnum: 'MNG-1' }] }) };
+};
+const order = { order_id: 'MNG-1', total: '739.00', status: 'paid', delivery_address: { raw: 'Flat 4,\nSector 9 & Co; Mumbai 400001', pincode: '400001', city: 'Mumbai', state: 'Maharashtra' } };
+const shaped = (boxes) => ({ boxes, ship_name: 'A Buyer', ship_phone: '919876543210', items: [{ name: 'Trio Gift Set', qty: 1 }] });
+(async () => {
+  delete process.env.DELHIVERY_API_TOKEN;
+  const d = require('../utils/delhiveryShipment');
+  let e = await d.createShipment({ order, shaped: shaped(3) }).catch((x) => x);
+  ok(e instanceof d.ShipmentError && e.status === 503, 'no token: clear error, no call');
+  process.env.DELHIVERY_API_TOKEN = 'tok_test';
+  const r = await d.createShipment({ order, shaped: shaped(3) });
+  ok(r.awb === '1234567890123' && r.weight === 990, 'returns AWB and the 3-box estimate (990 g)');
+  ok(/Token tok_test/.test(last.opts.headers.Authorization) && /\/api\/cmu\/create\.json$/.test(last.url), 'token header and endpoint');
+  const body = new URLSearchParams(last.opts.body); const data = JSON.parse(body.get('data'));
+  const s = data.shipments[0];
+  ok(body.get('format') === 'json' && data.pickup_location.name === 'FOTOBAR B2C', 'form body, FOTOBAR B2C pickup');
+  ok(s.phone === '9876543210' && s.pin === '400001' && s.payment_mode === 'Prepaid' && s.cod_amount === '0' && s.order === 'MNG-1', 'prepaid, 10-digit phone, pin, order ref');
+  ok(!/[&;\n]/.test(s.add), 'address stripped of characters that break the form');
+  ok((await d.createShipment({ order, shaped: shaped(3), weightGrams: 1200 }), JSON.parse(new URLSearchParams(last.opts.body).get('data')).shipments[0].weight === '1200'), 'staff weight override');
+  e = await d.createShipment({ order, shaped: shaped(5) }).catch((x) => x); ok(e instanceof d.ShipmentError && /two parcels/.test(e.message), '5+ boxes refused with advice');
+  e = await d.createShipment({ order, shaped: shaped(3), weightGrams: 9000 }).catch((x) => x); ok(e instanceof d.ShipmentError, 'absurd weight refused');
+  e = await d.createShipment({ order: { ...order, delivery_address: { raw: 'no pin here' } }, shaped: shaped(3) }).catch((x) => x); ok(/pincode/.test(e.message), 'missing pincode refused');
+  ok((await d.createShipment({ order: { ...order, delivery_address: { raw: 'Somewhere, Delhi 110001' } }, shaped: shaped(3) })).awb, 'pincode found in the address text');
+  e = await d.createShipment({ order, shaped: { ...shaped(3), ship_phone: '12345' } }).catch((x) => x); ok(/phone/.test(e.message), 'bad phone refused');
+  MODE = 'reject'; e = await d.createShipment({ order, shaped: shaped(3) }).catch((x) => x); ok(/not serviceable/.test(e.message) && e.status === 502, 'Delhivery rejection surfaces its reason');
+  MODE = '401'; e = await d.createShipment({ order, shaped: shaped(3) }).catch((x) => x); ok(/token/.test(e.message), '401 says the token was rejected');
+  MODE = 'down'; e = await d.createShipment({ order, shaped: shaped(3) }).catch((x) => x); ok(/reach/.test(e.message), 'network failure is a clear error');
+  console.log(`delhivery-shipment-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
+})();
