@@ -184,7 +184,7 @@ a{color:var(--terra)}
   $('out').onclick = function () { signOut(false); };
 
   // ── main list ──
-  var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier. Open each order, enter the tracking number and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
+  var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier (or arrange Porter or a hand delivery). Open each order, choose how it goes out and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
   var FILTERS = [['attention', '⚠ Needs attention'], ['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
@@ -281,7 +281,7 @@ a{color:var(--terra)}
   function ageText(iso) { var m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000)); return m < 60 ? m + ' min' : m < 1440 ? Math.floor(m / 60) + ' h' : Math.floor(m / 1440) + ' d'; }
   function quick(o) {
     if (o.state === 'unpaid') return h('div', { class: 'qa' }, h('button', { class: 'btn small', onclick: function (e) { e.stopPropagation(); openOrder(o.id); } }, 'Send payment link'));
-    var map = { topack: ['Mark packed', 'packed'], packed: ['Ship: enter tracking', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
+    var map = { topack: ['Mark packed', 'packed'], packed: ['Ship / hand over', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
     if (!m) return null;
     return h('div', { class: 'qa' }, h('button', { class: 'btn small' + (o.state === 'packed' ? ' ghost' : ''), onclick: function (e) {
       e.stopPropagation();
@@ -488,10 +488,37 @@ a{color:var(--terra)}
 
   function shipForm(o) {
     var preNow = state.dispatchFrom && Date.now() < state.dispatchFrom;
-    var carrier = h('input', { value: 'Delhivery' }), awb = h('input', { placeholder: 'Tracking / AWB number' });
-    return section('Mark shipped', h('label', {}, 'Courier'), carrier, h('label', {}, 'Tracking number'), awb,
-      h('p', { class: 'muted' }, o.email ? 'The customer is emailed with a tracking link.' : 'No customer email, so no email is sent.'),
-      h('button', { class: 'btn small', onclick: function (e) { if (preNow && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return; act('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'shipped', carrier: carrier.value, awb: awb.value }, function (j) { return 'Marked shipped' + (j.emailed ? ' · customer emailed' : ''); }, e.target); } }, 'Mark as shipped'));
+    // How it leaves: couriers need a tracking number; Porter and hand delivery do not (a Porter link or the person's name is optional).
+    var METHODS = [
+      ['delhivery', 'Delhivery', 'Tracking / AWB number', 'e.g. 1234567890', true],
+      ['porter', 'Porter (same city)', 'Porter booking ID or tracking link (optional)', 'Paste the Porter link', false],
+      ['hand', 'By hand (we deliver)', 'Delivered by (name, optional)', 'e.g. Rahul', false],
+      ['indiapost', 'India Post / Speed Post', 'Tracking number', 'e.g. EE123456789IN', true],
+      ['other', 'Other courier', 'Tracking number', 'Tracking number', true]
+    ];
+    var method = h('select', {}, METHODS.map(function (m) { return h('option', { value: m[0] }, m[1]); }));
+    var courierName = h('input', { placeholder: 'Courier name, e.g. DTDC' });
+    var awb = h('input', { placeholder: METHODS[0][3] });
+    var awbLabel = h('label', {}, METHODS[0][2]);
+    var courierWrap = h('div', { hidden: true }, h('label', {}, 'Courier name'), courierName);
+    var now = h('input', { type: 'checkbox', style: 'width:auto;margin-right:8px' });
+    var nowWrap = h('label', { hidden: true, style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, now, 'Handed over right now (mark it delivered as well)');
+    var hint = h('p', { class: 'muted' });
+    function sync() {
+      var m = METHODS.filter(function (x) { return x[0] === method.value; })[0];
+      awbLabel.textContent = m[2]; awb.placeholder = m[3];
+      courierWrap.hidden = method.value !== 'other';
+      nowWrap.hidden = !(method.value === 'hand' || method.value === 'porter');
+      if (nowWrap.hidden) now.checked = false;
+      hint.textContent = (o.email ? (method.value === 'hand' ? 'The customer is emailed that it is on its way by hand.' : method.value === 'porter' ? 'The customer is emailed that Porter is delivering it' + ' (with your link if you paste one).' : 'The customer is emailed with a tracking link.') : 'No customer email, so no email is sent.');
+    }
+    method.addEventListener('change', sync); sync();
+    return section('Mark shipped', h('label', {}, 'How is it going out?'), method, courierWrap, awbLabel, awb, nowWrap, hint,
+      h('button', { class: 'btn small', onclick: function (e) {
+        if (preNow && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
+        act('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'shipped', method: method.value, carrier: method.value === 'other' ? courierName.value : '', awb: awb.value, deliverNow: now.checked },
+          function (j) { return (j.state === 'delivered' ? 'Marked delivered' : 'Marked shipped') + (j.emailed ? ' · customer emailed' : ''); }, e.target);
+      } }, 'Mark as shipped'));
   }
 
   function refundForm(o) {

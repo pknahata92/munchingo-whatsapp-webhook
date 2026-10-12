@@ -287,28 +287,63 @@ async function logEvent(orderId, event, actor, { from = null, to = null, meta = 
 const NEXT = { topack: 'packed', packed: 'shipped', shipped: 'delivered' };
 const stampOf = { packed: 'packed', shipped: 'shipped', delivered: 'delivered' };
 
-async function advance({ orderId, to, actor, carrier = 'Delhivery', awb = '' }) {
+// How an order leaves the house. Delhivery and other couriers need a tracking number; Porter (same-city) and hand delivery do not.
+// Stored in the existing free-text columns: carrier = the label below (or the courier name for 'other'), awb = tracking number, a
+// Porter tracking link, or (hand delivery) who is delivering.
+const METHODS = {
+  delhivery: { label: 'Delhivery', needsTracking: true },
+  porter: { label: 'Porter', needsTracking: false },
+  hand: { label: 'By hand', needsTracking: false },
+  indiapost: { label: 'India Post', needsTracking: true },
+  other: { label: '', needsTracking: true },
+};
+function methodFrom(method, carrier) {
+  if (method && METHODS[method]) return method;
+  const c = String(carrier || '').toLowerCase();
+  if (/by hand|hand deliver|in person|self/.test(c)) return 'hand';
+  if (/porter/.test(c)) return 'porter';
+  if (/india ?post|speed ?post/.test(c)) return 'indiapost';
+  if (!c || /delhivery/.test(c)) return 'delhivery';
+  return 'other';
+}
+
+async function advance({ orderId, to, actor, carrier = '', awb = '', method = '', deliverNow = false }) {
   const { order, shaped } = await getOrderDetail(orderId);
   if (order.status !== 'paid') throw new AdminError('Only paid orders can be moved forward.', 409);
   if (shaped.state === 'refunded') throw new AdminError('This order has been refunded.', 409);
   const from = shaped.state;
   if (NEXT[from] !== to) throw new AdminError(from === to || ['packed', 'shipped', 'delivered'].indexOf(from) > ['packed', 'shipped', 'delivered'].indexOf(to)
     ? `Already ${from}.` : `This order is "${from}"; the next step is "${NEXT[from] || 'none'}".`, 409);
-  if (to === 'shipped' && !String(awb || '').trim()) throw new AdminError('Enter the tracking (AWB) number first. The customer is emailed it.');
+  const how = methodFrom(method, carrier);
+  const meta = METHODS[how];
+  const carrierLabel = how === 'other' ? String(carrier || '').trim().slice(0, 40) : meta.label;
+  if (to === 'shipped') {
+    if (how === 'other' && !carrierLabel) throw new AdminError('Enter the courier name.');
+    if (meta.needsTracking && !String(awb || '').trim()) throw new AdminError('Enter the tracking (AWB) number first. The customer is emailed it.');
+  }
   const now = new Date().toISOString();
   const by = actor.name || actor.email;
   let fields; let where;
   if (to === 'packed') { fields = { packed_at: now, packed_by: by }; where = { status: 'paid', packed_at: null, shipped_at: null }; }
   else if (to === 'shipped') {
-    fields = { shipped_at: now, carrier: String(carrier || 'Delhivery').slice(0, 40), awb: String(awb || '').trim().slice(0, 40) };
+    fields = { shipped_at: now, carrier: carrierLabel, awb: String(awb || '').trim().slice(0, 300) };
     where = { status: 'paid', shipped_at: null, delivered_at: null };
   } else { fields = { delivered_at: now, delivered_by: by }; where = { status: 'paid', delivered_at: null }; }
   if (!(await db.updateOrderIf(orderId, where, fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
   await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb } : null });
   let emailed = false;
   if (to === 'shipped' && order.customer_email) {
-    const trackUrl = /delhivery/i.test(fields.carrier) && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '';
+    // A pasted link (Porter, India Post, any courier) is used as is; a Delhivery number becomes their tracking page.
+    const trackUrl = /^https?:\/\//i.test(fields.awb) ? fields.awb : (how === 'delhivery' && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '');
     try { await require('./mailer').sendShippedEmail({ order, carrier: fields.carrier, awb: fields.awb, trackUrl }); emailed = true; } catch (e) { console.error('[ADMIN] shipped email failed:', e.message); }
+  }
+  // Handed over on the spot (hand delivery / Porter drop): record it as delivered straight away.
+  if (to === 'shipped' && deliverNow) {
+    const done = new Date().toISOString();
+    if (await db.updateOrderIf(orderId, { status: 'paid', delivered_at: null }, { delivered_at: done, delivered_by: by })) {
+      await logEvent(orderId, 'delivered', actor, { from: 'shipped', to: 'delivered', meta: { method: how } });
+      return { state: 'delivered', emailed };
+    }
   }
   return { state: to, emailed };
 }

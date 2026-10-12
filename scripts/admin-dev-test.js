@@ -146,6 +146,18 @@ async function login(email) {
   ok(!(await cp('', o.token)).j.ready, 'list reports the migration as missing');
   await fetch('http://localhost:8430/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: true }) });
 
+  // ── delivery methods on the ship step: hand, Porter, other courier ──
+  for (const id of ['MNG-HAND-1012', 'MNG-PORT-1012', 'MNG-OTHR-1012']) await call(`/orders/${id}/advance`, s.token, { to: 'packed' });
+  ok((await call('/orders/MNG-HAND-1012/advance', s.token, { to: 'shipped', method: 'hand' })).j.state === 'shipped', 'by hand ships with no tracking number');
+  const hd = (await call('/orders/MNG-HAND-1012', s.token)).j.order; ok(hd.carrier === 'By hand' && hd.awb === '', 'by hand is recorded as the carrier');
+  const pr = await call('/orders/MNG-PORT-1012/advance', s.token, { to: 'shipped', method: 'porter', awb: 'https://porter.in/track/abc123', deliverNow: true });
+  ok(pr.j.ok && pr.j.state === 'delivered', 'Porter with a link, handed over now, ends as delivered');
+  const pd = (await call('/orders/MNG-PORT-1012', s.token)).j.order; ok(pd.carrier === 'Porter' && /porter\.in/.test(pd.awb) && pd.state === 'delivered', 'Porter link is kept (longer than 40 characters is fine)');
+  ok((await call('/orders/MNG-OTHR-1012/advance', s.token, { to: 'shipped', method: 'other', awb: 'D99' })).s === 400, 'other courier needs a name');
+  ok((await call('/orders/MNG-OTHR-1012/advance', s.token, { to: 'shipped', method: 'other', carrier: 'DTDC' })).s === 400, 'other courier needs a tracking number');
+  ok((await call('/orders/MNG-OTHR-1012/advance', s.token, { to: 'shipped', method: 'other', carrier: 'DTDC', awb: 'D99' })).j.ok, 'other courier with name and number ships');
+  ok((await call('/orders/MNG-OTHR-1012', s.token)).j.order.carrier === 'DTDC', 'other courier name is kept');
+
   // ── stock-up tiers (owner only) ──
   const op = (p, tok, body) => call('/offers' + p, tok, body);
   ok((await op('', s.token)).s === 403, 'staff cannot see tiers');

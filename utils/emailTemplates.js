@@ -270,16 +270,21 @@ function ownerPaidHtml({ order, invoice }) {
 // ── Customer: your box has shipped ───────────────────────────────────────────
 function shippedHtml({ order, carrier, awb, trackUrl }) {
   const first = String(order.customer_name || 'there').trim().split(/\s+/)[0];
+  const byHand = /by hand|hand deliver|in person/i.test(carrier || '');
+  const porter = /porter/i.test(carrier || '');
+  const isLink = /^https?:\/\//i.test(awb || '');
+  let line;
+  if (byHand) line = `<b>Delivered by hand</b>${awb && !isLink ? ` &middot; by <b>${esc(awb)}</b>` : ''}. Please keep your phone nearby: we may call you on arrival.`;
+  else if (porter) line = `<b>Porter</b> same-city delivery${awb && !isLink ? ` &middot; booking <b>${esc(awb)}</b>` : ''}. The driver may call you on arrival.`;
+  else line = `<b>${esc(carrier || 'Courier')}</b>${awb && !isLink ? ` &middot; tracking number <b>${esc(awb)}</b>` : ''}`;
   const body = card(`
     <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:10px;">Order ${esc(order.order_id)}</div>
-    <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">
-      <b>${esc(carrier || 'Courier')}</b>${awb ? ` &middot; tracking number <b>${esc(awb)}</b>` : ''}
-    </div>
+    <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">${line}</div>
     ${trackUrl ? `<div style="text-align:center;padding:18px 0 4px;">${button(trackUrl, 'Track your box')}</div>` : ''}`);
   return shell({
-    preheader: `Your Munchingo box has shipped${awb ? ' (tracking ' + awb + ')' : ''}.`,
+    preheader: byHand ? 'Your Munchingo box is on its way, by hand.' : `Your Munchingo box has shipped${awb && !isLink ? ' (tracking ' + awb + ')' : ''}.`,
     title: `Your box is on its way, ${esc(first)}.`,
-    subtitle: 'Baked in Bikaner and now travelling to your doorstep.',
+    subtitle: byHand ? 'Baked in Bikaner and being brought to your door by hand.' : 'Baked in Bikaner and now travelling to your doorstep.',
     body, promo: 'light', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean), browseHeading: 'While you wait',
   });
 }

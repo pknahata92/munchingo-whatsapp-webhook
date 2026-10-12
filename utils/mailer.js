@@ -266,7 +266,7 @@ async function sendShippedEmail({ order, carrier, awb, trackUrl }) {
   const { error } = await resend.emails.send({
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [order.customer_email],
-    subject: `Your Munchingo box has shipped (${order.order_id})`,
+    subject: /by hand|hand deliver|in person/i.test(carrier || '') ? `Your Munchingo box is on its way (${order.order_id})` : `Your Munchingo box has shipped (${order.order_id})`,
     html: t.shippedHtml({ order, carrier, awb, trackUrl }),
   });
   if (error) throw new Error(error.message);
