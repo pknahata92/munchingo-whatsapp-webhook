@@ -91,7 +91,7 @@ a{color:var(--terra)}
 <div id="app" hidden>
   <header>
     <img src="/admin/logo.png" alt="Munchingo"><span class="sp"></span><small id="who"></small>
-    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="priceBtn" hidden>Prices</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="couponBtn" hidden>Coupons</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
+    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="priceBtn" hidden>Prices</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="couponBtn" hidden>Coupons</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="labelBtn">Label sheet</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
   </header>
   <main>
     <div class="money" id="tiles" hidden></div>
@@ -128,6 +128,8 @@ a{color:var(--terra)}
 <div class="sheet" id="sheet"><div class="panel" id="panel"></div></div>
 <div id="toast"></div>
 
+<script src="/admin/pdf-lib.min.js" defer></script>
+<script src="/admin/labelsheet.js" defer></script>
 <script>
 (function () {
   'use strict';
@@ -555,6 +557,31 @@ a{color:var(--terra)}
 
   // ── owner screens: stock and team ──
   function ownerPanel(title, body) { var p = $('panel'); p.textContent = ''; p.appendChild(h('div', { class: 'row' }, h('b', { style: 'flex:1;font-size:18px' }, title), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close'))); body.forEach(function (b) { p.appendChild(b); }); $('sheet').classList.add('on'); }
+  // ── Label sheet (staff + owner): courier labels PDF in, 13 x 19 in sheet out (3 x 3 of 4 x 6 in, N copies each). Stays on this device. ──
+  function openLabelSheet() {
+    var file = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true });
+    var copies = h('select', {}, [1, 2, 3].map(function (n) { return h('option', { value: n, selected: n === 2 }, n + (n === 1 ? ' copy' : ' copies') + ' of each label'); }));
+    var marks = h('input', { type: 'checkbox', checked: true, style: 'width:auto;margin-right:8px' });
+    var info = h('p', { class: 'muted' }, 'Choose the PDF(s) first.');
+    var go = h('button', { class: 'btn small', onclick: function (e) {
+      if (!window.PDFLib || !window.MunchingoLabelSheet) return toast('The label tool is still loading. Try again in a moment.', 5000);
+      var files = Array.prototype.slice.call(file.files || []); if (!files.length) return toast('Choose the labels PDF first.', 4000);
+      e.target.disabled = true; info.textContent = 'Making the sheet…';
+      Promise.all(files.map(function (f) { return f.arrayBuffer(); })).then(function (bufs) {
+        return window.MunchingoLabelSheet.build(window.PDFLib, bufs, { copies: Number(copies.value), cutMarks: marks.checked });
+      }).then(function (r) {
+        var url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
+        var a = h('a', { href: url, download: 'Munchingo-labels-13x19-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' sheet' + (r.sheets === 1 ? '' : 's') + ' (13 × 19 in). Downloaded: check the PDF before you send it to print.';
+      }).catch(function (err) { info.textContent = 'Could not make the sheet: ' + (err && err.message || err) + '. Use the 4 x 6 in labels PDF from Delhivery One.'; })
+        .then(function () { e.target.disabled = false; });
+    } }, 'Make the A3 sheet');
+    ownerPanel('Label sheet', [
+      h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). You get a 13 × 19 in sheet with 3 across and 3 down, each label repeated side by side, with cut marks in the margin. The file is not uploaded anywhere.'),
+      section('Labels', h('label', {}, 'Labels PDF'), file, h('label', {}, 'Copies'), copies,
+        h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, marks, 'Cut marks in the margin'), info, h('div', { class: 'acts' }, go))]);
+  }
   function openStock() {
     api('/admin/api/stock').then(function (j) {
       if (!j.ok) return toast(j.error);
@@ -778,7 +805,7 @@ a{color:var(--terra)}
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { save({ active: true }, { email: email.value, name: name.value, role: role.value, active: true }, e.target); } }, 'Add')))]);
     });
   }
-  $('couponBtn').onclick = openCoupons; $('priceBtn').onclick = openPrices; $('stockBtn').onclick = openStock; $('teamBtn').onclick = openTeam;
+  $('labelBtn').onclick = openLabelSheet; $('couponBtn').onclick = openCoupons; $('priceBtn').onclick = openPrices; $('stockBtn').onclick = openStock; $('teamBtn').onclick = openTeam;
 
   if (token) start(); else showLogin();
 })();
