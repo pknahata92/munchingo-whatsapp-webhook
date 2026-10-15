@@ -18,6 +18,8 @@ async function labels(n, w = 288, h = 432) {
   ok(r.stickers === 10 && r.sheets === 2, '5 labels x 2 = 10 stickers -> 2 sheets (9 + 1)');
   r = await LS.build(PDFLib, [await labels(3), await labels(6)], { copies: 1 });
   ok(r.labels === 9 && r.sheets === 1, 'two files are combined, one copy: 9 labels fill one sheet exactly');
+  r = await LS.build(PDFLib, [await labels(9)], { copies: 2 });
+  ok(r.stickers === 18 && r.sheets === 3 && r.perSheet === 8, '9 orders x 2 copies = 4 + 4 + 1 orders over 3 sheets (pairs never split; 8 cells per sheet)');
   r = await LS.build(PDFLib, [await labels(9)], { copies: 3 });
   ok(r.stickers === 27 && r.sheets === 3, '9 x 3 = 27 stickers = 3 full sheets');
   r = await LS.build(PDFLib, [await labels(2, 432, 288)], { copies: 2 });

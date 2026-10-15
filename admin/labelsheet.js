@@ -1,4 +1,4 @@
-/* Label sheet: lays courier labels out on a 13 x 19 in sheet (3 across, 3 down, each cell 4 x 6 in) with N copies of each label.
+/* Label sheet: lays courier labels out on a 13 x 19 in sheet (3 across, 3 down, each cell 4 x 6 in) with N copies of each label (an order's copies stay together on one sheet).
  * Runs in the browser (admin > Label sheet) and in node (scripts/labelsheet-test.js). Nothing is uploaded: the PDFs stay on the device.
  * Needs pdf-lib (served at /admin/pdf-lib.min.js). Cells touch each other; the 0.5 in margin all round carries cut marks.
  */
@@ -22,28 +22,32 @@
       for (var p = 0; p < pages.length; p++) { var sz = pages[p].getSize(); labels.push({ page: embedded[p], w: sz.width, h: sz.height }); }
     }
     if (!labels.length) throw new Error('No labels found in the file(s).');
-    var cells = [];
-    labels.forEach(function (l) { for (var c = 0; c < copies; c++) cells.push(l); });
+    // An order's copies always stay together on one sheet, so a sheet holds floor(9 / copies) orders (copies = 2: four orders, 8 cells,
+    // the last cell left blank). Cutting by hand never separates a pair.
     var perSheet = SHEET.cols * SHEET.rows;
-    var sheets = Math.ceil(cells.length / perSheet);
+    var perOrder = Math.max(1, Math.floor(perSheet / copies));
+    var sheets = Math.ceil(labels.length / perOrder);
     var gray = PDFLib.rgb(0.35, 0.35, 0.35);
     for (var s = 0; s < sheets; s++) {
       var sheet = out.addPage([SHEET.w, SHEET.h]);
       if (opts.cutMarks !== false) drawMarks(sheet, PDFLib, gray);
-      for (var k = 0; k < perSheet; k++) {
-        var lab = cells[s * perSheet + k]; if (!lab) break;
-        var col = k % SHEET.cols, row = Math.floor(k / SHEET.cols);
-        var x0 = MARGIN_X + col * SHEET.cellW, yTop = SHEET.h - MARGIN_Y - row * SHEET.cellH;
-        // A landscape source label is turned a quarter turn so it fills the portrait cell.
-        var turn = lab.w > lab.h, sw = turn ? lab.h : lab.w, sh = turn ? lab.w : lab.h;
-        var f = Math.min(SHEET.cellW / sw, SHEET.cellH / sh), dw = sw * f, dh = sh * f;
-        var cx = x0 + (SHEET.cellW - dw) / 2, cy = yTop - SHEET.cellH + (SHEET.cellH - dh) / 2;
-        if (turn) sheet.drawPage(lab.page, { x: cx + dw, y: cy, xScale: f, yScale: f, rotate: PDFLib.degrees(90) });
-        else sheet.drawPage(lab.page, { x: cx, y: cy, xScale: f, yScale: f });
+      for (var g = 0; g < perOrder; g++) {
+        var lab = labels[s * perOrder + g]; if (!lab) break;
+        for (var c = 0; c < copies; c++) {
+          var k = g * copies + c;
+          var col = k % SHEET.cols, row = Math.floor(k / SHEET.cols);
+          var x0 = MARGIN_X + col * SHEET.cellW, yTop = SHEET.h - MARGIN_Y - row * SHEET.cellH;
+          // A landscape source label is turned a quarter turn so it fills the portrait cell.
+          var turn = lab.w > lab.h, sw = turn ? lab.h : lab.w, sh = turn ? lab.w : lab.h;
+          var f = Math.min(SHEET.cellW / sw, SHEET.cellH / sh), dw = sw * f, dh = sh * f;
+          var cx = x0 + (SHEET.cellW - dw) / 2, cy = yTop - SHEET.cellH + (SHEET.cellH - dh) / 2;
+          if (turn) sheet.drawPage(lab.page, { x: cx + dw, y: cy, xScale: f, yScale: f, rotate: PDFLib.degrees(90) });
+          else sheet.drawPage(lab.page, { x: cx, y: cy, xScale: f, yScale: f });
+        }
       }
     }
     out.setTitle('Munchingo label sheet 13x19');
-    return { bytes: await out.save(), labels: labels.length, stickers: cells.length, sheets: sheets, copies: copies };
+    return { bytes: await out.save(), labels: labels.length, stickers: labels.length * copies, sheets: sheets, copies: copies, perSheet: perOrder * copies };
   }
 
   // Short ticks in the margin at every cut line (vertical cuts at the top and bottom, horizontal cuts at the sides).

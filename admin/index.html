@@ -573,12 +573,12 @@ a{color:var(--terra)}
         var url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
         var a = h('a', { href: url, download: 'Munchingo-labels-13x19-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
         setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-        info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' sheet' + (r.sheets === 1 ? '' : 's') + ' (13 × 19 in). Downloaded: check the PDF before you send it to print.';
+        info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' sheet' + (r.sheets === 1 ? '' : 's') + ' (13 × 19 in, ' + r.perSheet + ' per sheet; each label\'s copies stay on the same sheet). Downloaded: check the PDF before you send it to print.';
       }).catch(function (err) { info.textContent = 'Could not make the sheet: ' + (err && err.message || err) + '. Use the 4 x 6 in labels PDF from Delhivery One.'; })
         .then(function () { e.target.disabled = false; });
     } }, 'Make the A3 sheet');
     ownerPanel('Label sheet', [
-      h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). You get a 13 × 19 in sheet with 3 across and 3 down, each label repeated side by side, with cut marks in the margin. The file is not uploaded anywhere.'),
+      h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). You get a 13 × 19 in sheet with 3 across and 3 down, each label repeated (a label\'s copies never split across two sheets, so with 2 copies a sheet holds 4 labels and one cell stays blank), with cut marks in the margin. The file is not uploaded anywhere.'),
       section('Labels', h('label', {}, 'Labels PDF'), file, h('label', {}, 'Copies'), copies,
         h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, marks, 'Cut marks in the margin'), info, h('div', { class: 'acts' }, go))]);
   }
