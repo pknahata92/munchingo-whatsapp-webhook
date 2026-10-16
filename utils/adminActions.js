@@ -161,6 +161,25 @@ async function saveAddress({ orderId, address, actor }) {
   return {};
 }
 
+// An invoice issued before the buyer's state was recognised has no state code, so Zoho refuses it. The issued invoice (and its PDF) are
+// never changed: take the state from the order's address (edit it first if needed) or its pincode, and give Zoho a copy that carries it.
+// Refuses when the state would contradict the tax already charged (Haryana = CGST+SGST, anywhere else = IGST): that needs the CA.
+async function withBuyerState(inv, order) {
+  if (inv && inv.buyer && inv.buyer.stateCode) return inv;
+  const { normaliseState, parseAddress } = require('./invoice');
+  const a = parseAddress(order && order.delivery_address);
+  let st = normaliseState(a.state);
+  if (!st) {
+    const name = await require('./stateResolver').stateFromPincode(a.pincode);
+    st = name ? normaliseState(name) : null;
+  }
+  if (!st) throw new AdminError('The buyer\'s state is still not recognised (pincode ' + (a.pincode || 'missing') + '). Edit the order address to include the state, then retry.', 409);
+  const haryana = st.code === '06';
+  if (haryana && inv.supplyType === 'inter') throw new AdminError('This buyer is in Haryana but the invoice charged IGST. Do not sync it: ask your CA about a credit note and a corrected invoice.', 409);
+  if (!haryana && inv.supplyType === 'intra') throw new AdminError('This buyer is in ' + st.name + ' but the invoice charged CGST+SGST. Do not sync it: ask your CA about a credit note and a corrected invoice.', 409);
+  return { ...inv, placeOfSupply: st.name + ' (' + st.code + ')', buyer: { ...inv.buyer, state: st.name, stateCode: st.code } };
+}
+
 // Owner: send what is missing to Zoho Books (the invoice, then any credit notes) and say what happened.
 async function retryZoho(orderId, actor) {
   const zoho = require('./zohoBooks');
@@ -170,7 +189,7 @@ async function retryZoho(orderId, actor) {
   const done = [];
   let zohoInvoiceId = invoice.zoho_invoice_id;
   if (!zohoInvoiceId) {
-    const inv = await zoho.syncPaidOrder({ invoice: invoice.data, order });
+    const inv = await zoho.syncPaidOrder({ invoice: await withBuyerState(invoice.data, order), order });
     zohoInvoiceId = inv && inv.invoiceId;
     await db.markInvoice(orderId, { zoho_invoice_id: zohoInvoiceId, zoho_synced_at: new Date().toISOString() });
     done.push('invoice');
@@ -487,4 +506,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
