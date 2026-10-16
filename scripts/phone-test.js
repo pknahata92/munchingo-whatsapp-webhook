@@ -1,0 +1,17 @@
+'use strict';
+const assert = require('assert');
+const { normalisePhone: n, isIndianPhone: ind, isValidPhone: ok } = require('../utils/phone');
+let c = 0; const t = (a, b, m) => { assert.strictEqual(a, b, m + ' got ' + a); c++; };
+t(n('9988992024'), '919988992024', 'bare 10 digits');
+t(n('+919988992024'), '919988992024', '+91');
+t(n('919988992024'), '919988992024', '91 prefix');
+t(ok('9988992024'), true, 'valid');
+t(ok('+91 99889 92024'), true, 'spaced +91');
+t(ok('5988992024'), false, 'starts with 5');
+t(ok('12345678901234'), false, 'THE BUG: 14-digit number rejected');
+t(ok('919988992024123'), false, 'long 91 number rejected');
+t(ok('+14155550123'), false, 'foreign number rejected (domestic only)');
+t(ok('99889'), false, 'short');
+t(ok(''), false, 'empty');
+t(ind('919988992024'), true, 'recognised');
+console.log(`phone-test: ${c} checks passed`);

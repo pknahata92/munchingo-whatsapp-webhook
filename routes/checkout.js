@@ -84,12 +84,7 @@ function normaliseItems(cartItems) {
     return { items };
 }
 
-function normalisePhone(rawPhone) {
-    // Accepts 9988992024, +919988992024, 919988992024 -> returns 919988992024
-  let digits = String(rawPhone || '').replace(/\D/g, '');
-    if (digits.length === 10) digits = '91' + digits; // assume India if no country code given
-  return digits;
-}
+const { normalisePhone, isIndianPhone, isValidPhone } = require('../utils/phone');
 
 // POST /api/checkout
 // Body: { name, phone, address, items: [{name,price,qty,unit,slug}], total }
@@ -117,12 +112,12 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       }
 
       const customerPhone = normalisePhone(phone);
-          if (customerPhone.length < 12) {
-                  return res.status(400).json({ ok: false, error: 'Phone number looks invalid - include a 10-digit number' });
+          if (!isValidPhone(phone)) {
+                  return res.status(400).json({ ok: false, error: 'Phone number looks invalid - enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9' });
           }
 
-      if (recipient && typeof recipient === 'object' && (!String(recipient.name || '').trim() || normalisePhone(recipient.phone).length < 12)) {
-        return res.status(400).json({ ok: false, error: 'Please add the recipient\'s name and a 10-digit mobile number, or untick the gift option.' });
+      if (recipient && typeof recipient === 'object' && (!String(recipient.name || '').trim() || !isIndianPhone(normalisePhone(recipient.phone)))) {
+        return res.status(400).json({ ok: false, error: 'Please add the recipient\'s name and a 10-digit Indian mobile number, or untick the gift option.' });
       }
 
       await require('../utils/stock').ensureFresh();
