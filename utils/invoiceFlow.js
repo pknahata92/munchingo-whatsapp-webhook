@@ -19,6 +19,8 @@ async function processPaidOrder({ order, phone }) {
   const mailer = require('./mailer');
 
   // 1. Invoice (needs invoices_migration.sql; if it hasn't run we skip and carry on)
+  // Make sure the buyer's state is recognised (fills it from the pincode if not), or the invoice is wrongly inter-state and Zoho refuses it.
+  order = await require('./stateResolver').withResolvedState(order, (id, addr) => require('./database').setOrderDeliveryAddress(id, addr));
   const issued = await step('generate', () => issueInvoice(order));
   const invoice = issued?.invoice || null;
   const pdf = issued?.pdf || null;

@@ -55,9 +55,31 @@ function findStateIn(raw) {
   return hit || '';
 }
 
+// Spelling-tolerant matching: letters only ("U.P." -> "up", "Tamilnadu" -> "tamilnadu"), two-letter codes and common misspellings.
+const STATE_ABBR = {
+  jk: 'jammu and kashmir', hp: 'himachal pradesh', pb: 'punjab', ch: 'chandigarh', uk: 'uttarakhand', ut: 'uttarakhand', hr: 'haryana', dl: 'delhi',
+  rj: 'rajasthan', up: 'uttar pradesh', br: 'bihar', sk: 'sikkim', ar: 'arunachal pradesh', nl: 'nagaland', mn: 'manipur', mz: 'mizoram',
+  tr: 'tripura', ml: 'meghalaya', as: 'assam', wb: 'west bengal', jh: 'jharkhand', od: 'odisha', or: 'odisha', cg: 'chhattisgarh', mp: 'madhya pradesh',
+  gj: 'gujarat', dd: 'dadra and nagar haveli and daman and diu', dn: 'dadra and nagar haveli and daman and diu', mh: 'maharashtra', ka: 'karnataka',
+  ga: 'goa', ld: 'lakshadweep', kl: 'kerala', tn: 'tamil nadu', py: 'puducherry', an: 'andaman and nicobar islands', tg: 'telangana', ts: 'telangana',
+  ap: 'andhra pradesh', la: 'ladakh',
+};
+const STATE_EXTRA = { chattisgarh: 'chhattisgarh', telengana: 'telangana', himachal: 'himachal pradesh', jammukashmir: 'jammu and kashmir', ncrdelhi: 'delhi', nctdelhi: 'delhi', delhincr: 'delhi', newdelhi: 'delhi', gurgaon: 'haryana', noida: 'uttar pradesh', bombay: 'maharashtra', madras: 'tamil nadu', calcutta: 'west bengal', bengal: 'west bengal' };
+const compactKey = (v) => String(v || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z]/g, '');
+let COMPACT = null;
+function compactMap() {
+  if (COMPACT) return COMPACT;
+  COMPACT = {};
+  for (const n of Object.keys(STATE_CODES)) COMPACT[compactKey(n)] = n;
+  for (const [a, n] of Object.entries(STATE_ALIASES)) COMPACT[compactKey(a)] = n;
+  for (const [a, n] of Object.entries(STATE_EXTRA)) COMPACT[a] = n;
+  return COMPACT;
+}
+
 function normaliseState(raw) {
   const k = String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const key = STATE_ALIASES[k] || k;
+  let key = STATE_ALIASES[k] || k;
+  if (!STATE_CODES[key]) { const c = compactKey(raw); key = compactMap()[c] || STATE_ABBR[c] || key; }
   return STATE_CODES[key] ? { name: key.replace(/\b\w/g, (c) => c.toUpperCase()).replace(/ And /g, ' and '), code: STATE_CODES[key] } : null;
 }
 

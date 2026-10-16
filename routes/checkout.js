@@ -217,6 +217,8 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
             const rPhone = normalisePhone(recipient.phone);
             if (rName && rPhone.length >= 12) { parts.recipientName = rName; parts.recipientPhone = rPhone; }
           }
+          // The state drives CGST/SGST vs IGST and Zoho's place of supply: if what was typed is not recognised, fill it from the pincode.
+          try { Object.assign(parts, await require('../utils/stateResolver').fixParts(parts)); } catch (e) { console.error('[STATE] checkout fix failed:', e.message); }
           await updateOrderAddress(orderId, address, parts);
 
       // 2. Create Razorpay Payment Link via the EXISTING utils/razorpay.js
@@ -412,6 +414,21 @@ router.get('/api/order/:orderId', rateLimit({ windowMs: 60_000, max: 20 }), asyn
           console.error('[ORDER] Lookup error:', err.message);
           res.status(500).json({ ok: false, error: 'Could not look up that order right now.' });
     }
+});
+
+// Browser purchase tracking handshake (see utils/serverTracking.js). order-confirmed.html calls this before firing GA4:
+// { fire: false } means the server already sent GA4 for this order (or the browser already reported it), so skip.
+router.post('/api/purchase-seen', rateLimit({ windowMs: 60_000, max: 20 }), async (req, res) => {
+  try {
+    const orderId = orderIdFromReference(String((req.body && req.body.orderId) || '').slice(0, 40));
+    if (!orderId) return res.status(400).json({ ok: false, fire: false });
+    const r = await require('../utils/serverTracking').claimBrowser(orderId);
+    res.json(r);
+  } catch (err) {
+    // Fail open: if anything goes wrong the browser fires as it always did.
+    console.error('[TRACKING] purchase-seen error:', err.message);
+    res.json({ ok: false, fire: true, reason: 'error' });
+  }
 });
 
 // Public, read-only: which base flavours are sold out right now (the cart greys them out).

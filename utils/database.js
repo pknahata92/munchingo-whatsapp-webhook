@@ -112,6 +112,12 @@ async function markOrderPaid(orderId, paymentId) {
   return changed;
 }
 
+// Replace only the delivery_address JSON (used to store a state filled in from the pincode); status is left alone.
+async function setOrderDeliveryAddress(orderId, deliveryAddress) {
+  const { error } = await db().from('orders').update({ delivery_address: deliveryAddress }).eq('order_id', orderId);
+  if (error) throw new Error(`Supabase update (delivery_address) failed: ${error.message}`);
+}
+
 /**
  * Cancel an active order (pending_address or pending_payment).
  * Returns true on success.
@@ -523,6 +529,7 @@ module.exports = {
   updateOrderEmail,
   updateOrderPaymentLink,
   markOrderPaid,
+  setOrderDeliveryAddress,
   cancelOrder,
   getRecentPendingOrder,
   getRecentPendingPaymentOrder,
