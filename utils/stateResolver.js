@@ -45,13 +45,22 @@ async function stateFromPincode(pinRaw) {
   } catch (_) { return ''; }
 }
 
-/** Checkout: structured parts with a recognised state if at all possible. */
+/**
+ * Checkout: structured parts whose state agrees with the PINCODE. The pincode is a physical postal zone, the typed state is where
+ * typos and mix-ups live (Haryana typed for a Delhi pincode, a wrong dropdown pick): a recognised-but-different state is replaced and the
+ * original kept as stateCorrectedFrom. An unrecognised state is filled in. If the pincode lookup gives nothing, what was typed stays.
+ */
 async function fixParts(parts) {
   const p = { ...(parts || {}) };
-  if (normaliseState(p.state)) return p;
+  const typed = normaliseState(p.state);
   const s = await stateFromPincode(p.pincode);
-  if (s) { console.log(`[STATE] filled "${p.state || ''}" -> ${s} from pincode ${p.pincode}`); p.state = s; }
-  else console.warn(`[STATE] could not recognise state "${p.state || ''}" (pincode ${p.pincode || '-'})`);
+  if (!s) { if (!typed) console.warn(`[STATE] could not recognise state "${p.state || ''}" (pincode ${p.pincode || '-'})`); return p; }
+  const found = normaliseState(s);
+  if (!typed) { console.log(`[STATE] filled "${p.state || ''}" -> ${s} from pincode ${p.pincode}`); p.state = s; }
+  else if (found && found.code !== typed.code) {
+    console.warn(`[STATE] pincode ${p.pincode} is in ${s} but "${p.state}" was typed: using ${s}`);
+    p.stateCorrectedFrom = p.state; p.state = s;
+  }
   return p;
 }
 

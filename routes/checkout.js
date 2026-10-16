@@ -97,7 +97,7 @@ const { normalisePhone, isIndianPhone, isValidPhone } = require('../utils/phone'
 // (who submits once), tight enough to blunt scripted abuse.
 router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
-          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts, recipient, previewKey } = req.body;
+          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts, recipient, previewKey, track } = req.body;
 
       // Orders open at launch (see utils/launch.js); the owner can test earlier with the preview key.
       if (!ordersOpen(previewKey)) {
@@ -214,6 +214,8 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
           }
           // The state drives CGST/SGST vs IGST and Zoho's place of supply: if what was typed is not recognised, fill it from the pincode.
           try { Object.assign(parts, await require('../utils/stateResolver').fixParts(parts)); } catch (e) { console.error('[STATE] checkout fix failed:', e.message); }
+          // Device identifiers for the server-side Purchase (Meta match quality); see utils/serverTracking.js. Never blocks the order.
+          try { const t = require('../utils/serverTracking').cleanTrack(track, req); if (Object.keys(t).length) parts.track = t; } catch (e) { console.error('[TRACKING] could not read device ids:', e.message); }
           await updateOrderAddress(orderId, address, parts);
 
       // 2. Create Razorpay Payment Link via the EXISTING utils/razorpay.js

@@ -56,6 +56,25 @@ function addressParts(order) {
   return { state: state || '', pin: pin || '', city: city || '' };
 }
 
+/**
+ * What the browser and request tell us about the buyer's device, kept on the order (delivery_address.track) so the server Purchase
+ * can carry the same identifiers the pixel would: _fbp, _fbc (the ad click id), client IP and user agent. Raises Meta's Event Match
+ * Quality. Everything is validated (shape and length) because it comes from the browser.
+ */
+function cleanTrack(t, req) {
+  const pick = (v, re, max) => { v = String(v == null ? '' : v).trim().slice(0, max); return re.test(v) ? v : ''; };
+  const fbp = pick(t && t.fbp, /^fb\.\d\.\d{10,14}\.\d{4,12}$/, 60);
+  const fbc = pick(t && t.fbc, /^fb\.\d\.\d{10,14}\.[A-Za-z0-9_-]{8,400}$/, 450);
+  const ua = req && typeof req.get === 'function' ? String(req.get('user-agent') || '').slice(0, 300) : '';
+  const ip = req && req.ip ? String(req.ip).replace(/^::ffff:/, '').slice(0, 64) : '';
+  const out = {};
+  if (fbp) out.fbp = fbp;
+  if (fbc) out.fbc = fbc;
+  if (ip) out.ip = ip;
+  if (ua) out.ua = ua;
+  return out;
+}
+
 /** Pure: the Meta Conversions API request body for one paid order. */
 function buildMetaBody(order, { testCode } = {}) {
   const items = order.items || [];
@@ -71,6 +90,12 @@ function buildMetaBody(order, { testCode } = {}) {
   if (norm(ap.city)) ud.ct = [sha(norm(ap.city).replace(/[^a-z]/g, ''))];
   if (norm(ap.state)) ud.st = [sha(norm(ap.state).replace(/[^a-z]/g, ''))];
   if (ap.pin) ud.zp = [sha(String(ap.pin))];
+  if (ph) ud.external_id = [sha(ph.length === 10 ? '91' + ph : ph)];
+  const tr = (order.delivery_address && order.delivery_address.track) || {};
+  if (tr.fbp) ud.fbp = tr.fbp;
+  if (tr.fbc) ud.fbc = tr.fbc;
+  if (tr.ip) ud.client_ip_address = tr.ip;
+  if (tr.ua) ud.client_user_agent = tr.ua;
   const at = Date.parse(order.updated_at || order.created_at || '') || Date.now();
   const body = {
     data: [{
@@ -191,4 +216,4 @@ function startSweep() {
   if (timer.unref) timer.unref();
 }
 
-module.exports = { buildMetaBody, buildGa4Body, sendMeta, sendGa4, claimBrowser, sweepOnce, startSweep, enabled, setDeps };
+module.exports = { cleanTrack, buildMetaBody, buildGa4Body, sendMeta, sendGa4, claimBrowser, sweepOnce, startSweep, enabled, setDeps };
