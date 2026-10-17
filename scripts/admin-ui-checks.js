@@ -107,5 +107,32 @@ module.exports = function checks({ openAdmin, ok, sleep, until }) {
     o.close();
   });
 
+  // Task 6: bulk create shipments and bulk mark delivered
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    const markPacked = async (idRe) => { click(o.byText('#flow .step', /To pack/)); await sleep(80); const c = qa('#list .card').find((x) => idRe.test(text(x))); if (c) { click(Array.from(c.querySelectorAll('button')).find((b) => /Mark packed/.test(text(b)))); await sleep(400); } };
+    await markPacked(/MNG-GGGG-1010/);
+    click(o.byText('#flow .step', /^STEP 2/)); await sleep(100);
+    const packedIds = qa('#list .card').map((c) => text(c).match(/MNG-[A-Z0-9]+-\d+/)[0]);
+    ok(packedIds.length >= 3 && packedIds.includes('MNG-GGGG-1010'), 'there are packed orders to ship (' + packedIds.join(',') + ')');
+    click(o.byText('#bulk .chip', /Select all/)); await sleep(100);
+    const shipBtn = o.byText('#bulk button', /Create Delhivery shipments/);
+    ok(!!shipBtn && new RegExp('\\(' + packedIds.length + '\\)').test(text(shipBtn)), 'the Packed step offers Create Delhivery shipments for all ticked orders (' + (shipBtn ? text(shipBtn) : 'missing') + ')');
+    click(shipBtn); await until(() => /Finished:/.test(text(q('#panel'))), 8000, 'the shipments to finish');
+    const panel = text(q('#panel'));
+    ok((panel.match(/Created/g) || []).length === packedIds.length - 1, 'every order except the failing one was created (' + panel.slice(0, 300) + ')');
+    ok(/MNG-GGGG-1010Not created:[^]*?not serviceable/i.test(panel), 'the failing order shows a red line with Delhivery\'s reason and does not stop the others (' + panel.slice(0, 500) + ')');
+    click(o.byText('#panel button', /Go to Shipped/)); await sleep(200);
+    ok(/Shipped/.test(text(q('#flow .step.on'))) && qa('#list .card').length >= packedIds.length - 1, 'the created orders are now under Shipped');
+    click(o.byText('#bulk .chip', /Select all/)); await sleep(100);
+    const del = o.byText('#bulk button', /Mark delivered/); ok(!!del, 'the Shipped step offers Mark delivered for all ticked orders');
+    const before = Number(text(o.byText('#flow .step', /Delivered/).querySelector('b')));
+    click(del); await until(() => /Finished:/.test(text(q('#panel'))), 8000, 'delivery to finish');
+    click(o.byText('#panel button', /Close/)); await until(() => Number(text(o.byText('#flow .step', /Delivered/).querySelector('b'))) > before, 4000, 'the delivered count').catch(() => {});
+    ok(Number(text(o.byText('#flow .step', /Delivered/).querySelector('b'))) > before, 'ticked shipped orders moved to Delivered');
+    ok(o.errors.length === 0, 'no page errors with bulk actions (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };

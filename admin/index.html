@@ -350,7 +350,7 @@ header small{color:var(--ink2);opacity:1}
     var list = $('list'); list.textContent = '';
     if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
     rows.forEach(function (o) {
-      var pickable = o.state === 'topack' || o.state === 'packed' || labelable(o);
+      var pickable = o.state === 'topack' || o.state === 'packed' || o.state === 'shipped';
       var box = pickable ? h('input', { type: 'checkbox', 'aria-label': 'Select ' + o.id, onclick: function (e) { e.stopPropagation(); if (e.target.checked) state.sel[o.id] = 1; else delete state.sel[o.id]; bulkBar(); } }) : null;
       if (box && state.sel[o.id]) box.checked = true;
       list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
@@ -382,18 +382,67 @@ header small{color:var(--ink2);opacity:1}
   function selectedIds() { return Object.keys(state.sel).filter(function (id) { return state.orders.some(function (o) { return o.id === id; }); }); }
   function printableIds() { var s = selectedIds(); return s.length ? s : visible().filter(function (o) { return o.state === 'topack' || o.state === 'packed'; }).map(function (o) { return o.id; }); }
   function labelable(o) { return o.state === 'shipped' && /delhivery/i.test(o.carrier || '') && /^[0-9]{8,20}$/.test(String(o.awb || '').trim()); }
-  function labelBar(b) {
-    var vis = visible().filter(labelable);
+  // Packed step: create the Delhivery shipments for every ticked order, one after another.
+  function packedBar(b) {
+    var vis = visible().filter(function (o) { return o.state === 'packed'; });
     if (!vis.length) { b.hidden = true; return; }
     b.hidden = false;
     var sel = selectedIds().filter(function (id) { return vis.some(function (o) { return o.id === id; }); }), n = sel.length;
-    b.appendChild(h('button', { class: 'chip', style: 'flex:1 1 100%;text-align:center', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length + ' Delhivery orders'));
+    b.appendChild(h('button', { class: 'chip', style: 'flex:1 1 100%;text-align:center', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length));
     if (n) b.appendChild(h('button', { class: 'chip', onclick: function () { state.sel = {}; render(); } }, 'Clear (' + n + ')'));
-    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 100%', onclick: function () { openOrderLabels(n ? sel : vis.map(function (o) { return o.id; })); } }, '🏷 Shipping labels (' + (n || vis.length) + ')'));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 100%', onclick: function () { bulkShip(n ? sel : vis.map(function (o) { return o.id; })); } }, 'Create Delhivery shipments (' + (n || vis.length) + ')'));
+  }
+  // Shipped step: print labels (Delhivery orders) and mark delivered, for every ticked order.
+  function labelBar(b) {
+    var vis = visible().filter(function (o) { return o.state === 'shipped'; });
+    if (!vis.length) { b.hidden = true; return; }
+    b.hidden = false;
+    var sel = selectedIds().filter(function (id) { return vis.some(function (o) { return o.id === id; }); }), n = sel.length;
+    var ids = n ? sel : vis.map(function (o) { return o.id; });
+    b.appendChild(h('button', { class: 'chip', style: 'flex:1 1 100%;text-align:center', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length));
+    if (n) b.appendChild(h('button', { class: 'chip', onclick: function () { state.sel = {}; render(); } }, 'Clear (' + n + ')'));
+    var lab = ids.filter(function (id) { return state.orders.some(function (o) { return o.id === id && labelable(o); }); });
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { if (!lab.length) return toast('None of these have a Delhivery tracking number, so there is no label to print.', 5000); openOrderLabels(lab); } }, 'Shipping labels (' + lab.length + ')'));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px;background:var(--green)', onclick: function () { bulkDeliver(ids); } }, 'Mark delivered (' + ids.length + ')'));
+  }
+  // Runs one request per order, showing a green or red line each. One failure never stops the rest.
+  function bulkRun(title, ids, step, after) {
+    var box = h('div', {}), made = 0, bad = 0;
+    ownerPanel(title, [h('p', { class: 'muted' }, 'Please keep this open until it says Finished.'), box]);
+    (function next(i) {
+      if (i >= ids.length) {
+        state.sel = {}; load();   // refresh the lists straight away, whichever button is used to leave
+        box.appendChild(h('p', {}, h('b', {}, 'Finished: ' + made + ' done' + (bad ? ', ' + bad + ' need your attention (red lines above).' : '.'))));
+        box.appendChild(h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { closeSheet(); state.filter = after; saveView(); render(); } }, 'Go to ' + (after === 'shipped' ? 'Shipped' : 'Delivered')), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
+        return;
+      }
+      step(ids[i]).then(function (r) {
+        if (r.ok) { made++; box.appendChild(h('div', { class: 'line' }, h('div', {}, h('b', {}, ids[i]), h('small', { style: 'color:var(--green)' }, r.msg)))); }
+        else { bad++; box.appendChild(h('div', { class: 'line' }, h('div', {}, h('b', {}, ids[i]), h('small', { style: 'color:var(--red)' }, 'Not ' + (after === 'shipped' ? 'created' : 'marked') + ': ' + (r.error || 'something went wrong'))))); }
+        next(i + 1);
+      }).catch(function () { bad++; box.appendChild(h('div', { class: 'line' }, h('div', {}, h('b', {}, ids[i]), h('small', { style: 'color:var(--red)' }, 'Could not reach the server')))); next(i + 1); });
+    })(0);
+  }
+  function bulkShip(ids) {
+    var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
+    if (pre && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
+    if (!confirm('Create ' + ids.length + ' Delhivery shipment' + (ids.length === 1 ? '' : 's') + '?\n\nThis charges your Delhivery wallet and emails each customer a tracking link.')) return;
+    var w = prompt('Parcel weight in grams for all of them? Leave empty to use the estimate for each parcel (about 990 g for 3 boxes).', '');
+    if (w === null) return;
+    bulkRun('Creating shipments', ids, function (id) {
+      return api('/admin/api/orders/' + encodeURIComponent(id) + '/delhivery-shipment', { method: 'POST', body: w ? { weightGrams: Number(w) } : {} }).then(function (j) { return j.ok ? { ok: true, msg: 'Created. Tracking number ' + j.awb + (j.emailed ? ', customer emailed' : '') } : { ok: false, error: j.error }; });
+    }, 'shipped');
+  }
+  function bulkDeliver(ids) {
+    if (!confirm('Mark ' + ids.length + ' order' + (ids.length === 1 ? '' : 's') + ' as delivered? Only do this once the parcels have reached the customers.')) return;
+    bulkRun('Marking delivered', ids, function (id) {
+      return api('/admin/api/orders/' + encodeURIComponent(id) + '/advance', { method: 'POST', body: { to: 'delivered' } }).then(function (j) { return j.ok ? { ok: true, msg: 'Marked delivered' } : { ok: false, error: j.error }; });
+    }, 'delivered');
   }
   function bulkBar() {
     var b = $('bulk'); b.textContent = '';
     if (state.filter === 'shipped') return labelBar(b);
+    if (state.filter === 'packed') return packedBar(b);
     var vis = visible().filter(function (o) { return o.state === 'topack'; });
     if (state.filter !== 'topack' || !vis.length) { b.hidden = true; return; }
     b.hidden = false;

@@ -110,6 +110,26 @@ const app = express();
 app.use(express.json());
 app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body && req.body.ready); res.json({ ok: true }); });   // practice copy only: pretend the coupons migration has / has not run
 app.use(require('../routes/admin'));
+// Practice-only stand-in for Delhivery's API (shipment creation and labels) so the ship and label buttons can be clicked through.
+process.env.DELHIVERY_API_TOKEN = 'tok_dev';
+{
+  const real = global.fetch; let seq = 0;
+  global.fetch = async (url, opts) => {
+    const u = String(url);
+    if (/\/api\/cmu\/create\.json/.test(u)) {
+      const data = JSON.parse(new URLSearchParams(opts.body).get('data'));
+      const sh = data.shipments[0];
+      const out = sh.pin === '400050' ? { success: false, packages: [{ status: 'Fail', remarks: ['Pincode not serviceable'] }] } : { success: true, packages: [{ status: 'Success', waybill: String(880000000000 + (++seq)) }] };
+      const buf = Buffer.from(JSON.stringify(out)); return { ok: true, status: 200, text: async () => buf.toString() };
+    }
+    if (/packing_slip\?wbns=/.test(u)) {
+      const PDFLib = require('pdf-lib'); const d2 = await PDFLib.PDFDocument.create(); const p2 = d2.addPage([288, 432]);
+      p2.drawRectangle({ x: 2, y: 2, width: 284, height: 428, borderWidth: 1, color: PDFLib.rgb(1, 1, 1), borderColor: PDFLib.rgb(0, 0, 0) });
+      const buf = Buffer.from(await d2.save()); return { ok: true, status: 200, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+    }
+    return real(url, opts);
+  };
+}
 // Stock ledger on fake data: an in-memory store with a Kesari lot already received, so the Inventory screens have something to show.
 {
   const inv = require(path.join(root, 'utils/inventory.js'));
