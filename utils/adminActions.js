@@ -161,6 +161,19 @@ async function saveAddress({ orderId, address, actor }) {
   return {};
 }
 
+// Sets the buyer's state for Zoho on an order at ANY stage (shipped or delivered too). The delivery address text is not touched, so labels and
+// the courier are unaffected. The Retry Zoho sync still refuses a state that contradicts the tax already charged.
+async function setBillingState({ orderId, state, actor }) {
+  const { normaliseState } = require('./invoice');
+  const st = normaliseState(state);
+  if (!st) throw new AdminError('That state is not recognised. Type the full state name, for example Rajasthan.');
+  const { order } = await getOrderDetail(orderId);
+  const before = (order.delivery_address && order.delivery_address.state) || '';
+  await db.updateOrderFields(orderId, { delivery_address: { ...(order.delivery_address || {}), state: st.name } });
+  await logEvent(orderId, 'billing_state_set', actor, { meta: { from: before, to: st.name } });
+  return { state: st.name, code: st.code };
+}
+
 // An invoice issued before the buyer's state was recognised has no state code, so Zoho refuses it. The issued invoice (and its PDF) are
 // never changed: take the state from the order's address (edit it first if needed) or its pincode, and give Zoho a copy that carries it.
 // Refuses when the state would contradict the tax already charged (Haryana = CGST+SGST, anywhere else = IGST): that needs the CA.
@@ -534,4 +547,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

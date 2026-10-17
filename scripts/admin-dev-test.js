@@ -42,6 +42,9 @@ async function login(email) {
   ok((await call('/orders/MNG-GGGG-1008/address', s.token, { address: 'x' })).s === 400, 'short address rejected');
   ok((await call('/orders/MNG-GGGG-1008/address', s.token, { address: '12 New Street, Faridabad, Haryana - 121007' })).j.ok, 'staff fixes an address before shipping');
   const gg = await call('/orders/MNG-GGGG-1008', s.token); ok(gg.j.order.address.startsWith('12 New') && gg.j.order.events.some((e) => e.event === 'address_changed' && e.meta.from), 'old address kept in timeline');
+  ok((await call('/orders/MNG-CCCC-1009/billing-state', s.token, { state: 'Rajasthan' })).s === 403, 'staff cannot set the buyer state');
+  ok((await call('/orders/MNG-CCCC-1009/billing-state', o.token, { state: 'Nowhereland' })).s === 400, 'an unknown state is refused');
+  ok((await call('/orders/MNG-CCCC-1009/billing-state', o.token, { state: 'rajasthan' })).j.state === 'Rajasthan', 'owner sets the buyer state on a shipped order');
   ok((await call('/orders/MNG-CCCC-1009/address', s.token, { address: '12 New Street, Faridabad, Haryana - 121007' })).s === 409, 'address locked once shipped');
   ok((await call('/me', s.token)).j.dispatchFrom, 'dispatch date exposed');
 
