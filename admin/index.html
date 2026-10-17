@@ -537,7 +537,7 @@ a{color:var(--terra)}
     }
     method.addEventListener('change', sync); sync();
     // One tap for Delhivery: creates the shipment (charges the Delhivery wallet), gets the AWB, marks shipped and emails the customer.
-    var estG = 250 * o.boxes + ({ 1: 120, 2: 180, 3: 240, 4: 300 }[o.boxes] || 0);
+    var estG = 250 * o.boxes + ({ 1: 350, 2: 420, 3: 470, 4: 500 }[o.boxes] || 0);
     var weight = h('input', { type: 'number', inputmode: 'numeric', min: '100', max: '5000', placeholder: 'Estimated ' + estG + ' g (weigh the real parcel)' });
     var dlBox = h('div', { class: 'acts', style: 'flex-direction:column;align-items:stretch;gap:8px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line, #e5ddd0)' },
       h('label', {}, 'Parcel weight in grams (optional)'), weight,

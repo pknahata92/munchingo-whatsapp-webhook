@@ -18,7 +18,8 @@ const shaped = (boxes) => ({ boxes, ship_name: 'A Buyer', ship_phone: '919876543
   ok(e instanceof d.ShipmentError && e.status === 503, 'no token: clear error, no call');
   process.env.DELHIVERY_API_TOKEN = 'tok_test';
   const r = await d.createShipment({ order, shaped: shaped(3) });
-  ok(r.awb === '1234567890123' && r.weight === 990, 'returns AWB and the 3-box estimate (990 g)');
+  ok(r.awb === '1234567890123' && r.weight === 1220, 'returns AWB and the measured 3-box weight (1,220 g)');
+  const r4 = await d.createShipment({ order, shaped: shaped(4) }); ok(r4.weight === 1500, 'the measured 4-box weight is 1,500 g');
   ok(/Token tok_test/.test(last.opts.headers.Authorization) && /\/api\/cmu\/create\.json$/.test(last.url), 'token header and endpoint');
   const body = new URLSearchParams(last.opts.body); const data = JSON.parse(body.get('data'));
   const s = data.shipments[0];
