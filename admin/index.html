@@ -186,7 +186,7 @@ a{color:var(--terra)}
   $('out').onclick = function () { signOut(false); };
 
   // ── main list ──
-  var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier (or arrange Porter or a hand delivery). Open each order, choose how it goes out and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
+  var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier (or arrange Porter or a hand delivery). Open each order, choose how it goes out and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. Select orders and tap Shipping labels to print the courier labels together. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
   var FILTERS = [['attention', '⚠ Needs attention'], ['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
@@ -266,7 +266,7 @@ a{color:var(--terra)}
     var list = $('list'); list.textContent = '';
     if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
     rows.forEach(function (o) {
-      var pickable = o.state === 'topack' || o.state === 'packed';
+      var pickable = o.state === 'topack' || o.state === 'packed' || labelable(o);
       var box = pickable ? h('input', { type: 'checkbox', 'aria-label': 'Select ' + o.id, onclick: function (e) { e.stopPropagation(); if (e.target.checked) state.sel[o.id] = 1; else delete state.sel[o.id]; bulkBar(); } }) : null;
       if (box && state.sel[o.id]) box.checked = true;
       list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
@@ -297,8 +297,19 @@ a{color:var(--terra)}
   // ── bulk actions: pick list, packing slips, mark packed ──
   function selectedIds() { return Object.keys(state.sel).filter(function (id) { return state.orders.some(function (o) { return o.id === id; }); }); }
   function printableIds() { var s = selectedIds(); return s.length ? s : visible().filter(function (o) { return o.state === 'topack' || o.state === 'packed'; }).map(function (o) { return o.id; }); }
+  function labelable(o) { return o.state === 'shipped' && /delhivery/i.test(o.carrier || '') && /^[0-9]{8,20}$/.test(String(o.awb || '').trim()); }
+  function labelBar(b) {
+    var vis = visible().filter(labelable);
+    if (!vis.length) { b.hidden = true; return; }
+    b.hidden = false;
+    var sel = selectedIds().filter(function (id) { return vis.some(function (o) { return o.id === id; }); }), n = sel.length;
+    b.appendChild(h('button', { class: 'chip', style: 'flex:1 1 100%;text-align:center', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length + ' Delhivery orders'));
+    if (n) b.appendChild(h('button', { class: 'chip', onclick: function () { state.sel = {}; render(); } }, 'Clear (' + n + ')'));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 100%', onclick: function () { openOrderLabels(n ? sel : vis.map(function (o) { return o.id; })); } }, '🏷 Shipping labels (' + (n || vis.length) + ')'));
+  }
   function bulkBar() {
     var b = $('bulk'); b.textContent = '';
+    if (state.filter === 'shipped') return labelBar(b);
     var vis = visible().filter(function (o) { return o.state === 'topack'; });
     if (state.filter !== 'topack' || !vis.length) { b.hidden = true; return; }
     b.hidden = false;
@@ -474,7 +485,7 @@ a{color:var(--terra)}
         h('button', { class: 'btn ghost small', onclick: function () { printOne(o.id, 'slips'); } }, 'Print slip'))));
     if (o.state === 'packed') p.appendChild(shipForm(o));
     if (o.state === 'shipped' || o.state === 'delivered') p.appendChild(section(o.state === 'delivered' ? 'Delivered' : 'Shipped', kv([['Packed', o.packed_at ? when(o.packed_at) + (o.packed_by ? ' by ' + o.packed_by : '') : ''], ['Carrier', o.carrier], ['Tracking', o.awb], ['Shipped', when(o.shipped_at)], ['Delivered', o.delivered_at ? when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : '']]),
-      o.state === 'shipped' ? h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { if (confirm('Mark this order as delivered?')) act(adv, { to: 'delivered' }, 'Marked delivered', e.target); } }, 'Mark delivered')) : null));
+      o.state === 'shipped' ? h('div', { class: 'acts' }, labelable(o) ? h('button', { class: 'btn ghost small', onclick: function () { openOrderLabels([o.id]); } }, 'Shipping label') : null, h('button', { class: 'btn small', onclick: function (e) { if (confirm('Mark this order as delivered?')) act(adv, { to: 'delivered' }, 'Marked delivered', e.target); } }, 'Mark delivered')) : null));
     if (state.role === 'owner' && ['packed', 'shipped', 'delivered'].indexOf(o.state) >= 0) p.appendChild(section('Owner', h('p', { class: 'muted' }, 'Made a mistake? Step this order back one stage. The customer is not un-emailed.'),
       h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Undo the last step (' + o.state + ')?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/undo', {}, 'Stepped back', e.target); } }, 'Undo last step')));
     if (state.role === 'owner' && o.status === 'paid' && o.refundable > 0) p.appendChild(refundForm(o));
@@ -527,7 +538,7 @@ a{color:var(--terra)}
         act('/admin/api/orders/' + encodeURIComponent(o.id) + '/delhivery-shipment', { weightGrams: weight.value ? Number(weight.value) : undefined },
           function (j) { return 'Delhivery shipment created · AWB ' + j.awb + (j.emailed ? ' · customer emailed' : ''); }, e.target);
       } }, 'Create Delhivery shipment'),
-      h('p', { class: 'muted' }, 'Pickup: request it in Delhivery One. Print the label from there too.'));
+      h('p', { class: 'muted' }, 'Pickup: request it in Delhivery One. Labels: Shipped tab, select orders, Shipping labels.'));
     return section('Mark shipped', dlBox, h('label', {}, 'Or enter the shipment details yourself: how is it going out?'), method, courierWrap, awbLabel, awb, nowWrap, hint,
       h('button', { class: 'btn small', onclick: function (e) {
         if (preNow && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
@@ -557,6 +568,34 @@ a{color:var(--terra)}
 
   // ── owner screens: stock and team ──
   function ownerPanel(title, body) { var p = $('panel'); p.textContent = ''; p.appendChild(h('div', { class: 'row' }, h('b', { style: 'flex:1;font-size:18px' }, title), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close'))); body.forEach(function (b) { p.appendChild(b); }); $('sheet').classList.add('on'); }
+  // ── Shipping labels from the orders: the server fetches each Delhivery label, this page lays them out on 13 x 19 in (see labelsheet.js) ──
+  function openOrderLabels(ids) {
+    var copies = h('select', {}, [1, 2, 3].map(function (n) { return h('option', { value: n, selected: n === 2 }, n + (n === 1 ? ' copy' : ' copies') + ' of each label'); }));
+    var marks = h('input', { type: 'checkbox', checked: true, style: 'width:auto;margin-right:8px' });
+    var info = h('p', { class: 'muted' }, ids.length + ' order' + (ids.length === 1 ? '' : 's') + ' selected.');
+    var skipped = h('div', {});
+    var go = h('button', { class: 'btn small', onclick: function (e) {
+      if (!window.PDFLib || !window.MunchingoLabelSheet) return toast('The label tool is still loading. Try again in a moment.', 5000);
+      e.target.disabled = true; info.textContent = 'Getting the labels from Delhivery…'; skipped.textContent = '';
+      api('/admin/api/labels', { method: 'POST', body: { ids: ids } }).then(function (j) {
+        if (!j.ok) throw new Error(j.error || 'Failed');
+        (j.skipped || []).forEach(function (x) { skipped.appendChild(h('p', { class: 'muted', style: 'color:var(--red)' }, x.orderId + ': ' + x.reason)); });
+        if (!j.labels.length) throw new Error('No labels could be fetched. Use the Label sheet button with the PDF from Delhivery One.');
+        var files = j.labels.map(function (l) { var bin = atob(l.pdf), a = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; });
+        info.textContent = 'Making the sheet…';
+        return window.MunchingoLabelSheet.build(window.PDFLib, files, { copies: Number(copies.value), cutMarks: marks.checked }).then(function (r) {
+          var url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
+          var a = h('a', { href: url, download: 'Munchingo-shipping-labels-13x19-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+          info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' sheet' + (r.sheets === 1 ? '' : 's') + ' (13 × 19 in, ' + r.perSheet + ' per sheet; each label\'s copies stay on the same sheet). Downloaded: check the PDF (barcode sharp, address complete) before you send it to print.';
+        });
+      }).catch(function (err) { info.textContent = 'Could not make the sheet: ' + (err && err.message || err); })
+        .then(function () { e.target.disabled = false; });
+    } }, 'Get the labels and make the A3 sheet');
+    ownerPanel('Shipping labels', [
+      h('p', { class: 'muted' }, 'Fetches each order\'s Delhivery label (4 × 6 in) and lays them out on one 13 × 19 in sheet, 3 across and 3 down, with a label\'s copies together on the same sheet and cut marks in the margin. Nothing is stored. If Delhivery will not give a label here, use Label sheet with the PDF from Delhivery One.'),
+      section('Print', h('label', {}, 'Copies'), copies, h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, marks, 'Cut marks in the margin'), info, skipped, h('div', { class: 'acts' }, go))]);
+  }
   // ── Label sheet (staff + owner): courier labels PDF in, 13 x 19 in sheet out (3 x 3 of 4 x 6 in, N copies each). Stays on this device. ──
   function openLabelSheet() {
     var file = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true });

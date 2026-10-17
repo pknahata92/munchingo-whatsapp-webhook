@@ -424,6 +424,31 @@ async function pickList(ids) {
   return { flavours: require('./orderText').flavourTotals(allItems), orders: out };
 }
 
+// Shipping labels (Delhivery, 4x6 PDF) for the chosen orders, fetched one by one with a small pool. The page builds the 13 x 19 sheet.
+// An order without a Delhivery AWB, or whose label Delhivery will not give, is listed under skipped with the reason; the rest still print.
+async function shippingLabels(ids) {
+  const dl = require('./delhiveryLabel');
+  const list = Array.from(new Set(ids || [])).slice(0, 40);
+  const labels = []; const skipped = [];
+  let next = 0;
+  async function worker() {
+    while (next < list.length) {
+      const id = list[next++];
+      try {
+        const { order, shaped } = await getOrderDetail(id);
+        if (order.status !== 'paid') { skipped.push({ orderId: id, reason: 'Not a paid order.' }); continue; }
+        if (!/delhivery/i.test(order.carrier || '') || !dl.isAwb(order.awb)) { skipped.push({ orderId: id, reason: 'No Delhivery AWB on this order yet.' }); continue; }
+        const pdf = await dl.fetchLabel(order.awb);
+        labels.push({ orderId: id, awb: String(order.awb).trim(), name: shaped.ship_name, pdf: pdf.toString('base64') });
+      } catch (e) { skipped.push({ orderId: id, reason: e.message || 'Failed.' }); }
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  const order = (a, b) => list.indexOf(a.orderId) - list.indexOf(b.orderId);
+  labels.sort(order); skipped.sort(order);
+  return { labels, skipped };
+}
+
 async function saveNote(orderId, note, actor) {
   await db.updateOrderFields(orderId, { admin_note: String(note || '').slice(0, 1000) });
   await logEvent(orderId, 'note', actor);
@@ -506,4 +531,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
