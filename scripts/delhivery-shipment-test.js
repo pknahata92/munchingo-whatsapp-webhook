@@ -24,7 +24,7 @@ const shaped = (boxes) => ({ boxes, ship_name: 'A Buyer', ship_phone: '919876543
   ok(/Token tok_test/.test(last.opts.headers.Authorization) && /\/api\/cmu\/create\.json$/.test(last.url), 'token header and endpoint');
   const body = new URLSearchParams(last.opts.body); const data = JSON.parse(body.get('data'));
   const s = data.shipments[0];
-  ok(body.get('format') === 'json' && data.pickup_location.name === 'FOTOBAR B2C', 'form body, FOTOBAR B2C pickup');
+  ok(body.get('format') === 'json' && data.pickup_location.name === 'Munchingo', 'form body, Munchingo pickup');
   ok(s.phone === '9876543210' && s.pin === '400001' && s.payment_mode === 'Prepaid' && s.cod_amount === '0' && s.order === 'MNG-1', 'prepaid, 10-digit phone, pin, order ref');
   ok(!/[&;\n]/.test(s.add), 'address stripped of characters that break the form');
   ok((await d.createShipment({ order, shaped: shaped(3), weightGrams: 1200 }), JSON.parse(new URLSearchParams(last.opts.body).get('data')).shipments[0].weight === '1200'), 'staff weight override');

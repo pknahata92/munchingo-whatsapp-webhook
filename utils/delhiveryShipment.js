@@ -5,7 +5,7 @@
  * Used by POST /admin/api/orders/:id/delhivery-shipment, which then marks the order shipped.
  *
  * Needs DELHIVERY_API_TOKEN (same token as the pincode check). Optional env:
- *   DELHIVERY_PICKUP_LOCATION  name of the pickup location in Delhivery One (default 'FOTOBAR B2C', Faridabad 121007)
+ *   DELHIVERY_PICKUP_LOCATION  name of the pickup location in Delhivery One (default 'Munchingo', Faridabad 121007)
  *   DELHIVERY_API_BASE         default https://track.delhivery.com
  * Delhivery API: POST {BASE}/api/cmu/create.json  (form body: format=json&data=<json>)  header  Authorization: Token <token>
  * Success: { success: true, packages: [ { waybill, status: 'Success', refnum, ... } ] }. Failure: packages[0].remarks / rmk.
@@ -53,7 +53,7 @@ function buildPayload({ order, shaped, weightGrams, pickupLocation }) {
       weight: String(weight), shipment_length: String(length), shipment_width: String(width), shipment_height: String(height),
       shipping_mode: 'Surface', seller_name: SELLER.name, seller_gst_tin: SELLER.gstin, hsn_code: SELLER.hsn,
     }],
-    pickup_location: { name: pickupLocation || process.env.DELHIVERY_PICKUP_LOCATION || 'FOTOBAR B2C' },
+    pickup_location: { name: pickupLocation || process.env.DELHIVERY_PICKUP_LOCATION || 'Munchingo' },
   };
 }
 
