@@ -17,13 +17,15 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, ms = 6000, what = 'condition') { const t = Date.now(); while (Date.now() - t < ms) { try { const v = await fn(); if (v) return v; } catch (e) { /* keep waiting */ } await sleep(60); } throw new Error('Timed out waiting for ' + what); }
 
+const tokens = {};   // one sign-in per person per run (the login route is rate limited, like production)
 async function tokenFor(email) {
+  if (tokens[email]) return tokens[email];
   await fetch(BASE + '/admin/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
   await sleep(250);
   const code = fs.readFileSync(CODE_FILE, 'utf8').trim();
   const r = await (await fetch(BASE + '/admin/api/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, code }) })).json();
   if (!r.ok) throw new Error('could not sign in as ' + email);
-  return r.token;
+  return (tokens[email] = r.token);
 }
 
 // Opens the admin page as `role`, already signed in. `size` is the window width in px (default phone).
@@ -51,7 +53,10 @@ async function openAdmin(role, { width = 390 } = {}) {
 }
 
 async function main() {
+  try { require('child_process').execSync('pkill -f scripts/admin-dev.js', { stdio: 'ignore' }); await sleep(400); } catch (e) { /* none running */ }
   const dev = spawn(process.execPath, [path.join(__dirname, 'admin-dev.js')], { stdio: 'ignore' });
+  const stop = () => { try { dev.kill(); } catch (e) { /* already gone */ } };
+  process.on('exit', stop); process.on('uncaughtException', (e) => { console.error(e); stop(); process.exit(1); });
   try {
     await until(async () => (await fetch(BASE + '/admin')).ok, 10000, 'the practice admin to start');
     const o = await openAdmin('owner');
@@ -77,7 +82,7 @@ async function main() {
 
     // ── later tasks add their checks below ──
     for (const check of require('./admin-ui-checks')({ openAdmin, ok, sleep, until, BASE })) await check();
-  } finally { dev.kill(); }
+  } finally { stop(); }
   console.log(`admin-ui-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

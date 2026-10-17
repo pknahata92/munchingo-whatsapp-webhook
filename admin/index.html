@@ -654,10 +654,24 @@ header small{color:var(--ink2);opacity:1}
   // ── owner screens: stock and team ──
   function ownerPanel(title, body) { var p = $('panel'); $('filterTpl').appendChild($('filterBox')); p.textContent = ''; p.appendChild(h('div', { class: 'row' }, h('b', { style: 'flex:1;font-size:18px' }, title), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close'))); body.forEach(function (b) { if (b) p.appendChild(b); }); $('sheet').classList.add('on'); }
   // ── Inventory (staff + owner): what is on the shelf. Nobody types a total: receive, take out and count are written as lines. ──
+  // Inventory renders into the Stock tab (a page). Anywhere else it falls back to the sheet.
+  function invShow(title, nodes) {
+    if (state.tab !== 'stock') return ownerPanel(title, nodes);
+    var v = $('viewStock'); v.textContent = '';
+    v.appendChild(h('div', { class: 'pagehead' }, title));
+    nodes.forEach(function (n) { if (n) v.appendChild(n); });
+    window.scrollTo(0, 0);
+  }
+  function invPick(title, fn) {
+    var items = (state.inv && state.inv.items) || [];
+    invShow(title, [h('p', { class: 'muted' }, 'Which item?'), h('div', { class: 'moregrid' }, items.map(function (it) { return moreBtn(it.name, it.on_hand + ' ' + it.unit + ' on hand', function () { fn(it); }); })),
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))]);
+  }
   var STATUS = { ok: ['OK', 'b-delivered'], low: ['LOW', 'b-topack'], out: ['OUT', 'b-refunded'], 'new': ['Not counted yet', 'b-unpaid'] };
   function openInventory() {
     api('/admin/api/inventory').then(function (j) {
       if (!j.ok) return toast(j.error || 'Could not load stock', 6000);
+      state.inv = j;
       var row = function (it) {
         var st = (it.paused || (it.sellable != null && it.sellable <= 0 && it.kind === 'product')) ? ['SOLD OUT ONLINE', 'b-refunded'] : (STATUS[it.status] || STATUS['new']);
         var lots = it.lots.length ? it.lots.map(function (l) { return (l.lot_code || 'no lot') + ': ' + l.qty + (l.best_before ? ' (best before ' + new Date(l.best_before + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ')' : ''); }).join(' · ') : '';
@@ -678,7 +692,7 @@ header small{color:var(--ink2);opacity:1}
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
       var body = [h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
-        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invHistory(); } }, 'History'),
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null),
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
           return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
@@ -686,13 +700,13 @@ header small{color:var(--ink2);opacity:1}
               h('button', { class: 'btn small', onclick: function (e) { var v = prompt('How many ' + x.name + ' came back from ' + ev.ref + '? (the rest counts as sold or given at the event; record that cash in your cash book)', x.out); if (v === null) return; e.target.disabled = true; api('/admin/api/inventory/event-return', { method: 'POST', body: { slug: x.slug, qty: v, ref: ev.ref } }).then(function (r) { toast(r.ok ? 'Back on the shelf. Still out: ' + r.stillOut : (r.error || 'Failed'), 6000); refreshLow(); openInventory(); }); } }, 'Mark returned')); }));
         })) : null,
         section('Products', prods.map(row)), section('Packaging and supplies', pack.map(row))];
-      ownerPanel('Inventory', body); $('sheet').classList.add('on');
+      invShow('Stock', body);
     });
   }
   function invForm(title, it, fields, onSave, saveLabel) {
     var save = h('button', { class: 'btn small', onclick: function (e) { e.target.disabled = true; onSave(function () { e.target.disabled = false; }); } }, saveLabel || 'Save');
     var kids = [h('p', { class: 'muted' }, 'On hand now: ' + it.on_hand + ' ' + it.unit)].concat(fields, [h('div', { class: 'acts' }, save, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))]);
-    ownerPanel(title + ': ' + it.name, kids);
+    invShow(title + ': ' + it.name, kids);
   }
   function numIn(ph) { return h('input', { type: 'number', inputmode: 'numeric', min: '0', step: '1', placeholder: ph || '' }); }
   function postInv(path, body, done, okMsg) {
@@ -750,7 +764,7 @@ header small{color:var(--ink2);opacity:1}
         return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
           can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
       });
-      ownerPanel('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), section('Latest 60 lines', lines.length ? lines : h('p', { class: 'muted' }, 'Nothing recorded yet.'))]);
+      invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), section('Latest 60 lines', lines.length ? lines : h('p', { class: 'muted' }, 'Nothing recorded yet.'))]);
     });
   }
   // ── Shipping labels from the orders: the server fetches each Delhivery label, this page lays them out on 13 x 19 in (see labelsheet.js) ──
