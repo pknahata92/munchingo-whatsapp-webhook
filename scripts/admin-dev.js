@@ -110,4 +110,13 @@ const app = express();
 app.use(express.json());
 app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body && req.body.ready); res.json({ ok: true }); });   // practice copy only: pretend the coupons migration has / has not run
 app.use(require('../routes/admin'));
+// Stock ledger on fake data: an in-memory store with a Kesari lot already received, so the Inventory screens have something to show.
+{
+  const inv = require(path.join(root, 'utils/inventory.js'));
+  const store = require('./inventory-memstore').memStore(new Date(Date.now() - 86400_000).toISOString());
+  const real = inv.makeInventory(store);
+  real.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', bestBefore: '2027-01-13', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
+  real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: '2027-01-13', note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
+  inv.instance = () => real;
+}
 app.listen(8430, () => console.log('Admin practice copy: http://localhost:8430/admin'));

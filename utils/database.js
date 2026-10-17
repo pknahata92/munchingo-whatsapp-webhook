@@ -505,8 +505,11 @@ async function listCouponOrderTotals() {
   return data || [];
 }
 
+// The raw Supabase client, for modules that own their own tables (utils/inventory.js).
+const client = () => db();
+
 module.exports = {
-  offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
+  client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
   listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, listStock, setStock, getCouponUsage,
   listRecentOrders,

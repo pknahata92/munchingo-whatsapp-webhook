@@ -350,6 +350,8 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
   } else { fields = { delivered_at: now, delivered_by: by }; where = { status: 'paid', delivered_at: null }; }
   if (!(await db.updateOrderIf(orderId, where, fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
   await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb } : null });
+  // Stock: boxes leave the shelf when the order is packed (oldest lot first). Never blocks packing: a failure is only logged.
+  if (to === 'packed') { try { await require('./inventory').instance().deductForOrder({ orderId, items: order.items, at: now }); } catch (e) { console.error('[STOCK] could not deduct for', orderId, e.message); } }
   let emailed = false;
   if (to === 'shipped' && order.customer_email) {
     // A pasted link (Porter, India Post, any courier) is used as is; a Delhivery number becomes their tracking page.
@@ -399,6 +401,7 @@ async function undoStep({ orderId, actor }) {
   if (!step) throw new AdminError('Nothing to undo on this order.', 409);
   if (!(await db.updateOrderIf(orderId, { status: 'paid', ...step.where }, step.fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
   await logEvent(orderId, 'undo', actor, { from, to: step.to, meta: from === 'shipped' ? { carrier: order.carrier, awb: order.awb } : null });
+  if (from === 'packed') { try { await require('./inventory').instance().restoreForOrder({ orderId }); } catch (e) { console.error('[STOCK] could not restore for', orderId, e.message); } }
   return { state: step.to };
 }
 

@@ -65,6 +65,18 @@ router.get('/admin/api/orders/:id', wrap(async (req) => ({ order: (await actions
 router.post('/admin/api/orders/:id/advance', wrap(async (req) => actions.advance({ ...enc(req), to: (req.body || {}).to, carrier: (req.body || {}).carrier, awb: (req.body || {}).awb, method: (req.body || {}).method, deliverNow: !!(req.body || {}).deliverNow })));
 router.post('/admin/api/orders/:id/delhivery-shipment', wrap(async (req) => actions.createDelhiveryShipment({ ...enc(req), weightGrams: (req.body || {}).weightGrams })));
 router.post('/admin/api/labels', wrap(async (req) => actions.shippingLabels((req.body || {}).ids)));
+// Stock ledger (staff and owner can receive, take out, count and flag; owner adds items and sets levels). See utils/inventory.js.
+const stock = () => require('../utils/inventory');
+const sw = (fn) => wrap(async (req) => { try { return await fn(req, stock().instance()); } catch (e) { if (e instanceof stock().StockError) throw new actions.AdminError(e.message, e.status, e.extra); throw e; } });
+router.get('/admin/api/inventory', sw((req, inv) => inv.overview()));
+router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: req.query.slug, limit: Number(req.query.limit) || 40 })));
+router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin })));
+router.post('/admin/api/inventory/take', sw((req, inv) => inv.take({ ...(req.body || {}), actor: req.admin })));
+router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
+router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
+router.post('/admin/api/inventory/reverse', sw((req, inv) => inv.reverse({ id: Number((req.body || {}).id), reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));
+router.post('/admin/api/inventory/item', owner, sw((req, inv) => inv.addItem(req.body || {})));
+router.post('/admin/api/inventory/level', owner, sw((req, inv) => inv.setLevel({ slug: (req.body || {}).slug, lowLevel: (req.body || {}).lowLevel })));
 router.post('/admin/api/orders/bulk-pack', wrap(async (req) => actions.bulkPack({ ids: (req.body || {}).ids, actor: req.admin })));
 router.post('/admin/api/picklist', wrap(async (req) => actions.pickList((req.body || {}).ids)));
 router.post('/admin/api/orders/:id/address', wrap(async (req) => actions.saveAddress({ orderId: req.params.id, address: (req.body || {}).address, actor: req.admin })));
