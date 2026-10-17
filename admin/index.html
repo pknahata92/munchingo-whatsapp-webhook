@@ -173,6 +173,7 @@ header small{color:var(--ink2);opacity:1}
 
 <script src="/admin/pdf-lib.min.js" defer></script>
 <script src="/admin/labelsheet.js" defer></script>
+<script src="/admin/pickfooter.js" defer></script>
 <script>
 (function () {
   'use strict';
@@ -481,6 +482,14 @@ header small{color:var(--ink2);opacity:1}
   }
   var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function printOne(id, kind) { printSheets(kind, [id]); }
+  // The pick list's reconciliation footer: which orders it covers, which it left out and why (see admin/pickfooter.js).
+  function pickFooterHtml(coveredIds) {
+    var left = window.MngPickFooter ? window.MngPickFooter.build(coveredIds, state.orders) : [];
+    var html = '<h2>What this list covers</h2><p><b>' + coveredIds.length + ' order' + (coveredIds.length === 1 ? '' : 's') + ':</b> ' + (coveredIds.length ? coveredIds.map(esc).join(', ') : 'none') + '</p>'
+      + '<h2>Left out of this list</h2>';
+    html += left.length ? '<ul>' + left.map(function (g) { return '<li><b>' + g.count + '</b> ' + esc(g.why) + (g.ids.length ? ': ' + g.ids.map(esc).join(', ') + (g.more ? ' and ' + g.more + ' more' : '') : '') + '</li>'; }).join('') + '</ul>' : '<p>Nothing else: every order in the admin is on this list.</p>';
+    return html + '<p><small>The box totals above count only the orders listed. Orders paid outside the live Razorpay account (for example pre-launch tests) show as test orders and are never packed.' + (state.truncated ? ' The admin shows the latest 600 orders only.' : '') + '</small></p>';
+  }
   function printSheets(kind, only) {
     var ids = only || printableIds(); if (!ids.length) return toast('Nothing to print');
     var w = window.open('', '_blank'); if (!w) return toast('Allow pop-ups to print');
@@ -491,7 +500,8 @@ header small{color:var(--ink2);opacity:1}
       if (kind === 'pick') {
         html = '<h1>Pick list</h1><small>' + esc(new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })) + ' · ' + j.orders.length + ' order(s)</small><h2>Pull from stock</h2><table>'
           + Object.keys(j.flavours).map(function (f) { return '<tr><td class="big"><span class="box"></span>' + esc(f) + '</td><td class="big">' + j.flavours[f] + ' box' + (j.flavours[f] === 1 ? '' : 'es') + '</td></tr>'; }).join('')
-          + '</table><h2>Orders</h2><table>' + j.orders.map(function (o) { return '<tr><td><span class="box"></span><b>' + esc(o.id) + '</b><br>' + esc(o.name) + '</td><td>' + o.items.map(function (i) { return esc(i.name) + ' ×' + i.qty + (i.contents ? ' <small>(' + esc(i.contents) + ')</small>' : ''); }).join('<br>') + '</td><td>' + (o.gift_note ? '🎁 gift card' : '') + '</td></tr>'; }).join('') + '</table>';
+          + '</table><h2>Orders</h2><table>' + j.orders.map(function (o) { return '<tr><td><span class="box"></span><b>' + esc(o.id) + '</b><br>' + esc(o.name) + '</td><td>' + o.items.map(function (i) { return esc(i.name) + ' ×' + i.qty + (i.contents ? ' <small>(' + esc(i.contents) + ')</small>' : ''); }).join('<br>') + '</td><td>' + (o.gift_note ? '🎁 gift card' : '') + '</td></tr>'; }).join('') + '</table>'
+          + pickFooterHtml(j.orders.map(function (o) { return o.id; }));
       } else {
         html = j.orders.map(function (o) {
           return '<div class="slip">' + (o.gift_note ? '<div class="gift">🎁 Write on the card:<br>' + esc(o.gift_note) + '</div>' : '')

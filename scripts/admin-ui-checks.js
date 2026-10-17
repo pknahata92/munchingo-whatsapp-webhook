@@ -185,5 +185,25 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     for (const [name, theme] of [['light', light], ['dark', dark]]) for (const [label, fg, bg] of pairs(theme)) { if (!fg || !bg) continue; const r = ratio(fg, bg); ok(r >= 4.5, name + ': ' + label + ' is ' + r.toFixed(2) + ':1 (needs 4.5)'); }
   });
 
+  // Pick-list footer: says what the list covers and what it left out
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    let page = ''; o.win.open = () => ({ document: { open() {}, write(h) { page += h; }, close() {} }, focus() {}, print() {}, close() {} });
+    click(o.byText('#flow .step', /To pack/)); await sleep(100);
+    const toPack = qa('#list .card').map((c) => text(c).match(/MNG-[A-Z0-9]+-\d+/)[0]);
+    click(o.byText('#bulk button', /Print pick list/)); await until(() => /What this list covers/.test(page), 4000, 'the pick list');
+    const covers = (page.match(/What this list covers[\s\S]*?Left out/) || [''])[0];
+    ok(toPack.length > 0 && toPack.every((id) => covers.includes(id)), 'the footer names every order the list covers (' + toPack.join(',') + ')');
+    ok(new RegExp('<b>' + toPack.length + ' order').test(covers), 'and says how many there are');
+    const left = (page.match(/Left out of this list[\s\S]*$/) || [''])[0];
+    ok(/MNG-TEST-1001/.test(left) && /test order/i.test(left), 'a test order is named under left out, with the reason');
+    ok(/MNG-UUUU-1011/.test(left) && /waiting for payment/.test(left), 'unpaid orders are named too');
+    ok(/already shipped/.test(left) || /already delivered/.test(left), 'shipped and delivered orders are counted');
+    ok(!toPack.some((id) => left.includes(id)), 'a covered order is never listed as left out');
+    ok(/count only the orders listed/i.test(page), 'a plain-words note explains what the box totals include');
+    ok(o.errors.length === 0, 'no page errors printing the pick list (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };
