@@ -36,6 +36,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const needPack = cards.find((c) => /to pack/.test(text(c)));
     ok(topackCount === 0 ? !needPack : (needPack && Number(text(needPack.querySelector('b'))) === topackCount), 'the to-pack card carries the same count as the step button');
     ok(cards.every((c) => Number(text(c.querySelector('b'))) > 0), 'a card appears only when its count is above zero');
+    ok(!cards.some((c) => /packed order|shipped order/.test(text(c))) || topackCount === 0, 'the strip gives ONE do-this-next card and does not repeat every step button');
     click(o.byText('#flow .step', /Delivered/)); await sleep(100);
     if (needPack) { click(qa('#needs .need').find((c) => /to pack/.test(text(c)))); await sleep(100); ok(/To pack/.test(text(q('#flow .step.on'))), 'tapping the card opens that step'); }
     const low = qa('#needs .need').find((c) => /low/i.test(text(c)));

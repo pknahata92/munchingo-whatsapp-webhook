@@ -102,6 +102,7 @@ header small{color:var(--ink2);opacity:1}
 /* ── First-time guide ── */
 .guide{background:var(--band);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:2px 0 12px}
 .guide b{display:block;font-size:16px;margin-bottom:6px}.guide ol{margin:0 0 10px;padding-left:20px;line-height:1.6;font-size:14px}.guide li b{display:inline;font-size:14px;margin:0}
+.b-gift{background:#FBE3D6;color:#7A3512}
 </style>
 </head>
 <body>
@@ -158,7 +159,7 @@ header small{color:var(--ink2);opacity:1}
         <option value="all">Any date</option><option value="today">Today</option><option value="yesterday">Yesterday</option>
         <option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="month">This month</option><option value="custom">Pick dates…</option>
       </select>
-      <button class="chip" id="fGift" type="button">🎁 Gift notes</button>
+      <button class="chip" id="fGift" type="button">Gift notes</button>
       <button class="chip" id="fCoupon" type="button">Coupon used</button>
       <button class="chip" id="fSet" type="button">Gift sets</button>
     </div>
@@ -229,7 +230,7 @@ header small{color:var(--ink2);opacity:1}
 
   // ── main list ──
   var STEPS = [['topack', '1', 'To pack', 'Tick the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Tap Create shipment on each order. You get a tracking number and the customer is emailed. For Porter or hand delivery, open the order.'], ['shipped', '3', 'Shipped', 'On the way. Tick orders and tap Shipping labels to print the courier labels together. When it reaches the customer, tap Mark delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
-  var FILTERS = [['attention', '⚠ Needs attention'], ['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
+  var FILTERS = [['attention', 'Needs attention'], ['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
@@ -300,9 +301,11 @@ header small{color:var(--ink2);opacity:1}
     var go = function (st) { return function () { showTab('orders'); state.filter = st; saveView(); render(); window.scrollTo(0, 0); }; };
     var add = function (n, one, many, fn, hot) { if (n > 0) box.appendChild(h('button', { class: 'need' + (hot ? ' hot' : ''), type: 'button', onclick: fn }, h('b', {}, String(n)), h('span', {}, n === 1 ? one : many))); };
     var unp = by('unpaid'), old1h = unp.filter(function (o) { return Date.now() - new Date(o.created_at).getTime() > 3600000; }).length;
-    add(by('topack').length, 'order to pack', 'orders to pack', go('topack'));
-    add(by('packed').length, 'packed, ready to ship', 'packed, ready to ship', go('packed'));
-    add(state.orders.filter(labelable).length, 'shipped: tap for labels or delivery', 'shipped: tap for labels or delivery', go('shipped'));
+    // ONE "do this next" card: the earliest step that has orders. The four step buttons below carry the counts for every step.
+    var topack = by('topack').length, packed = by('packed').length, onway = state.orders.filter(labelable).length;
+    if (topack) add(topack, 'order to pack: tap to start', 'orders to pack: tap to start', go('topack'));
+    else if (packed) add(packed, 'packed order: tap to create its shipment', 'packed orders: tap to create their shipments', go('packed'));
+    else if (onway) add(onway, 'shipped order: tap for its label or delivery', 'shipped orders: tap for their labels or delivery', go('shipped'));
     add(unp.length, 'order waiting for payment' + (old1h ? ' (' + old1h + ' over an hour old)' : ''), 'orders waiting for payment' + (old1h ? ' (' + old1h + ' over an hour old)' : ''), go('unpaid'), old1h > 0);
     var low = state.low || [];
     add(low.length, 'running low: ' + low.map(function (x) { return x.name; }).join(', '), 'running low: ' + low.map(function (x) { return x.name; }).join(', '), function () { showTab('stock'); }, low.some(function (x) { return x.status === 'out'; }));
@@ -368,7 +371,7 @@ header small{color:var(--ink2);opacity:1}
       if (box && state.sel[o.id]) box.checked = true;
       list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
         h('div', {},
-          h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? ' 🎁' : '', o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, '⚠ NO INVOICE') : null), h('span', {}, inr(o.total))),
+          h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? h('span', { class: 'badge b-gift' }, 'GIFT') : null, o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, 'NO INVOICE') : null), h('span', {}, inr(o.total))),
           h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '')),
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));
@@ -462,8 +465,8 @@ header small{color:var(--ink2);opacity:1}
     var sel = selectedIds(), n = sel.length;
     b.appendChild(h('button', { class: 'chip', style: 'flex:1 1 100%;text-align:center', onclick: function () { vis.forEach(function (o) { state.sel[o.id] = 1; }); render(); } }, 'Select all ' + vis.length));
     if (n) b.appendChild(h('button', { class: 'chip', onclick: function () { state.sel = {}; render(); } }, 'Clear (' + n + ')'));
-    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { printSheets('pick'); } }, '🖨 Pick list' + (n ? ' (' + n + ')' : '')));
-    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { printSheets('slips'); } }, '🖨 Packing slips' + (n ? ' (' + n + ')' : '')));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { printSheets('pick'); } }, 'Print pick list' + (n ? ' (' + n + ')' : '')));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { printSheets('slips'); } }, 'Print packing slips' + (n ? ' (' + n + ')' : '')));
     var toPack = sel.filter(function (id) { return state.orders.some(function (o) { return o.id === id && o.state === 'topack'; }); });
     if (toPack.length) b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 100%;background:var(--green)', onclick: function (e) {
       if (!confirm('Mark ' + toPack.length + ' order' + (toPack.length === 1 ? '' : 's') + ' as packed?')) return;
@@ -474,7 +477,7 @@ header small{color:var(--ink2);opacity:1}
         toast(j.packed + ' packed' + (bad.length ? ' · ' + bad.length + ' skipped: ' + bad[0].id + ' ' + bad[0].error : ''), 6000);
         state.sel = {}; load();
       });
-    } }, '✓ Mark ' + toPack.length + ' packed'));
+    } }, 'Mark ' + toPack.length + ' packed'));
   }
   var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   function printOne(id, kind) { printSheets(kind, [id]); }
@@ -598,7 +601,7 @@ header small{color:var(--ink2);opacity:1}
   function draw(o) {
     var p = $('panel'); p.textContent = '';
     p.appendChild(h('div', { class: 'row' }, h('div', { style: 'flex:1' }, h('b', { style: 'font-size:18px' }, o.id), h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase())), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
-    if (o.gift_note) p.appendChild(h('div', { class: 'gift' }, h('b', { style: 'color:var(--terra)' }, '🎁 Gift message to write on the card'), h('div', { style: 'font-size:17px;margin-top:4px' }, o.gift_note)));
+    if (o.gift_note) p.appendChild(h('div', { class: 'gift' }, h('b', { style: 'color:var(--terra)' }, 'Gift message to write on the card'), h('div', { style: 'font-size:17px;margin-top:4px' }, o.gift_note)));
 
     var items = h('div', {});
     o.items.forEach(function (i) { items.appendChild(h('div', { class: 'line' }, h('div', {}, i.name + ' × ' + i.qty, i.contents ? h('small', {}, i.contents) : null), h('div', {}, inr((i.price || 0) * i.qty)))); });
@@ -618,7 +621,7 @@ header small{color:var(--ink2);opacity:1}
         h('button', { class: 'btn ghost small', onclick: function () { viewInvoice(o, true); } }, 'Download PDF'),
         state.role !== 'owner' ? null : h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
 
-    if (o.invoice_missing && o.state !== 'test') p.appendChild(h('div', { class: 'gift', style: 'background:#FDECEA;border-color:var(--red)' }, h('b', { style: 'color:var(--red)' }, '⚠ No invoice was created for this paid order'),
+    if (o.invoice_missing && o.state !== 'test') p.appendChild(h('div', { class: 'gift', style: 'background:#FDECEA;border-color:var(--red)' }, h('b', { style: 'color:var(--red)' }, 'No invoice was created for this paid order'),
       h('p', { class: 'muted' }, state.role === 'owner' ? 'The payment went through but the invoice step failed. This creates the invoice and sends it to the customer.' : 'Tell Prashant. It does not stop you packing the order.'),
       state.role === 'owner' ? h('button', { class: 'btn small', onclick: function (e) { if (confirm('Create the invoice and send it to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/issue-invoice', {}, function (j) { return 'Invoice ' + j.invoiceNo + ' created and sent'; }, e.target); } }, 'Create invoice now') : null));
     if (state.role === 'owner' && o.sent && !o.sent.zoho) p.appendChild(h('div', { class: 'gift', style: 'background:#FDF6E8;border-color:var(--amber)' }, h('b', { style: 'color:var(--amber)' }, 'Not fully in Zoho Books yet'),
@@ -950,7 +953,7 @@ header small{color:var(--ink2);opacity:1}
           ? 'Live from ' + fmtDate(s) + ', 12:00 am until you pause it'
           : (e ? 'Live from ' + fmtDate(s) + ', 12:00 am to ' + fmtDate(e) + ', 11:59 pm (India time) · ' + days(s, e) + ' day' + (days(s, e) === 1 ? '' : 's') : 'Pick an end date');
         setsWarn.textContent = el.withSets.checked
-          ? '⚠ Gift sets are already about 23% below single-box prices. A Trio earns about ₹80–140 after courier.'
+          ? 'Note: gift sets are already about 23% below single-box prices. A Trio earns about ₹80–140 after courier.'
           : 'In a mixed cart the discount and the minimum order use single boxes only.';
         setsWarn.style.color = el.withSets.checked ? '#F29B8E' : '';
         var v = Number(el.value.value) || 0, cap = Number(el.cap.value) || 0;
@@ -958,7 +961,7 @@ header small{color:var(--ink2);opacity:1}
         var a1 = off(1600), bBase = el.withSets.checked ? 1599 : 600, b1 = off(bBase);
         var big = (st.kind === 'percent' && v > 25) || (st.kind === 'flat' && v > 300);
         preview.textContent = v
-          ? 'Example: 5 single boxes ₹1,600 → −' + inr(a1) + ' = ' + inr(1600 - a1) + ' · Full Range + 2 singles ₹1,599 → −' + inr(b1) + (el.withSets.checked ? '' : ' (set not discounted)') + (big ? '   ⚠ Large discount, check your margin' : '')
+          ? 'Example: 5 single boxes ₹1,600 → −' + inr(a1) + ' = ' + inr(1600 - a1) + ' · Full Range + 2 singles ₹1,599 → −' + inr(b1) + (el.withSets.checked ? '' : ' (set not discounted)') + (big ? '   Large discount, check your margin' : '')
           : 'Enter the discount to see an example.';
         preview.style.color = big ? '#F29B8E' : '';
       }
