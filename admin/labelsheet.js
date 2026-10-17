@@ -1,27 +1,60 @@
-/* Label sheet: lays courier labels out on the chosen paper (default 13 x 19 in, 3 across and 3 down, each cell 4 x 6 in; also A3, A4 and a thermal roll) with N copies of each label (an order's copies stay together on one sheet).
+/* Label sheet: packs standard 4 x 6 in courier labels (never shrunk, so barcodes and text keep Delhivery's minimum sizes) onto the paper you choose,
+ * turning labels sideways where that fits more of them, so a sheet wastes as little paper as possible. Paper: 13 x 19, 12 x 18, A3, A4, Letter, any
+ * custom size, or a 4 x 6 in thermal roll (one label per page, e.g. TSC TTP-244 Pro). N copies of each label.
  * Runs in the browser (admin > Label sheet) and in node (scripts/labelsheet-test.js). Nothing is uploaded: the PDFs stay on the device.
- * Needs pdf-lib (served at /admin/pdf-lib.min.js). Cells touch each other; the 0.5 in margin all round carries cut marks.
+ * Needs pdf-lib (served at /admin/pdf-lib.min.js).
  */
 (function (root) {
   'use strict';
-  var IN = 72;
-  // Paper presets. Every cell is a 4 x 6 in label. 'roll' is a thermal printer (e.g. TSC TTP-244 Pro): one label per 4 x 6 in page, no cut marks.
+  var IN = 72, LW = 4 * IN, LH = 6 * IN, EPS = 0.5;
   var LAYOUTS = {
-    '13x19': { name: '13 x 19 in sheet (3 x 3)', w: 13 * IN, h: 19 * IN, cols: 3, rows: 3 },
-    a3: { name: 'A3 sheet (2 x 2)', w: 841.89, h: 1190.55, cols: 2, rows: 2 },
-    a4: { name: 'A4 sheet (2 x 1)', w: 595.28, h: 841.89, cols: 2, rows: 1 },
-    roll: { name: '4 x 6 in thermal roll (one per page)', w: 4 * IN, h: 6 * IN, cols: 1, rows: 1, roll: true }
+    '13x19': { name: '13 x 19 in sheet', w: 13 * IN, h: 19 * IN },
+    '12x18': { name: '12 x 18 in sheet', w: 12 * IN, h: 18 * IN },
+    a3: { name: 'A3 sheet', w: 841.89, h: 1190.55 },
+    a4: { name: 'A4 sheet', w: 595.28, h: 841.89 },
+    letter: { name: 'Letter 8.5 x 11 in', w: 8.5 * IN, h: 11 * IN },
+    custom: { name: 'Custom size (type width x height in inches)', w: 13 * IN, h: 19 * IN, custom: true },
+    roll: { name: '4 x 6 in thermal roll (one per page)', w: LW, h: LH, roll: true }
   };
-  Object.keys(LAYOUTS).forEach(function (k) { var L = LAYOUTS[k]; L.cellW = 4 * IN; L.cellH = 6 * IN; L.key = k; });
-  var SHEET = LAYOUTS['13x19'], MARGIN_X, MARGIN_Y;
-  function use(key) { SHEET = LAYOUTS[key] || LAYOUTS['13x19']; MARGIN_X = (SHEET.w - SHEET.cols * SHEET.cellW) / 2; MARGIN_Y = (SHEET.h - SHEET.rows * SHEET.cellH) / 2; return SHEET; }
-  use('13x19');
+  Object.keys(LAYOUTS).forEach(function (k) { LAYOUTS[k].key = k; });
 
-  // files: array of Uint8Array/ArrayBuffer (each a PDF; every page is one label). opts: { copies = 2, cutMarks = true }
+  // Guillotine packing: split the area with straight cuts (so it can be cut with a guillotine or scissors) and place 4 x 6 labels, upright or
+  // sideways, to get the most per sheet. Cut positions are sums of 4 and 6 in, which is all that can ever matter.
+  function pack(W, H) {
+    var memo = {};
+    function cuts(n) { var out = [], i, j, v; for (i = 0; i * LW <= n; i++) for (j = 0; i * LW + j * LH <= n; j++) { v = i * LW + j * LH; if (v > EPS && v < n - EPS) out.push(v); } return out; }
+    function best(w, h) {
+      var key = Math.round(w * 2) + 'x' + Math.round(h * 2); if (memo[key]) return memo[key];
+      var up = w >= LW - EPS && h >= LH - EPS, side = w >= LH - EPS && h >= LW - EPS;
+      var r = { n: 0 };
+      if (up || side) r = { n: 1, rect: up ? { w: LW, h: LH, turn: false } : { w: LH, h: LW, turn: true } };
+      if (w >= LW - EPS && h >= LW - EPS) {
+        var cx = cuts(w), cy = cuts(h), i, n;
+        for (i = 0; i < cx.length; i++) { n = best(cx[i], h).n + best(w - cx[i], h).n; if (n > r.n) r = { n: n, vx: cx[i] }; }
+        for (i = 0; i < cy.length; i++) { n = best(w, cy[i]).n + best(w, h - cy[i]).n; if (n > r.n) r = { n: n, hy: cy[i] }; }
+      }
+      return (memo[key] = r);
+    }
+    function lay(x, y, w, h, out) {   // y measured from the bottom
+      var r = best(w, h);
+      if (r.rect) out.push({ x: x, y: y, w: r.rect.w, h: r.rect.h, turn: r.rect.turn });
+      else if (r.vx) { lay(x, y, r.vx, h, out); lay(x + r.vx, y, w - r.vx, h, out); }
+      else if (r.hy) { lay(x, y, w, r.hy, out); lay(x, y + r.hy, w, h - r.hy, out); }
+      return out;
+    }
+    // Reading order: top to bottom, then left to right.
+    return lay(0, 0, W, H, []).sort(function (a, b) { return (b.y + b.h) - (a.y + a.h) || a.x - b.x; });
+  }
+
+  // files: array of Uint8Array/ArrayBuffer (each a PDF; every page is one label).
+  // opts: { layout = '13x19', copies = 2, margin (inches, default 0.125), keepTogether = false, cutLines = true, pageW, pageH (inches, layout 'custom') }
   async function build(PDFLib, files, opts) {
     opts = opts || {};
-    use(opts.layout);
-    var copies = Math.max(1, Math.min(5, parseInt(opts.copies, 10) || 2));
+    var L = LAYOUTS[opts.layout] || LAYOUTS['13x19'];
+    var copies = Math.max(1, Math.min(10, parseInt(opts.copies, 10) || 2));
+    var pw = L.w, ph = L.h;
+    if (L.custom) { pw = Math.max(4, Number(opts.pageW) || 13) * IN; ph = Math.max(4, Number(opts.pageH) || 19) * IN; }
+    var m = L.roll ? 0 : Math.max(0, Math.min(1, opts.margin == null ? 0.125 : Number(opts.margin))) * IN;
     var out = await PDFLib.PDFDocument.create();
     var labels = [];   // { page, w, h }
     for (var i = 0; i < files.length; i++) {
@@ -31,43 +64,37 @@
       for (var p = 0; p < pages.length; p++) { var sz = pages[p].getSize(); labels.push({ page: embedded[p], w: sz.width, h: sz.height }); }
     }
     if (!labels.length) throw new Error('No labels found in the file(s).');
-    // An order's copies always stay together on one sheet, so a sheet holds floor(9 / copies) orders (copies = 2: four orders, 8 cells,
-    // the last cell left blank). Cutting by hand never separates a pair.
-    var perSheet = SHEET.cols * SHEET.rows;
-    // On a roll each copy is its own page. A label whose copies exceed one sheet simply takes more sheets.
-    var perOrder = SHEET.roll ? 1 : Math.max(1, Math.floor(perSheet / copies));
-    var pagesPer = SHEET.roll ? copies : 1;
-    var sheets = Math.ceil(labels.length / perOrder) * pagesPer;
-    var minScale = 1, gray = PDFLib.rgb(0.35, 0.35, 0.35);
-    for (var s = 0; s < sheets; s++) {
-      var sheet = out.addPage([SHEET.w, SHEET.h]);
-      if (opts.cutMarks !== false && !SHEET.roll) drawMarks(sheet, PDFLib, gray);
-      for (var g = 0; g < perOrder; g++) {
-        var lab = labels[Math.floor(s / pagesPer) * perOrder + g]; if (!lab) break;
-        for (var c = 0; c < (SHEET.roll ? 1 : copies); c++) {
-          var k = g * copies + c; if (SHEET.roll) k = 0;
-          var col = k % SHEET.cols, row = Math.floor(k / SHEET.cols);
-          var x0 = MARGIN_X + col * SHEET.cellW, yTop = SHEET.h - MARGIN_Y - row * SHEET.cellH;
-          // A landscape source label is turned a quarter turn so it fills the portrait cell.
-          var turn = lab.w > lab.h, sw = turn ? lab.h : lab.w, sh = turn ? lab.w : lab.h;
-          var f = Math.min(SHEET.cellW / sw, SHEET.cellH / sh); if (f < minScale) minScale = f; var dw = sw * f, dh = sh * f;
-          var cx = x0 + (SHEET.cellW - dw) / 2, cy = yTop - SHEET.cellH + (SHEET.cellH - dh) / 2;
-          if (turn) sheet.drawPage(lab.page, { x: cx + dw, y: cy, xScale: f, yScale: f, rotate: PDFLib.degrees(90) });
-          else sheet.drawPage(lab.page, { x: cx, y: cy, xScale: f, yScale: f });
-        }
-      }
+    var cells = L.roll ? [{ x: 0, y: 0, w: LW, h: LH, turn: false }] : pack(pw - 2 * m, ph - 2 * m);
+    if (!cells.length) throw new Error('That paper is too small for a 4 x 6 in label.');
+    var queue = [];   // every sticker, one per cell, in order; a label's copies sit next to each other
+    labels.forEach(function (lab) { for (var c = 0; c < copies; c++) queue.push(lab); });
+    var perSheet = cells.length, wasted = 0;
+    if (opts.keepTogether && !L.roll && copies > 1) {   // a label's copies never split across two sheets
+      var perOrder = Math.max(1, Math.floor(perSheet / copies)), q2 = [], g, c2, s;
+      for (g = 0; g < labels.length; g += perOrder) { var grp = []; for (s = g; s < Math.min(labels.length, g + perOrder); s++) for (c2 = 0; c2 < copies; c2++) grp.push(labels[s]); while (grp.length < perSheet) grp.push(null); q2 = q2.concat(grp); }
+      queue = q2;
     }
-    out.setTitle('Munchingo labels ' + SHEET.key);
-    return { bytes: await out.save(), labels: labels.length, stickers: labels.length * copies, sheets: sheets, copies: copies, perSheet: SHEET.roll ? 1 : perOrder * copies, minScale: minScale, layout: SHEET.key, paper: SHEET.name };
+    var sheets = Math.ceil(queue.length / perSheet), gray = PDFLib.rgb(0.6, 0.6, 0.6), minScale = 1;
+    for (var sh = 0; sh < sheets; sh++) {
+      var page = out.addPage([pw, ph]);
+      var used = cells.slice(0, Math.min(perSheet, queue.length - sh * perSheet));
+      if (opts.cutLines !== false && !L.roll) used.forEach(function (cl) { page.drawRectangle({ x: m + cl.x, y: m + cl.y, width: cl.w, height: cl.h, borderWidth: 0.3, borderColor: gray }); });
+      used.forEach(function (cl, k) {
+        var lab = queue[sh * perSheet + k]; if (!lab) { wasted++; return; }
+        // A label is turned a quarter turn when its shape does not match the cell's.
+        var turn = (cl.w > cl.h) !== (lab.w > lab.h), sw = turn ? lab.h : lab.w, sh2 = turn ? lab.w : lab.h;
+        var f = Math.min(cl.w / sw, cl.h / sh2); if (f < minScale) minScale = f;
+        var dw = sw * f, dh = sh2 * f, cx = m + cl.x + (cl.w - dw) / 2, cy = m + cl.y + (cl.h - dh) / 2;
+        if (turn) page.drawPage(lab.page, { x: cx + dw, y: cy, xScale: f, yScale: f, rotate: PDFLib.degrees(90) });
+        else page.drawPage(lab.page, { x: cx, y: cy, xScale: f, yScale: f });
+      });
+    }
+    out.setTitle('Munchingo labels ' + L.key);
+    var stickers = labels.length * copies;
+    return { bytes: await out.save(), labels: labels.length, stickers: stickers, sheets: sheets, copies: copies, perSheet: perSheet, blank: sheets * perSheet - stickers,
+      minScale: minScale, layout: L.key, paper: L.name, sideways: cells.filter(function (c) { return c.turn; }).length };
   }
 
-  // Short ticks in the margin at every cut line (vertical cuts at the top and bottom, horizontal cuts at the sides).
-  function drawMarks(page, PDFLib, color) {
-    var t = 14, o = { thickness: 0.5, color: color }, i, x, y;
-    for (i = 0; i <= SHEET.cols; i++) { x = MARGIN_X + i * SHEET.cellW; page.drawLine({ start: { x: x, y: SHEET.h - MARGIN_Y + 4 }, end: { x: x, y: SHEET.h - MARGIN_Y + 4 + t }, thickness: o.thickness, color: o.color }); page.drawLine({ start: { x: x, y: MARGIN_Y - 4 }, end: { x: x, y: MARGIN_Y - 4 - t }, thickness: o.thickness, color: o.color }); }
-    for (i = 0; i <= SHEET.rows; i++) { y = MARGIN_Y + i * SHEET.cellH; page.drawLine({ start: { x: MARGIN_X - 4, y: y }, end: { x: MARGIN_X - 4 - t, y: y }, thickness: o.thickness, color: o.color }); page.drawLine({ start: { x: SHEET.w - MARGIN_X + 4, y: y }, end: { x: SHEET.w - MARGIN_X + 4 + t, y: y }, thickness: o.thickness, color: o.color }); }
-  }
-
-  var api = { build: build, LAYOUTS: LAYOUTS };
+  var api = { build: build, pack: pack, LAYOUTS: LAYOUTS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.MunchingoLabelSheet = api;
 })(typeof window !== 'undefined' ? window : this);
