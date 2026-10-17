@@ -901,8 +901,25 @@ header small{color:var(--ink2);opacity:1}
           var vp = pg.getViewport({ scale: 1 }), cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
           var ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
           return pg.render({ canvasContext: ctx, viewport: vp }).promise.then(function () {
-            var d = ctx.getImageData(0, 0, cv.width, cv.height).data, x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1, x, y, i;
-            for (y = 0; y < cv.height; y++) for (x = 0; x < cv.width; x++) { i = (y * cv.width + x) * 4; if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+            // The label is the biggest block of ink. Stray text far from it (a browser's date header, a page footer) is ignored.
+            var d = ctx.getImageData(0, 0, cv.width, cv.height).data, rows = new Array(cv.height).fill(0), x, y, i;
+            for (y = 0; y < cv.height; y++) for (x = 0; x < cv.width; x++) { i = (y * cv.width + x) * 4; if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) rows[y]++; }
+            var mainRun = function (counts, gap, from, to) {
+              var best = null, cur = null, blank = 0, k;
+              for (k = from; k <= to; k++) {
+                if (counts[k] > 0) { if (!cur) cur = { a: k, b: k, sum: 0 }; cur.b = k; cur.sum += counts[k]; blank = 0; }
+                else if (cur && ++blank > gap) { if (!best || cur.sum > best.sum) best = cur; cur = null; blank = 0; }
+              }
+              if (cur && (!best || cur.sum > best.sum)) best = cur;
+              return best;
+            };
+            var ry = mainRun(rows, 15, 0, cv.height - 1), x0 = 0, x1 = -1, y0 = 0, y1 = -1;
+            if (ry) {
+              var cols = new Array(cv.width).fill(0);
+              for (y = ry.a; y <= ry.b; y++) for (x = 0; x < cv.width; x++) { i = (y * cv.width + x) * 4; if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) cols[x]++; }
+              var rx = mainRun(cols, 15, 0, cv.width - 1);
+              if (rx) { x0 = rx.a; x1 = rx.b; y0 = ry.a; y1 = ry.b; }
+            }
             if (x1 < 0) { out.push(null); return; }
             var pad = 2, a = vp.convertToPdfPoint(Math.max(0, x0 - pad), Math.min(cv.height, y1 + pad)), b = vp.convertToPdfPoint(Math.min(cv.width, x1 + pad), Math.max(0, y0 - pad));
             out.push({ left: Math.min(a[0], b[0]), right: Math.max(a[0], b[0]), bottom: Math.min(a[1], b[1]), top: Math.max(a[1], b[1]) });
