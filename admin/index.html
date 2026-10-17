@@ -223,7 +223,7 @@ header small{color:var(--ink2);opacity:1}
   $('out').onclick = function () { signOut(false); };
 
   // ── main list ──
-  var STEPS = [['topack', '1', 'To pack', 'Select the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Book the courier (or arrange Porter or a hand delivery). Open each order, choose how it goes out and tap Mark shipped.'], ['shipped', '3', 'Shipped', 'On the way. Select orders and tap Shipping labels to print the courier labels together. When it reaches the customer, tap Delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
+  var STEPS = [['topack', '1', 'To pack', 'Tick the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Tap Create shipment on each order. You get a tracking number and the customer is emailed. For Porter or hand delivery, open the order.'], ['shipped', '3', 'Shipped', 'On the way. Tick orders and tap Shipping labels to print the courier labels together. When it reaches the customer, tap Mark delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
   var FILTERS = [['attention', '⚠ Needs attention'], ['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
@@ -367,9 +367,9 @@ header small{color:var(--ink2);opacity:1}
   function ageText(iso) { var m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000)); return m < 60 ? m + ' min' : m < 1440 ? Math.floor(m / 60) + ' h' : Math.floor(m / 1440) + ' d'; }
   function quick(o) {
     if (o.state === 'unpaid') return h('div', { class: 'qa' }, h('button', { class: 'btn small', onclick: function (e) { e.stopPropagation(); openOrder(o.id); } }, 'Send payment link'));
-    var map = { topack: ['Mark packed', 'packed'], packed: ['Ship / hand over', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
+    var map = { topack: ['Mark packed', 'packed'], packed: ['Create shipment', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
     if (!m) return null;
-    return h('div', { class: 'qa' }, h('button', { class: 'btn small' + (o.state === 'packed' ? ' ghost' : ''), onclick: function (e) {
+    return h('div', { class: 'qa' }, h('button', { class: 'btn small', onclick: function (e) {
       e.stopPropagation();
       if (!m[1]) return openOrder(o.id);
       if (m[1] === 'delivered' && !confirm('Mark ' + o.id + ' as delivered?')) return;
@@ -588,7 +588,7 @@ header small{color:var(--ink2);opacity:1}
     var preNow = state.dispatchFrom && Date.now() < state.dispatchFrom;
     // How it leaves: couriers need a tracking number; Porter and hand delivery do not (a Porter link or the person's name is optional).
     var METHODS = [
-      ['delhivery', 'Delhivery', 'Tracking / AWB number', 'e.g. 1234567890', true],
+      ['delhivery', 'Delhivery', 'Tracking number (AWB)', 'e.g. 1234567890', true],
       ['porter', 'Porter (same city)', 'Porter booking ID or tracking link (optional)', 'Paste the Porter link', false],
       ['hand', 'By hand (we deliver)', 'Delivered by (name, optional)', 'e.g. Rahul', false],
       ['indiapost', 'India Post / Speed Post', 'Tracking number', 'e.g. EE123456789IN', true],

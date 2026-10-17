@@ -94,5 +94,18 @@ module.exports = function checks({ openAdmin, ok, sleep, until }) {
     s.close();
   });
 
+  // Task 5: plain words
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    for (const re of [/To pack/, /Packed/, /Shipped/, /Delivered/]) { click(o.byText('#flow .step', re)); await sleep(60); ok(!/AWB/.test(text(q('#hint'))) && text(q('#hint')).length > 10, 'the hint under ' + re + ' is a plain sentence'); }
+    click(o.byText('#flow .step', /Packed/)); await sleep(100);
+    const btn = o.byText('#list .card button', /Create shipment/);
+    ok(!!btn && !o.byText('#list .card button', /Ship \/ hand over/), 'a packed order\'s button reads Create shipment');
+    click(q('#list .card')); await until(() => q('#sheet.on'), 3000, 'the order'); await sleep(200);
+    ok(/Tracking number \(AWB\)/.test(text(q('#panel'))), 'the manual form says Tracking number (AWB)');
+    ok(/Create Delhivery shipment/.test(text(q('#panel'))), 'the one-tap shipment button is on the order');
+    o.close();
+  });
+
   return list;
 };
