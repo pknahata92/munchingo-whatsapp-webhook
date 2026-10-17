@@ -12,8 +12,8 @@ const { flavoursOf } = require('./orderText');
 
 class StockError extends Error { constructor(msg, status = 400, extra = {}) { super(msg); this.status = status; this.extra = extra; } }
 
-const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample or tasting', GIFT: 'Given away', EXHIBITION: 'Taken to an exhibition or event' };
-const NEEDS_WHO = { GIFT: 'Enter who it is going to.', EXHIBITION: 'Enter the event name.' };
+const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample or tasting', GIFT: 'Given away', EXHIBITION: 'Taken to an exhibition or event', OFFLINE_SALE: 'Sold offline (bulk order or hamper)' };
+const NEEDS_WHO = { GIFT: 'Enter who it is going to.', EXHIBITION: 'Enter the event name.', OFFLINE_SALE: 'Enter who bought it.' };
 const MAX_QTY = 100000;
 const DUP_WINDOW_MS = 15 * 60_000;
 const REVERSE_FREE_MS = 24 * 3_600_000;       // anyone can reverse their own slip within a day; later needs the owner
@@ -138,7 +138,7 @@ function makeInventory(store) {
   }
 
   // Take stock out: used (packaging), damaged or not okay, or a sample/gift. Oldest lot first for products.
-  async function take({ slug, qty, type, note, who: whoFor, allowNegative = false, actor }) {
+  async function take({ slug, qty, type, note, who: whoFor, invoice, allowNegative = false, actor }) {
     const item = await need(slug);
     if (!TYPES_OUT[type]) throw new StockError('Choose what happened: used, damaged, or sample.');
     const n = int(qty);
@@ -148,9 +148,50 @@ function makeInventory(store) {
     if (NEEDS_WHO[type] && !forWhom) throw new StockError(NEEDS_WHO[type]);
     const have = await onHand(slug);
     if (n > have && !allowNegative) throw new StockError(`Only ${have} ${item.unit} on hand. Count first, or confirm to go below zero.`, 409, { needsConfirm: 'negative', onHand: have });
-    const rows = await outRows(item, n, { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) });
+    const inv = cleanText(invoice, 40);
+    if (type === 'OFFLINE_SALE' && !inv) throw new StockError('Enter the invoice number (write PENDING if it is not made yet and fix it later).');
+    const base = type === 'OFFLINE_SALE' ? { type, note: cleanText(note, 300) || null, ref: inv, party: forWhom, ...who(actor) } : { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) };
+    const rows = await outRows(item, n, base);
     await store.insert(rows);
     return { onHand: await onHand(slug) };
+  }
+
+  // A hamper sold offline: the boxes opened for it (whole boxes, per flavour) plus the supplies in each hamper, all in ONE entry so it
+  // either all happens or none of it does. `boxes` = { 'atta-original': 2, ... }; `perHamper` = { 'goodie-bag': 1, 'candle': 1, 'shredded-paper': 0 }.
+  async function offlineHamper({ hampers, boxes = {}, perHamper = {}, buyer, invoice, note, allowNegative = false, actor }) {
+    const n = int(hampers);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_QTY) throw new StockError('Enter how many hampers were sold (a whole number, 1 or more).');
+    const who1 = cleanText(buyer, 80); if (!who1) throw new StockError('Enter who bought them.');
+    const inv = cleanText(invoice, 40); if (!inv) throw new StockError('Enter the invoice number (write PENDING if it is not made yet and fix it later).');
+    const plan = [];   // { item, qty }
+    for (const [slug, b] of Object.entries(boxes)) { const q = int(b || 0); if (!q) continue; if (!Number.isInteger(q) || q < 0 || q > MAX_QTY) throw new StockError('Boxes opened must be whole numbers.'); plan.push({ item: await need(slug), qty: q }); }
+    for (const [slug, per] of Object.entries(perHamper)) { const p = int(per || 0); if (!p) continue; if (!Number.isInteger(p) || p < 0 || p > 1000) throw new StockError('Supplies per hamper must be whole numbers.'); plan.push({ item: await need(slug), qty: p * n }); }
+    if (!plan.some((x) => x.item.kind === 'product')) throw new StockError('Enter how many boxes you opened for these hampers, so the biscuits are taken off stock.');
+    if (!allowNegative) {
+      const short = [];
+      for (const x of plan) { const have = await onHand(x.item.slug); if (x.qty > have) short.push(`${x.item.name}: need ${x.qty}, have ${have}`); }
+      if (short.length) throw new StockError('Not enough on hand: ' + short.join('; ') + '. Count first, or confirm to go below zero.', 409, { needsConfirm: 'negative' });
+    }
+    const base = { type: 'OFFLINE_SALE', ref: inv, party: who1, note: cleanText(note, 300) || `${n} hamper${n === 1 ? '' : 's'}`, ...who(actor) };
+    const rows = [];
+    for (const x of plan) rows.push(...await outRows(x.item, x.qty, base));
+    await store.insert(rows);
+    return { hampers: n, lines: plan.map((x) => ({ slug: x.item.slug, name: x.item.name, qty: x.qty })) };
+  }
+
+  // Where did the stock go? Per flavour: what came in, and where each box went. Reversals are netted into the line they cancel.
+  const FLOW = { RECEIVE: 'received', RETURN: 'returns', SALE: 'website', SALE_UNDO: 'website', OFFLINE_SALE: 'offline', GIFT: 'gifts', SAMPLE: 'samples',
+    EXHIBITION: 'events', EXHIBITION_RETURN: 'events', DAMAGED: 'damaged', USE: 'used', COUNT_FIX: 'fixes' };
+  async function flow() {
+    const [items, totals, map] = await Promise.all([store.items(), store.totals(), onHandMap()]);
+    const out = items.filter((i) => i.active && i.kind === 'product').sort((a, b) => a.sort - b.sort).map((i) => {
+      const g = { received: 0, returns: 0, website: 0, offline: 0, gifts: 0, samples: 0, events: 0, damaged: 0, used: 0, fixes: 0, other: 0 };
+      for (const t of totals) if (t.item_slug === i.slug) { const k = FLOW[t.type] || 'other'; g[k] += t.qty; }
+      const m = map[i.slug];
+      // "out" groups are stored negative; show them as positive boxes. Received, returns and fixes keep their sign.
+      return { slug: i.slug, name: i.name, unit: i.unit, received: g.received, returns: g.returns, website: -g.website, offline: -g.offline, gifts: -g.gifts, samples: -g.samples, events: -g.events, damaged: -g.damaged, used: -g.used, fixes: g.fixes, other: g.other, on_hand: m ? m.total : 0 };
+    });
+    return { items: out };
   }
 
   // Rows that remove n from stock: split across lots (oldest first) for products; one plain row for packaging.
@@ -260,13 +301,13 @@ function makeInventory(store) {
   // { slug: boxes still sellable } for the flavours that have stock recorded (used by utils/stock.js for the automatic sold-out).
   async function sellable() { const [items, rows, committed] = await Promise.all([store.items(), store.byLot(), store.committed()]); return computeSellable(items, rows, committed); }
 
-  return { overview, sellable, receive, take, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
+  return { overview, sellable, receive, take, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────
 function supabaseStore() {
   const c = () => require('./database').client();
-  const ok = ({ data, error }) => { if (error) throw new Error(error.code === '42P01' || /does not exist|schema cache/.test(error.message) ? 'Run stock_ledger_migration.sql in Supabase first.' : error.message); return data; };
+  const ok = ({ data, error }) => { if (error) throw new Error(error.code === '42P01' || /does not exist|schema cache/.test(error.message) ? (/party|stock_totals/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : 'Run stock_ledger_migration.sql in Supabase first.') : (/stock_movements_type_check/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : error.message)); return data; };
   return {
     items: async () => ok(await c().from('stock_items').select('*')) || [],
     item: async (slug) => ok(await c().from('stock_items').select('*').eq('slug', slug).maybeSingle()) || null,
@@ -288,6 +329,7 @@ function supabaseStore() {
       return committedBoxes(rows, from && from.value);
     },
     paused: async () => (ok(await c().from('product_stock').select('slug').eq('available', false)) || []).map((r) => r.slug),
+    totals: async () => ok(await c().from('stock_totals').select('*')) || [],
     events: async () => ok(await c().from('stock_events').select('*')) || [],
     eventRows: async (ref, slug) => ok(await c().from('stock_movements').select('*').eq('ref', ref).eq('item_slug', slug).in('type', ['EXHIBITION', 'EXHIBITION_RETURN'])) || [],
     salesOf: async (orderId) => ok(await c().from('stock_movements').select('*').like('ref', `${orderId}@%`).in('type', ['SALE', 'SALE_UNDO'])) || [],

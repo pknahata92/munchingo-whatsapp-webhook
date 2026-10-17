@@ -26,6 +26,12 @@ async function labels(n, w = 288, h = 432) {
   ok(r.sheets === 1 && r.stickers === 4, 'landscape labels are accepted (turned to fit)');
   r = await LS.build(PDFLib, [await labels(1)], { copies: 2, cutMarks: false }); ok(r.sheets === 1, 'cut marks can be switched off');
   r = await LS.build(PDFLib, [await labels(1, 595, 842)], { copies: 2 }); ok(r.sheets === 1, 'an A4-size source page is scaled into one cell');
+  r = await LS.build(PDFLib, [await labels(5)], { copies: 2, layout: 'roll' });
+  doc = await PDFLib.PDFDocument.load(r.bytes); let z = doc.getPage(0).getSize();
+  ok(r.sheets === 10 && doc.getPageCount() === 10 && Math.round(z.width) === 288 && Math.round(z.height) === 432, 'roll: 4 x 6 in pages, one sticker per page (5 x 2 = 10)');
+  r = await LS.build(PDFLib, [await labels(5)], { copies: 1, layout: 'a3' }); ok(r.sheets === 2 && r.perSheet === 4, 'A3 holds 2 x 2 labels');
+  r = await LS.build(PDFLib, [await labels(3)], { copies: 1, layout: 'a4' }); ok(r.sheets === 2 && r.perSheet === 2, 'A4 holds 2 labels');
+  r = await LS.build(PDFLib, [await labels(1)], { copies: 1, layout: 'nonsense' }); ok(r.layout === '13x19', 'unknown paper falls back to 13 x 19');
   let e = await LS.build(PDFLib, [], {}).catch((x) => x); ok(e instanceof Error, 'no files is an error');
   e = await LS.build(PDFLib, [new Uint8Array([1, 2, 3])], {}).catch((x) => x); ok(e instanceof Error, 'a non-PDF is an error');
   require('fs').writeFileSync(process.env.LS_OUT || '/tmp/labelsheet-sample.pdf', (await LS.build(PDFLib, [await labels(5)], { copies: 2 })).bytes);

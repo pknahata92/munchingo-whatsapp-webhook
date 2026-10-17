@@ -82,6 +82,31 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
   ov = await inv.overview(); ok(ov.items.find((i) => i.slug === 'atta-kesari').at_events === 13, 'still-out count drops by what came back');
   await inv.eventReturn({ slug: 'atta-kesari', qty: 13, ref: 'Diwali Mela Delhi', actor: A }); ov = await inv.overview(); ok(ov.events.length === 0 && ov.items.find((i) => i.slug === 'atta-kesari').at_events === 0, 'a fully returned event closes');
   ok((await inv.overview()).items.find((i) => i.slug === 'atta-kesari').lots.map((l) => l.lot_code).includes('15OCT26'), 'returned boxes go back into their original lot');
+  // offline sales and hampers
+  await rejects(inv.take({ slug: 'atta-original', qty: 5, type: 'OFFLINE_SALE', actor: A }), /who bought/, 'an offline sale needs a buyer');
+  await rejects(inv.take({ slug: 'atta-original', qty: 5, type: 'OFFLINE_SALE', who: 'Acme Corp', actor: A }), /invoice number/, 'an offline sale needs an invoice number');
+  const o0 = await onHand(inv, 'atta-original');
+  await inv.take({ slug: 'atta-original', qty: 5, type: 'OFFLINE_SALE', who: 'Acme Corp', invoice: 'MUN/OFF/26-27/0001', actor: A });
+  const sale = st.mv.slice(-1)[0];
+  ok(await onHand(inv, 'atta-original') === o0 - 5 && sale.type === 'OFFLINE_SALE' && sale.ref === 'MUN/OFF/26-27/0001' && sale.party === 'Acme Corp', 'a bulk sale lowers stock and records the buyer and the invoice number');
+  await inv.receive({ slug: 'goodie-bag', received: 100, actor: A }); await inv.receive({ slug: 'candle', received: 100, actor: A });
+  await inv.receive({ slug: 'shredded-paper', received: 3, actor: A });
+  const k0 = await onHand(inv, 'atta-kesari');
+  r = await inv.offlineHamper({ hampers: 40, boxes: { 'atta-kesari': 3, 'atta-original': 2 }, perHamper: { 'goodie-bag': 1, candle: 1, 'shredded-paper': 0 }, buyer: 'Mehta Family Office', invoice: 'MUN/OFF/26-27/0002', actor: A });
+  ok(await onHand(inv, 'atta-kesari') === k0 - 3 && await onHand(inv, 'goodie-bag') === 60 && await onHand(inv, 'candle') === 60 && await onHand(inv, 'shredded-paper') === 3, 'a hamper entry takes off the boxes opened and a bag and a candle per hamper');
+  ok(st.mv.filter((m) => m.ref === 'MUN/OFF/26-27/0002').every((m) => m.type === 'OFFLINE_SALE' && m.party === 'Mehta Family Office'), 'every line of the hamper entry is an offline sale with the buyer and invoice');
+  const rowsBefore = st.mv.length;
+  await rejects(inv.offlineHamper({ hampers: 500, boxes: { 'atta-kesari': 1 }, perHamper: { candle: 1 }, buyer: 'X', invoice: 'I1', actor: A }), /Not enough on hand: Candles/, 'not enough candles stops the whole entry');
+  ok(st.mv.length === rowsBefore, 'a refused hamper entry changes nothing (all or nothing)');
+  await rejects(inv.offlineHamper({ hampers: 2, boxes: {}, perHamper: { candle: 1 }, buyer: 'X', invoice: 'I1', actor: A }), /boxes you opened/, 'a hamper entry must say which boxes were opened');
+  await rejects(inv.offlineHamper({ hampers: 2, boxes: { 'atta-kesari': 1 }, buyer: '', invoice: 'I1', actor: A }), /who bought/, 'a hamper entry needs a buyer');
+  // where did the stock go
+  const fl = (await inv.flow()).items.find((i) => i.slug === 'atta-original');
+  ok(fl.offline === 7 && fl.on_hand === await onHand(inv, 'atta-original'), 'the flow summary counts offline sales (5 + 2 boxes) and agrees with the shelf');
+  const fk = (await inv.flow()).items.find((i) => i.slug === 'atta-kesari');
+  ok(fk.received > 0 && fk.received + fk.returns - fk.website - fk.offline - fk.gifts - fk.samples - fk.events - fk.damaged - fk.used + fk.fixes + fk.other === fk.on_hand, 'for each flavour: everything received minus everywhere it went equals what is on the shelf');
+  const gift = st.mv.find((m) => m.type === 'GIFT'); await inv.reverse({ id: gift.id, reason: 'wrong flavour', actor: A });
+  const fk2 = (await inv.flow()).items.find((i) => i.slug === 'atta-kesari'); ok(fk2.gifts === 0 || fk2.gifts < (fk.gifts), 'a reversed gift no longer counts as a gift in the summary');
   // items
   const nr = await inv.addItem({ name: 'Bubble wrap', kind: 'packaging', unit: 'rolls', lowLevel: 2 }); ok(nr.slug === 'bubble-wrap', 'owner can add an item');
   await rejects(inv.addItem({ name: 'Bubble wrap', kind: 'packaging' }), /already/, 'no duplicate item');

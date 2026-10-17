@@ -95,6 +95,21 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     s.close();
   });
 
+  // Offline sales: hamper form and the flow report
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    click(o.byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock page');
+    click(o.byText('#viewStock button', /Sold offline: hamper/)); await sleep(200);
+    ok(/Hamper sold offline/.test(text(q('#viewStock'))) && /goodie bag/i.test(text(q('#viewStock'))) && /candle/i.test(text(q('#viewStock'))), 'the hamper form asks for boxes opened and supplies per hamper');
+    click(o.byText('#viewStock button', /Save hamper sale/)); await sleep(400);
+    ok(!/Recorded/.test(text(q('#viewStock'))), 'an empty hamper sale is refused');
+    click(o.byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back to stock');
+    await sleep(400); click(o.byText('#viewStock button', /Where did it go/)); await until(() => /Where did the stock go/.test(text(q('#viewStock'))), 4000, 'the flow report').catch(() => {});
+    ok(/Where did the stock go/.test(text(q('#viewStock'))) && /On the shelf/.test(text(q('#viewStock'))), 'the flow report lists where each item went');
+    ok(o.errors.length === 0, 'no page errors on the hamper screens (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   // Task 5: plain words
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click } = o;

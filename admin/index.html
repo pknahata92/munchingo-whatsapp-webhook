@@ -765,7 +765,7 @@ header small{color:var(--ink2);opacity:1}
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
       var body = [h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
-        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null),
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
           return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
@@ -807,18 +807,18 @@ header small{color:var(--ink2);opacity:1}
     }, 'Save receipt');
   }
   function invTake(it) {
-    var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'SAMPLE' }, 'Sample or tasting')),
-      q = numIn('how many'), whoIn = h('input', { placeholder: '' }), whoLabel = h('label', {}, ''), whoWrap = h('div', { hidden: true }, whoLabel, whoIn), note = h('input', { placeholder: 'Note (needed for damaged)' });
+    var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'OFFLINE_SALE' }, 'Sold offline (bulk order)'), h('option', { value: 'SAMPLE' }, 'Sample or tasting')),
+      q = numIn('how many'), whoIn = h('input', { placeholder: '' }), whoLabel = h('label', {}, ''), whoWrap = h('div', { hidden: true }, whoLabel, whoIn), invIn = h('input', { placeholder: 'e.g. MUN/OFF/26-27/0001 (or PENDING)' }), invWrap = h('div', { hidden: true }, h('label', {}, 'Invoice number'), invIn), note = h('input', { placeholder: 'Note (needed for damaged)' });
     if (it.kind === 'product') type.value = 'GIFT';
     function sync() {
-      var g = type.value === 'GIFT', e = type.value === 'EXHIBITION';
-      whoWrap.hidden = !(g || e);
-      whoLabel.textContent = g ? 'Who is it for (and why)' : 'Which event';
-      whoIn.placeholder = g ? 'e.g. Mrs Sharma, Diwali gift' : 'e.g. Diwali Mela, Delhi, 20-22 Oct';
+      var g = type.value === 'GIFT', e = type.value === 'EXHIBITION', o = type.value === 'OFFLINE_SALE';
+      whoWrap.hidden = !(g || e || o); invWrap.hidden = !o;
+      whoLabel.textContent = g ? 'Who is it for (and why)' : o ? 'Who bought it' : 'Which event';
+      whoIn.placeholder = g ? 'e.g. Mrs Sharma, Diwali gift' : o ? 'e.g. Acme Corp (company or person)' : 'e.g. Diwali Mela, Delhi, 20-22 Oct';
     }
     type.addEventListener('change', sync); sync();
-    invForm('Take out', it, [h('label', {}, 'What happened'), type, whoWrap, h('label', {}, 'How many ' + it.unit), q, h('label', {}, 'Note'), note], function (done) {
-      postInv('take', { slug: it.slug, qty: q.value, type: type.value, who: whoIn.value, note: note.value }, done, function (x) { return 'Done. On hand: ' + x.onHand; });
+    invForm('Take out', it, [h('label', {}, 'What happened'), type, whoWrap, invWrap, h('label', {}, 'How many ' + it.unit), q, h('label', {}, 'Note'), note], function (done) {
+      postInv('take', { slug: it.slug, qty: q.value, type: type.value, who: whoIn.value, invoice: invIn.value, note: note.value }, done, function (x) { return 'Done. On hand: ' + x.onHand; });
     });
   }
   function invCount(it) {
@@ -827,23 +827,59 @@ header small{color:var(--ink2);opacity:1}
       postInv('count', { slug: it.slug, counted: c.value, note: note.value }, done, function (x) { return x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'; });
     }, 'Save count');
   }
+  // A hamper sold offline: boxes opened (whole boxes per flavour) + supplies per hamper, one entry.
+  function invHamper() {
+    var prods = ((state.inv && state.inv.items) || []).filter(function (i) { return i.kind === 'product'; });
+    var supply = function (slug) { var x = ((state.inv && state.inv.items) || []).filter(function (i) { return i.slug === slug; })[0]; return x ? x.name : slug; };
+    var hampers = numIn('how many hampers'), buyer = h('input', { placeholder: 'e.g. Mehta Family Office' }), inv = h('input', { placeholder: 'e.g. MUN/OFF/26-27/0002 (or PENDING)' }), note = h('input', { placeholder: 'Note (optional)' });
+    var boxIn = {}; prods.forEach(function (p) { boxIn[p.slug] = numIn('0'); });
+    var per = { 'goodie-bag': numIn('1'), candle: numIn('1'), 'shredded-paper': numIn('0') }; per['goodie-bag'].value = '1'; per.candle.value = '1'; per['shredded-paper'].value = '0';
+    var fields = [h('p', { class: 'muted' }, 'A hamper = a transparent goodie bag, 3 to 4 biscuits, a candle and shredded paper. Stock counts whole boxes, so enter the boxes you OPENED for these hampers. Counting corrects any rounding.'),
+      h('label', {}, 'How many hampers were sold'), hampers, h('label', {}, 'Who bought them'), buyer, h('label', {}, 'Invoice number'), inv,
+      h('label', {}, 'Boxes opened for these hampers')].concat(prods.map(function (p) { return h('div', { class: 'line', style: 'align-items:center' }, h('span', {}, p.name + ' (on hand ' + p.on_hand + ')'), h('span', { style: 'width:90px' }, boxIn[p.slug])); }))
+      .concat([h('label', {}, 'Supplies in each hamper')]).concat(Object.keys(per).map(function (k) { return h('div', { class: 'line', style: 'align-items:center' }, h('span', {}, supply(k)), h('span', { style: 'width:90px' }, per[k])); })).concat([h('label', {}, 'Note'), note]);
+    invForm('Hamper sold offline', { name: 'hamper', on_hand: '', unit: '' }, fields, function (done) {
+      var boxes = {}; prods.forEach(function (p) { if (boxIn[p.slug].value) boxes[p.slug] = boxIn[p.slug].value; });
+      var perH = {}; Object.keys(per).forEach(function (k) { perH[k] = per[k].value; });
+      postInv('hamper', { hampers: hampers.value, boxes: boxes, perHamper: perH, buyer: buyer.value, invoice: inv.value, note: note.value }, done, function (x) { return 'Recorded ' + x.hampers + ' hamper' + (x.hampers === 1 ? '' : 's') + ': ' + x.lines.map(function (l) { return l.qty + ' ' + l.name; }).join(', '); });
+    }, 'Save hamper sale');
+  }
+  function invFlow() {
+    api('/admin/api/inventory/flow').then(function (j) {
+      if (!j.ok) return toast(j.error || 'Failed', 6000);
+      var cols = [['received', 'Received'], ['returns', 'Returned in'], ['website', 'Website sales'], ['offline', 'Sold offline'], ['gifts', 'Given away'], ['samples', 'Samples'], ['events', 'At events'], ['damaged', 'Damaged'], ['used', 'Used'], ['fixes', 'Count fixes']];
+      var rows = j.items.map(function (i) {
+        return h('div', { class: 'sec' }, h('h3', {}, i.name),
+          h('dl', { class: 'kv' }, cols.reduce(function (a, c) { if (i[c[0]]) { a.push(h('dt', {}, c[1])); a.push(h('dd', {}, String(i[c[0]]))); } return a; }, []).concat([h('dt', { style: 'font-weight:700' }, 'On the shelf'), h('dd', { style: 'font-weight:700' }, String(i.on_hand))])));
+      });
+      invShow('Where did the stock go?', [h('p', { class: 'muted' }, 'For each flavour: what came in and where every box went. Received, minus everything that left, equals what is on the shelf. A box that is not in any line was never recorded: do a count.'), h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))].concat(rows));
+    });
+  }
   function invHistory() {
     api('/admin/api/inventory/history?limit=60').then(function (j) {
       if (!j.ok) return toast(j.error || 'Failed');
       var names = {}; j.movements.forEach(function (m) { names[m.item_slug] = m.item_slug; });
-      var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', GIFT: 'Given away', EXHIBITION: 'Taken to event', EXHIBITION_RETURN: 'Back from event', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
+      var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', GIFT: 'Given away', EXHIBITION: 'Taken to event', EXHIBITION_RETURN: 'Back from event', OFFLINE_SALE: 'Sold offline', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
       var lines = j.movements.map(function (m) {
-        var can = ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
-        return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
+        var can = ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
+        return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
           can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
       });
       invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), section('Latest 60 lines', lines.length ? lines : h('p', { class: 'muted' }, 'Nothing recorded yet.'))]);
     });
   }
   // ── Shipping labels from the orders: the server fetches each Delhivery label, this page lays them out on 13 x 19 in (see labelsheet.js) ──
+  // Paper choice for label printing (remembered on this device): sheets for the big printer, or a 4 x 6 in thermal roll (TSC TTP-244 Pro).
+  function paperSelect() {
+    var L = (window.MunchingoLabelSheet && window.MunchingoLabelSheet.LAYOUTS) || { '13x19': { name: '13 x 19 in sheet (3 x 3)' } }, saved = '13x19';
+    try { saved = localStorage.getItem('mun_paper') || saved; } catch (e) {}
+    var sel = h('select', { onchange: function () { try { localStorage.setItem('mun_paper', sel.value); } catch (e) {} } }, Object.keys(L).map(function (k) { return h('option', { value: k, selected: k === saved }, L[k].name); }));
+    return sel;
+  }
+  function paperName(r) { return r.paper + ', ' + r.perSheet + ' per page'; }
   function openOrderLabels(ids) {
     var copies = h('select', {}, [1, 2, 3].map(function (n) { return h('option', { value: n, selected: n === 2 }, n + (n === 1 ? ' copy' : ' copies') + ' of each label'); }));
-    var marks = h('input', { type: 'checkbox', checked: true, style: 'width:auto;margin-right:8px' });
+    var paper = paperSelect(), marks = h('input', { type: 'checkbox', checked: true, style: 'width:auto;margin-right:8px' });
     var info = h('p', { class: 'muted' }, ids.length + ' order' + (ids.length === 1 ? '' : 's') + ' selected.');
     var skipped = h('div', {});
     var go = h('button', { class: 'btn small', onclick: function (e) {
@@ -855,42 +891,42 @@ header small{color:var(--ink2);opacity:1}
         if (!j.labels.length) throw new Error('No labels could be fetched. Use the Label sheet button with the PDF from Delhivery One.');
         var files = j.labels.map(function (l) { var bin = atob(l.pdf), a = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; });
         info.textContent = 'Making the sheet…';
-        return window.MunchingoLabelSheet.build(window.PDFLib, files, { copies: Number(copies.value), cutMarks: marks.checked }).then(function (r) {
+        return window.MunchingoLabelSheet.build(window.PDFLib, files, { copies: Number(copies.value), cutMarks: marks.checked, layout: paper.value }).then(function (r) {
           var url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
-          var a = h('a', { href: url, download: 'Munchingo-shipping-labels-13x19-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
+          var a = h('a', { href: url, download: 'Munchingo-shipping-labels-' + paper.value + '-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
           setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-          info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' sheet' + (r.sheets === 1 ? '' : 's') + ' (13 × 19 in, ' + r.perSheet + ' per sheet; each label\'s copies stay on the same sheet). Downloaded: check the PDF (barcode sharp, address complete) before you send it to print.';
+          info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + paperName(r) + '). Downloaded: check the PDF (barcode sharp, address complete) before you send it to print.';
         });
       }).catch(function (err) { info.textContent = 'Could not make the sheet: ' + (err && err.message || err); })
         .then(function () { e.target.disabled = false; });
-    } }, 'Get the labels and make the A3 sheet');
+    } }, 'Get the labels and make the PDF');
     ownerPanel('Shipping labels', [
-      h('p', { class: 'muted' }, 'Fetches each order\'s Delhivery label (4 × 6 in) and lays them out on one 13 × 19 in sheet, 3 across and 3 down, with a label\'s copies together on the same sheet and cut marks in the margin. Nothing is stored. If Delhivery will not give a label here, use Label sheet with the PDF from Delhivery One.'),
-      section('Print', h('label', {}, 'Copies'), copies, h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, marks, 'Cut marks in the margin'), info, skipped, h('div', { class: 'acts' }, go))]);
+      h('p', { class: 'muted' }, 'Fetches each order\'s Delhivery label (4 × 6 in) and lays them out on the paper you pick: a big sheet (copies kept together, cut marks in the margin) or a 4 × 6 in thermal roll for the TSC printer (one label per page). Nothing is stored. If Delhivery will not give a label here, use Label sheet with the PDF from Delhivery One.'),
+      section('Print', h('label', {}, 'Paper'), paper, h('label', {}, 'Copies'), copies, h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, marks, 'Cut marks in the margin'), info, skipped, h('div', { class: 'acts' }, go))]);
   }
   // ── Label sheet (staff + owner): courier labels PDF in, 13 x 19 in sheet out (3 x 3 of 4 x 6 in, N copies each). Stays on this device. ──
   function openLabelSheet() {
     var file = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true });
     var copies = h('select', {}, [1, 2, 3].map(function (n) { return h('option', { value: n, selected: n === 2 }, n + (n === 1 ? ' copy' : ' copies') + ' of each label'); }));
-    var marks = h('input', { type: 'checkbox', checked: true, style: 'width:auto;margin-right:8px' });
+    var paper = paperSelect(), marks = h('input', { type: 'checkbox', checked: true, style: 'width:auto;margin-right:8px' });
     var info = h('p', { class: 'muted' }, 'Choose the PDF(s) first.');
     var go = h('button', { class: 'btn small', onclick: function (e) {
       if (!window.PDFLib || !window.MunchingoLabelSheet) return toast('The label tool is still loading. Try again in a moment.', 5000);
       var files = Array.prototype.slice.call(file.files || []); if (!files.length) return toast('Choose the labels PDF first.', 4000);
       e.target.disabled = true; info.textContent = 'Making the sheet…';
       Promise.all(files.map(function (f) { return f.arrayBuffer(); })).then(function (bufs) {
-        return window.MunchingoLabelSheet.build(window.PDFLib, bufs, { copies: Number(copies.value), cutMarks: marks.checked });
+        return window.MunchingoLabelSheet.build(window.PDFLib, bufs, { copies: Number(copies.value), cutMarks: marks.checked, layout: paper.value });
       }).then(function (r) {
         var url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
-        var a = h('a', { href: url, download: 'Munchingo-labels-13x19-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
+        var a = h('a', { href: url, download: 'Munchingo-labels-' + paper.value + '-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
         setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-        info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' sheet' + (r.sheets === 1 ? '' : 's') + ' (13 × 19 in, ' + r.perSheet + ' per sheet; each label\'s copies stay on the same sheet). Downloaded: check the PDF before you send it to print.';
+        info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + paperName(r) + '). Downloaded: check the PDF before you send it to print.';
       }).catch(function (err) { info.textContent = 'Could not make the sheet: ' + (err && err.message || err) + '. Use the 4 x 6 in labels PDF from Delhivery One.'; })
         .then(function () { e.target.disabled = false; });
-    } }, 'Make the A3 sheet');
+    } }, 'Make the PDF');
     ownerPanel('Label sheet', [
-      h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). You get a 13 × 19 in sheet with 3 across and 3 down, each label repeated (a label\'s copies never split across two sheets, so with 2 copies a sheet holds 4 labels and one cell stays blank), with cut marks in the margin. The file is not uploaded anywhere.'),
-      section('Labels', h('label', {}, 'Labels PDF'), file, h('label', {}, 'Copies'), copies,
+      h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). Pick the paper: 13 × 19 in, A3 or A4 sheets (labels repeated, a label\'s copies never split across two sheets, cut marks in the margin) or a 4 × 6 in thermal roll for the TSC printer (one label per page). The file is not uploaded anywhere.'),
+      section('Labels', h('label', {}, 'Labels PDF'), file, h('label', {}, 'Paper'), paper, h('label', {}, 'Copies'), copies,
         h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, marks, 'Cut marks in the margin'), info, h('div', { class: 'acts' }, go))]);
   }
   function openPrices() {

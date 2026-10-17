@@ -80,6 +80,8 @@ router.post('/admin/api/inventory/pause', sw(async (req) => {
   await require('../utils/stock').setAvailable(slug, !paused, req.admin.email, paused ? 'Paused from Inventory' : 'Resumed from Inventory');
   return { ok: true };
 }));
+router.get('/admin/api/inventory/flow', sw((req, inv) => inv.flow()));
+router.post('/admin/api/inventory/hamper', sw((req, inv) => inv.offlineHamper({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
 router.post('/admin/api/inventory/reverse', sw((req, inv) => inv.reverse({ id: Number((req.body || {}).id), reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));
