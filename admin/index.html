@@ -443,7 +443,7 @@ header small{color:var(--ink2);opacity:1}
     var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
     if (pre && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
     if (!confirm('Create ' + ids.length + ' Delhivery shipment' + (ids.length === 1 ? '' : 's') + '?\n\nThis charges your Delhivery wallet and emails each customer a tracking link.')) return;
-    var w = prompt('Parcel weight in grams for all of them? Leave empty to use the estimate for each parcel (about 990 g for 3 boxes).', '');
+    var w = prompt('Parcel weight in grams for all of them? Leave empty to use the estimate for each parcel (1,220 g for 3 boxes, 1,500 g for 4).', '');
     if (w === null) return;
     bulkRun('Creating shipments', ids, function (id) {
       return api('/admin/api/orders/' + encodeURIComponent(id) + '/delhivery-shipment', { method: 'POST', body: w ? { weightGrams: Number(w) } : {} }).then(function (j) { return j.ok ? { ok: true, msg: 'Created. Tracking number ' + j.awb + (j.emailed ? ', customer emailed' : '') } : { ok: false, error: j.error }; });
