@@ -12,7 +12,8 @@ const { flavoursOf } = require('./orderText');
 
 class StockError extends Error { constructor(msg, status = 400, extra = {}) { super(msg); this.status = status; this.extra = extra; } }
 
-const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample or gift' };
+const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample or tasting', GIFT: 'Given away', EXHIBITION: 'Taken to an exhibition or event' };
+const NEEDS_WHO = { GIFT: 'Enter who it is going to.', EXHIBITION: 'Enter the event name.' };
 const MAX_QTY = 100000;
 const DUP_WINDOW_MS = 15 * 60_000;
 const REVERSE_FREE_MS = 24 * 3_600_000;       // anyone can reverse their own slip within a day; later needs the owner
@@ -60,13 +61,17 @@ function makeInventory(store) {
   }
 
   async function overview() {
-    const [items, map] = await Promise.all([store.items(), onHandMap()]);
+    const [items, map, ev] = await Promise.all([store.items(), onHandMap(), store.events()]);
+    const outAt = {}; const events = {};
+    for (const e of ev) { const out = e.taken - e.returned; if (out <= 0) continue; outAt[e.item_slug] = (outAt[e.item_slug] || 0) + out; (events[e.ref] = events[e.ref] || []).push({ slug: e.item_slug, taken: e.taken, returned: e.returned, out }); }
     const list = items.filter((i) => i.active).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((i) => {
       const m = map[i.slug];
       const lots = m ? m.lots.filter((l) => l.qty !== 0).sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9'))) : [];
-      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, counted: !!(m && m.any), status: statusOf(i, m), lots };
+      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots };
     });
-    return { items: list, low: list.filter((i) => i.status === 'low' || i.status === 'out').map((i) => ({ slug: i.slug, name: i.name, status: i.status, on_hand: i.on_hand })) };
+    const nameOf = Object.fromEntries(items.map((i) => [i.slug, i.name]));
+    const open = Object.keys(events).map((ref) => ({ ref, items: events[ref].map((x) => ({ ...x, name: nameOf[x.slug] || x.slug })) }));
+    return { items: list, events: open, low: list.filter((i) => i.status === 'low' || i.status === 'out').map((i) => ({ slug: i.slug, name: i.name, status: i.status, on_hand: i.on_hand })) };
   }
 
   async function need(slug) {
@@ -104,15 +109,17 @@ function makeInventory(store) {
   }
 
   // Take stock out: used (packaging), damaged or not okay, or a sample/gift. Oldest lot first for products.
-  async function take({ slug, qty, type, note, allowNegative = false, actor }) {
+  async function take({ slug, qty, type, note, who: whoFor, allowNegative = false, actor }) {
     const item = await need(slug);
     if (!TYPES_OUT[type]) throw new StockError('Choose what happened: used, damaged, or sample.');
     const n = int(qty);
     if (!Number.isInteger(n) || n < 1 || n > MAX_QTY) throw new StockError('Enter a whole number, 1 or more.');
     if (type === 'DAMAGED' && !cleanText(note, 300)) throw new StockError('Add a short note on what was wrong.');
+    const forWhom = cleanText(whoFor, 80);
+    if (NEEDS_WHO[type] && !forWhom) throw new StockError(NEEDS_WHO[type]);
     const have = await onHand(slug);
     if (n > have && !allowNegative) throw new StockError(`Only ${have} ${item.unit} on hand. Count first, or confirm to go below zero.`, 409, { needsConfirm: 'negative', onHand: have });
-    const rows = await outRows(item, n, { type, note: cleanText(note, 300) || null, ...who(actor) });
+    const rows = await outRows(item, n, { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) });
     await store.insert(rows);
     return { onHand: await onHand(slug) };
   }
@@ -142,6 +149,23 @@ function makeInventory(store) {
     const rows = diff > 0 ? [{ ...base, item_slug: slug, qty: diff, lot_code: null, best_before: null }] : await outRows(item, -diff, base);
     await store.insert(rows);
     return { onHand: await onHand(slug), diff };
+  }
+
+  // Unsold boxes come back from an exhibition or event: put back into the same lots they left from.
+  async function eventReturn({ slug, qty, ref, note, actor }) {
+    const item = await need(slug);
+    const n = int(qty), evt = cleanText(ref, 80);
+    if (!evt) throw new StockError('Choose the event.');
+    if (!Number.isInteger(n) || n < 1 || n > MAX_QTY) throw new StockError('Enter how many came back (a whole number, 1 or more).');
+    const rows = await store.eventRows(evt, slug);
+    const byLot = {};
+    for (const r of rows) { const k = `${r.lot_code || ''}|${r.best_before || ''}`; const e = byLot[k] || (byLot[k] = { lot_code: r.lot_code, best_before: r.best_before, qty: 0 }); e.qty += -r.qty; }   // taken rows are negative and returns positive, so this is taken minus returned, per lot
+    const lots = Object.values(byLot);
+    const stillOut = lots.reduce((a, l) => a + l.qty, 0);
+    if (n > stillOut) throw new StockError(stillOut > 0 ? `Only ${stillOut} ${item.unit} are still out at ${evt}.` : `Nothing is out at ${evt} for ${item.name}.`, 409);
+    const { pieces } = allocate(lots, n);
+    await store.insert(pieces.map((p) => ({ item_slug: slug, qty: p.qty, type: 'EXHIBITION_RETURN', lot_code: p.lot_code, best_before: p.best_before, ref: evt, note: cleanText(note, 300) || null, ...who(actor) })));
+    return { onHand: await onHand(slug), stillOut: stillOut - n };
   }
 
   async function setLow({ slug, low }) { await need(slug); await store.updateItem(slug, { manual_low: !!low }); return { ok: true }; }
@@ -204,7 +228,7 @@ function makeInventory(store) {
     return { rows: rows.length };
   }
 
-  return { overview, receive, take, count, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
+  return { overview, receive, take, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────
@@ -226,6 +250,8 @@ function supabaseStore() {
     updateItem: async (slug, fields) => { ok(await c().from('stock_items').update(fields).eq('slug', slug)); },
     insertItem: async (row) => { ok(await c().from('stock_items').insert(row)); },
     setting: async (key) => { const r = ok(await c().from('stock_settings').select('value').eq('key', key).maybeSingle()); return r ? r.value : null; },
+    events: async () => ok(await c().from('stock_events').select('*')) || [],
+    eventRows: async (ref, slug) => ok(await c().from('stock_movements').select('*').eq('ref', ref).eq('item_slug', slug).in('type', ['EXHIBITION', 'EXHIBITION_RETURN'])) || [],
     salesOf: async (orderId) => ok(await c().from('stock_movements').select('*').like('ref', `${orderId}@%`).in('type', ['SALE', 'SALE_UNDO'])) || [],
   };
 }

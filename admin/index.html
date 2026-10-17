@@ -591,6 +591,7 @@ a{color:var(--terra)}
             h('span', { style: 'font-size:22px;font-weight:700' }, String(it.on_hand), h('small', { style: 'font-size:12px;font-weight:500;margin-left:4px' }, it.unit)),
             h('span', { class: 'badge ' + st[1] }, st[0])),
           lots ? h('small', { class: 'muted' }, lots) : null,
+          it.at_events ? h('small', { class: 'muted', style: 'color:var(--amber)' }, it.at_events + ' ' + it.unit + ' are out at events (not on the shelf)') : null,
           h('div', { class: 'acts' },
             h('button', { class: 'btn small', onclick: function () { invReceive(it); } }, 'Receive'),
             h('button', { class: 'btn ghost small', onclick: function () { invTake(it); } }, 'Take out'),
@@ -599,9 +600,14 @@ a{color:var(--terra)}
             state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Show LOW when ' + it.name + ' is at or below how many ' + it.unit + '? (0 = only the manual Low flag)', it.low_level); if (v === null) return; api('/admin/api/inventory/level', { method: 'POST', body: { slug: it.slug, lowLevel: v } }).then(function (r) { toast(r.ok ? 'Saved' : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, 'Low level: ' + it.low_level) : null));
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
-      var body = [h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
+      var body = [h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invHistory(); } }, 'History'),
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null),
+        j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
+          return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
+            ev.items.map(function (x) { return h('div', { style: 'display:flex;align-items:center;gap:10px;justify-content:space-between' }, h('span', {}, x.name + ': ' + x.out + ' still out (took ' + x.taken + ', back ' + x.returned + ')'),
+              h('button', { class: 'btn small', onclick: function (e) { var v = prompt('How many ' + x.name + ' came back from ' + ev.ref + '? (the rest counts as sold or given at the event; record that cash in your cash book)', x.out); if (v === null) return; e.target.disabled = true; api('/admin/api/inventory/event-return', { method: 'POST', body: { slug: x.slug, qty: v, ref: ev.ref } }).then(function (r) { toast(r.ok ? 'Back on the shelf. Still out: ' + r.stillOut : (r.error || 'Failed'), 6000); refreshLow(); openInventory(); }); } }, 'Mark returned')); }));
+        })) : null,
         section('Products', prods.map(row)), section('Packaging and supplies', pack.map(row))];
       ownerPanel('Inventory', body); $('sheet').classList.add('on');
     });
@@ -637,10 +643,18 @@ a{color:var(--terra)}
     }, 'Save receipt');
   }
   function invTake(it) {
-    var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'SAMPLE' }, 'Sample or gift')), q = numIn('how many'), note = h('input', { placeholder: 'Note (needed for damaged)' });
-    if (it.kind === 'product') type.value = 'DAMAGED';
-    invForm('Take out', it, [h('label', {}, 'What happened'), type, h('label', {}, 'How many ' + it.unit), q, h('label', {}, 'Note'), note], function (done) {
-      postInv('take', { slug: it.slug, qty: q.value, type: type.value, note: note.value }, done, function (x) { return 'Done. On hand: ' + x.onHand; });
+    var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'SAMPLE' }, 'Sample or tasting')),
+      q = numIn('how many'), whoIn = h('input', { placeholder: '' }), whoLabel = h('label', {}, ''), whoWrap = h('div', { hidden: true }, whoLabel, whoIn), note = h('input', { placeholder: 'Note (needed for damaged)' });
+    if (it.kind === 'product') type.value = 'GIFT';
+    function sync() {
+      var g = type.value === 'GIFT', e = type.value === 'EXHIBITION';
+      whoWrap.hidden = !(g || e);
+      whoLabel.textContent = g ? 'Who is it for (and why)' : 'Which event';
+      whoIn.placeholder = g ? 'e.g. Mrs Sharma, Diwali gift' : 'e.g. Diwali Mela, Delhi, 20-22 Oct';
+    }
+    type.addEventListener('change', sync); sync();
+    invForm('Take out', it, [h('label', {}, 'What happened'), type, whoWrap, h('label', {}, 'How many ' + it.unit), q, h('label', {}, 'Note'), note], function (done) {
+      postInv('take', { slug: it.slug, qty: q.value, type: type.value, who: whoIn.value, note: note.value }, done, function (x) { return 'Done. On hand: ' + x.onHand; });
     });
   }
   function invCount(it) {
@@ -653,10 +667,10 @@ a{color:var(--terra)}
     api('/admin/api/inventory/history?limit=60').then(function (j) {
       if (!j.ok) return toast(j.error || 'Failed');
       var names = {}; j.movements.forEach(function (m) { names[m.item_slug] = m.item_slug; });
-      var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
+      var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', GIFT: 'Given away', EXHIBITION: 'Taken to event', EXHIBITION_RETURN: 'Back from event', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
       var lines = j.movements.map(function (m) {
-        var can = ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
-        return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
+        var can = ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
+        return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
           can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
       });
       ownerPanel('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), section('Latest 60 lines', lines.length ? lines : h('p', { class: 'muted' }, 'Nothing recorded yet.'))]);

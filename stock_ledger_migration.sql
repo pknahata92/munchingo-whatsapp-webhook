@@ -18,10 +18,10 @@ create table if not exists stock_movements (
   id           bigserial primary key,
   item_slug    text not null references stock_items(slug),
   qty          integer not null check (qty <> 0),                 -- + in, - out
-  type         text not null check (type in ('RECEIVE','DAMAGED','SALE','SALE_UNDO','USE','SAMPLE','RETURN','COUNT_FIX','REVERSAL')),
+  type         text not null check (type in ('RECEIVE','DAMAGED','SALE','SALE_UNDO','USE','SAMPLE','GIFT','EXHIBITION','EXHIBITION_RETURN','RETURN','COUNT_FIX','REVERSAL')),
   lot_code     text,
   best_before  date,
-  ref          text,                                              -- supplier challan/invoice no., or "<order id>@<time>" for a sale
+  ref          text,                                              -- challan/invoice no.; "<order id>@<time>" for a sale; recipient name for a GIFT; event name for an EXHIBITION
   note         text,
   actor_email  text,
   actor_name   text,
@@ -42,6 +42,13 @@ insert into stock_settings (key, value) values ('tracking_from', now()::text) on
 create or replace view stock_by_lot as
   select item_slug, lot_code, best_before, sum(qty)::int as qty
   from stock_movements group by item_slug, lot_code, best_before;
+
+-- Boxes taken to exhibitions or events and what has come back, per event: out = taken - returned. Boxes still out are not on the shelf.
+create or replace view stock_events as
+  select ref, item_slug,
+         coalesce(sum(case when type = 'EXHIBITION' then -qty end), 0)::int as taken,
+         coalesce(sum(case when type = 'EXHIBITION_RETURN' then qty end), 0)::int as returned
+  from stock_movements where type in ('EXHIBITION', 'EXHIBITION_RETURN') group by ref, item_slug;
 
 alter table stock_items enable row level security;      -- no public policies: only the backend's service key can read or write
 alter table stock_movements enable row level security;
@@ -67,7 +74,7 @@ insert into stock_items (slug, name, kind, unit, low_level, sort) values
   ('card',            'Greeting cards',       'packaging', 'cards',    0, 43)
 on conflict (slug) do nothing;
 
--- Read-back: expect 17 items, 0 movements, 1 setting, and the view to exist.
+-- Read-back: expect 17 items, 0 movements, 1 setting, and 2 views.
 select (select count(*) from stock_items) as items, (select count(*) from stock_movements) as movements,
        (select value from stock_settings where key = 'tracking_from') as tracking_from,
-       (select count(*) from information_schema.views where table_name = 'stock_by_lot') as view_exists;
+       (select count(*) from information_schema.views where table_name in ('stock_by_lot', 'stock_events')) as views;

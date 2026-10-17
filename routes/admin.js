@@ -72,6 +72,7 @@ router.get('/admin/api/inventory', sw((req, inv) => inv.overview()));
 router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: req.query.slug, limit: Number(req.query.limit) || 40 })));
 router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/take', sw((req, inv) => inv.take({ ...(req.body || {}), actor: req.admin })));
+router.post('/admin/api/inventory/event-return', sw((req, inv) => inv.eventReturn({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
 router.post('/admin/api/inventory/reverse', sw((req, inv) => inv.reverse({ id: Number((req.body || {}).id), reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));

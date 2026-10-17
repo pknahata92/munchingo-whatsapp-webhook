@@ -68,6 +68,20 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
   const old = st.mv.find((m) => m.type === 'RECEIVE'); old.created_at = '2026-10-01T00:00:00.000Z';
   await rejects(inv.reverse({ id: old.id, reason: 'x', actor: A, isOwner: false }), /owner/, 'staff cannot reverse a line older than a day');
   await rejects(inv.reverse({ id: st.mv.find((m) => m.type === 'SALE').id, reason: 'x', actor: A, isOwner: true }), /Undo on the order/, 'sales are reversed through the order, not here');
+  // giveaways and exhibitions
+  await rejects(inv.take({ slug: 'atta-kesari', qty: 2, type: 'GIFT', actor: A }), /who it is going to/, 'a giveaway needs a named recipient');
+  await rejects(inv.take({ slug: 'atta-kesari', qty: 20, type: 'EXHIBITION', actor: A }), /event name/, 'an exhibition needs an event name');
+  const before = await onHand(inv, 'atta-kesari');
+  await inv.take({ slug: 'atta-kesari', qty: 2, type: 'GIFT', who: 'Mrs Sharma (Diwali gift)', actor: A }); ok(await onHand(inv, 'atta-kesari') === before - 2 && st.mv.slice(-1)[0].ref === 'Mrs Sharma (Diwali gift)', 'a giveaway lowers stock and records the recipient');
+  await inv.take({ slug: 'atta-kesari', qty: 20, type: 'EXHIBITION', who: 'Diwali Mela Delhi', actor: A });
+  let ov = await inv.overview(); let k = ov.items.find((i) => i.slug === 'atta-kesari');
+  ok(k.on_hand === before - 22 && k.at_events === 20 && ov.events.length === 1 && ov.events[0].ref === 'Diwali Mela Delhi' && ov.events[0].items[0].out === 20, 'boxes taken to an event leave the shelf but stay visible as still out');
+  await rejects(inv.eventReturn({ slug: 'atta-kesari', qty: 25, ref: 'Diwali Mela Delhi', actor: A }), /Only 20/, 'cannot return more than is out');
+  await rejects(inv.eventReturn({ slug: 'atta-kesari', qty: 1, ref: 'Some Other Event', actor: A }), /Nothing is out/, 'cannot return from an event nothing went to');
+  r = await inv.eventReturn({ slug: 'atta-kesari', qty: 7, ref: 'Diwali Mela Delhi', actor: A }); ok(r.stillOut === 13 && r.onHand === before - 15, 'unsold boxes come back to the shelf');
+  ov = await inv.overview(); ok(ov.items.find((i) => i.slug === 'atta-kesari').at_events === 13, 'still-out count drops by what came back');
+  await inv.eventReturn({ slug: 'atta-kesari', qty: 13, ref: 'Diwali Mela Delhi', actor: A }); ov = await inv.overview(); ok(ov.events.length === 0 && ov.items.find((i) => i.slug === 'atta-kesari').at_events === 0, 'a fully returned event closes');
+  ok((await inv.overview()).items.find((i) => i.slug === 'atta-kesari').lots.map((l) => l.lot_code).includes('15OCT26'), 'returned boxes go back into their original lot');
   // items
   const nr = await inv.addItem({ name: 'Bubble wrap', kind: 'packaging', unit: 'rolls', lowLevel: 2 }); ok(nr.slug === 'bubble-wrap', 'owner can add an item');
   await rejects(inv.addItem({ name: 'Bubble wrap', kind: 'packaging' }), /already/, 'no duplicate item');

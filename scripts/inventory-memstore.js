@@ -20,6 +20,8 @@ function memStore(trackingFrom) {
     movement: async (i) => mv.find((r) => r.id === i) || null, reversalOf: async (i) => mv.some((r) => r.reverses_id === i),
     updateItem: async (s, f) => Object.assign(items.find((i) => i.slug === s), f), insertItem: async (row) => items.push({ manual_low: false, active: true, ...row }),
     setting: async (k) => settings[k] || null,
+    events: async () => { const m = {}; mv.filter((r) => r.type === 'EXHIBITION' || r.type === 'EXHIBITION_RETURN').forEach((r) => { const k = r.ref + '|' + r.item_slug; const e = m[k] || (m[k] = { ref: r.ref, item_slug: r.item_slug, taken: 0, returned: 0 }); if (r.type === 'EXHIBITION') e.taken += -r.qty; else e.returned += r.qty; }); return Object.values(m); },
+    eventRows: async (ref, slug) => mv.filter((r) => r.ref === ref && r.item_slug === slug && (r.type === 'EXHIBITION' || r.type === 'EXHIBITION_RETURN')),
     salesOf: async (o) => mv.filter((r) => (r.type === 'SALE' || r.type === 'SALE_UNDO') && String(r.ref).startsWith(o + '@')),
   };
 }
