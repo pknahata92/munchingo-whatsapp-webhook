@@ -444,10 +444,8 @@ header small{color:var(--ink2);opacity:1}
     var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
     if (pre && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
     if (!confirm('Create ' + ids.length + ' Delhivery shipment' + (ids.length === 1 ? '' : 's') + '?\n\nThis charges your Delhivery wallet and emails each customer a tracking link.')) return;
-    var w = prompt('Parcel weight in grams for all of them? Leave empty to use the estimate for each parcel (1,220 g for 3 boxes, 1,500 g for 4).', '');
-    if (w === null) return;
     bulkRun('Creating shipments', ids, function (id) {
-      return api('/admin/api/orders/' + encodeURIComponent(id) + '/delhivery-shipment', { method: 'POST', body: w ? { weightGrams: Number(w) } : {} }).then(function (j) { return j.ok ? { ok: true, msg: 'Created. Tracking number ' + j.awb + (j.emailed ? ', customer emailed' : '') } : { ok: false, error: j.error }; });
+      return api('/admin/api/orders/' + encodeURIComponent(id) + '/delhivery-shipment', { method: 'POST', body: {} }).then(function (j) { return j.ok ? { ok: true, msg: 'Created. Tracking number ' + j.awb + (j.emailed ? ', customer emailed' : '') } : { ok: false, error: j.error }; });
     }, 'shipped');
   }
   function bulkDeliver(ids) {
@@ -687,7 +685,7 @@ header small{color:var(--ink2);opacity:1}
     }
     method.addEventListener('change', sync); sync();
     // One tap for Delhivery: creates the shipment (charges the Delhivery wallet), gets the AWB, marks shipped and emails the customer.
-    var estG = 250 * o.boxes + ({ 1: 350, 2: 420, 3: 470, 4: 500 }[o.boxes] || 0);
+    var estG = 250 * o.boxes + ({ 1: 350, 2: 420, 3: 470, 4: 600 }[o.boxes] || 0);
     var weight = h('input', { type: 'number', inputmode: 'numeric', min: '100', max: '5000', placeholder: 'Estimated ' + estG + ' g (weigh the real parcel)' });
     var dlBox = h('div', { class: 'acts', style: 'flex-direction:column;align-items:stretch;gap:8px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--line, #e5ddd0)' },
       h('label', {}, 'Parcel weight in grams (optional)'), weight,

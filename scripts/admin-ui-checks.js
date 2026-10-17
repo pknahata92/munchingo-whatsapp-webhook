@@ -111,6 +111,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
   // Task 6: bulk create shipments and bulk mark delivered
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    let prompts = 0; o.win.prompt = (m, d) => { prompts++; return d == null ? '' : String(d); };
     const markPacked = async (idRe) => { click(o.byText('#flow .step', /To pack/)); await sleep(80); const c = qa('#list .card').find((x) => idRe.test(text(x))); if (c) { click(Array.from(c.querySelectorAll('button')).find((b) => /Mark packed/.test(text(b)))); await sleep(400); } };
     await markPacked(/MNG-GGGG-1010/);
     click(o.byText('#flow .step', /^STEP 2/)); await sleep(100);
@@ -123,6 +124,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const panel = text(q('#panel'));
     ok((panel.match(/Created/g) || []).length === packedIds.length - 1, 'every order except the failing one was created (' + panel.slice(0, 300) + ')');
     ok(/MNG-GGGG-1010Not created:[^]*?not serviceable/i.test(panel), 'the failing order shows a red line with Delhivery\'s reason and does not stop the others (' + panel.slice(0, 500) + ')');
+    ok(prompts === 0, 'bulk shipping asks no weight question (each parcel uses its own estimate)');
     click(o.byText('#panel button', /Go to Shipped/)); await sleep(200);
     ok(/Shipped/.test(text(q('#flow .step.on'))) && qa('#list .card').length >= packedIds.length - 1, 'the created orders are now under Shipped');
     click(o.byText('#bulk .chip', /Select all/)); await sleep(100);
