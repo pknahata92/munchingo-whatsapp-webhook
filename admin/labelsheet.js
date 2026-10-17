@@ -46,8 +46,22 @@
     return lay(0, 0, W, H, []).sort(function (a, b) { return (b.y + b.h) - (a.y + a.h) || a.x - b.x; });
   }
 
+  // Straight grid: every label upright (or every label sideways, whichever fits more), in even rows and columns, the block centred on the page so the
+  // margins are equal and the cuts are a few straight lines. Easiest to cut.
+  function grid(W, H) {
+    var best = null;
+    [[LW, LH, false], [LH, LW, true]].forEach(function (o) {
+      var cols = Math.floor((W + EPS) / o[0]), rows = Math.floor((H + EPS) / o[1]);
+      if (cols * rows > 0 && (!best || cols * rows > best.cols * best.rows)) best = { cols: cols, rows: rows, w: o[0], h: o[1], turn: o[2] };
+    });
+    if (!best) return [];
+    var ox = (W - best.cols * best.w) / 2, oy = (H - best.rows * best.h) / 2, out = [], r, c;
+    for (r = 0; r < best.rows; r++) for (c = 0; c < best.cols; c++) out.push({ x: ox + c * best.w, y: oy + (best.rows - 1 - r) * best.h, w: best.w, h: best.h, turn: best.turn });
+    return out;
+  }
+
   // files: array of Uint8Array/ArrayBuffer (each a PDF; every page is one label).
-  // opts: { layout = '13x19', copies = 2, margin (inches, default 0.125), keepTogether = false, cutLines = true, pageW, pageH (inches, layout 'custom') }
+  // opts: { layout = '13x19', copies = 2, margin (inches, default 0.125), keepTogether = false, packTight = false (true: mixed upright and sideways labels, the most per sheet), cutLines = true, pageW, pageH (inches, layout 'custom') }
   async function build(PDFLib, files, opts) {
     opts = opts || {};
     var L = LAYOUTS[opts.layout] || LAYOUTS['13x19'];
@@ -64,7 +78,7 @@
       for (var p = 0; p < pages.length; p++) { var sz = pages[p].getSize(); labels.push({ page: embedded[p], w: sz.width, h: sz.height }); }
     }
     if (!labels.length) throw new Error('No labels found in the file(s).');
-    var cells = L.roll ? [{ x: 0, y: 0, w: LW, h: LH, turn: false }] : pack(pw - 2 * m, ph - 2 * m);
+    var cells = L.roll ? [{ x: 0, y: 0, w: LW, h: LH, turn: false }] : (opts.packTight ? pack : grid)(pw - 2 * m, ph - 2 * m);
     if (!cells.length) throw new Error('That paper is too small for a 4 x 6 in label.');
     var queue = [];   // every sticker, one per cell, in order; a label's copies sit next to each other
     labels.forEach(function (lab) { for (var c = 0; c < copies; c++) queue.push(lab); });
@@ -95,6 +109,6 @@
       minScale: minScale, layout: L.key, paper: L.name, sideways: cells.filter(function (c) { return c.turn; }).length };
   }
 
-  var api = { build: build, pack: pack, LAYOUTS: LAYOUTS };
+  var api = { build: build, pack: pack, grid: grid, LAYOUTS: LAYOUTS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.MunchingoLabelSheet = api;
 })(typeof window !== 'undefined' ? window : this);
