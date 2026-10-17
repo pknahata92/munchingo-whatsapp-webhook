@@ -176,6 +176,18 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const seen = await openAdmin('owner'); ok(seen.q('#guide').hidden, 'someone who has seen it does not get it again'); seen.close();
   });
 
+  // Every button style combination the page uses must set its own text AND background colours (a ghost button with a red
+  // background once showed terracotta text on red: Pause selling).
+  list.push(async () => {
+    const html = await (await fetch(BASE + '/admin')).text();
+    const used = new Set(); for (const m of html.matchAll(/class: '(btn[^']*)'/g)) used.add(m[1].trim().split(/\s+/).filter((c) => !['small'].includes(c)).sort().join(' '));
+    for (const m of html.matchAll(/class: '(btn ghost small)' \+ \([^)]*'\s?(red)'/g)) used.add('btn ghost red');
+    ok(used.has('btn ghost red'), 'the page really uses the ghost + red combination (Pause selling, Clear low flag)');
+    const rule = (html.match(/\.btn\.ghost\.red\{[^}]*\}/) || [''])[0];
+    ok(/background:transparent/.test(rule) && /color:var\(--tx-red\)/.test(rule) && /border[^;]*var\(--red\)/.test(rule), 'a ghost red button is outlined with red text on a clear background (' + rule + ')');
+    ok(/\.btn\.red\{[^}]*background:var\(--red\)/.test(html) && !/\.btn\.red\{[^}]*color:var\(--tx-terra\)/.test(html), 'a filled red button keeps white text');
+  });
+
   // Contrast: text and button colours meet WCAG AA (4.5:1) in the light and dark palettes
   list.push(async () => {
     const html = await (await fetch(BASE + '/admin')).text();
