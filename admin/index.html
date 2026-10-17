@@ -135,8 +135,14 @@ header small{color:var(--ink2);opacity:1}
     <div class="flow" id="flow"></div>
     <div class="hint" id="hint"></div>
     <div class="chips" id="chips"></div>
-    <div class="row"><input id="q" placeholder="Search name, phone, address, pincode, order or invoice no."><button class="btn ghost small" id="reload">Refresh</button></div>
-    <details class="more"><summary>More filters, sorting and download</summary>
+    <div class="row"><input id="q" placeholder="Search name, phone, address, pincode, order or invoice no."><button class="btn ghost small" id="filterBtn" type="button">Filter</button><button class="btn ghost small" id="reload">Refresh</button></div>
+    <div class="bar"><span id="count"></span></div>
+    <div class="bar" id="bulk" hidden style="flex-wrap:wrap"></div>
+    <div id="list"></div>
+  </main>
+  <main id="viewStock" hidden></main>
+  <main id="viewMore" hidden></main>
+  <div id="filterTpl" hidden><div id="filterBox">
     <div class="ctl">
       <select id="sort" aria-label="Sort by">
         <option value="new">Newest first</option><option value="old">Oldest first</option>
@@ -153,13 +159,7 @@ header small{color:var(--ink2);opacity:1}
     </div>
     <div class="ctl"><button class="btn ghost small" id="csv" type="button">Download CSV</button><button class="btn ghost small" id="reset" type="button">Clear filters</button></div>
     <div class="ctl" id="customDates" hidden><label class="inl">From <input type="date" id="dFrom"></label><label class="inl">To <input type="date" id="dTo"></label></div>
-    </details>
-    <div class="bar"><span id="count"></span></div>
-    <div class="bar" id="bulk" hidden style="flex-wrap:wrap"></div>
-    <div id="list"></div>
-  </main>
-  <main id="viewStock" hidden></main>
-  <main id="viewMore" hidden></main>
+    </div></div>
 </div>
 
 <div class="sheet" id="sheet"><div class="panel" id="panel"></div></div>
@@ -346,6 +346,7 @@ header small{color:var(--ink2);opacity:1}
     $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes' + (state.truncated ? ' · latest 600 orders only' : '') + (state.role === 'owner' ? ' · ' + inr(sum) + (state.moneyLive === false ? ' paid (order records)' : ' received') : '')));
     $('sort').value = state.sort; $('range').value = state.range; $('dFrom').value = state.from; $('dTo').value = state.to; $('customDates').hidden = state.range !== 'custom';
     [['fGift', 'gift'], ['fCoupon', 'coupon'], ['fSet', 'set']].forEach(function (x) { $(x[0]).classList.toggle('on', !!state[x[1]]); });
+    var fb = $('filterBtn'), active = state.sort !== 'new' || state.range !== 'all' || state.gift || state.coupon || state.set; fb.textContent = active ? 'Filter •' : 'Filter'; fb.classList.toggle('on', !!active);
     var list = $('list'); list.textContent = '';
     if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
     rows.forEach(function (o) {
@@ -457,7 +458,8 @@ header small{color:var(--ink2);opacity:1}
 
   // ── order sheet ──
   function openOrder(id) { api('/admin/api/orders/' + encodeURIComponent(id)).then(function (j) { if (!j.ok) return toast(j.error); state.open = j.order; draw(j.order); $('sheet').classList.add('on'); }); }
-  function closeSheet() { $('sheet').classList.remove('on'); }
+  function closeSheet() { $('sheet').classList.remove('on'); $('filterTpl').appendChild($('filterBox')); }
+  function openFilter() { ownerPanel('Filter and download', [$('filterBox')]); }
   $('sheet').addEventListener('click', function (e) { if (e.target === $('sheet')) closeSheet(); });
   function section(title) { var kids = Array.prototype.slice.call(arguments, 1); return h.apply(null, ['div', { class: 'sec' }, h('h3', {}, title)].concat(kids)); }
   function kv(pairs) { var dl = h('dl', { class: 'kv' }); pairs.forEach(function (p) { if (p[1] === '' || p[1] == null) return; dl.appendChild(h('dt', {}, p[0])); dl.appendChild(h('dd', {}, p[1])); }); return dl; }
@@ -650,7 +652,7 @@ header small{color:var(--ink2);opacity:1}
   }
 
   // ── owner screens: stock and team ──
-  function ownerPanel(title, body) { var p = $('panel'); p.textContent = ''; p.appendChild(h('div', { class: 'row' }, h('b', { style: 'flex:1;font-size:18px' }, title), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close'))); body.forEach(function (b) { if (b) p.appendChild(b); }); $('sheet').classList.add('on'); }
+  function ownerPanel(title, body) { var p = $('panel'); $('filterTpl').appendChild($('filterBox')); p.textContent = ''; p.appendChild(h('div', { class: 'row' }, h('b', { style: 'flex:1;font-size:18px' }, title), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close'))); body.forEach(function (b) { if (b) p.appendChild(b); }); $('sheet').classList.add('on'); }
   // ── Inventory (staff + owner): what is on the shelf. Nobody types a total: receive, take out and count are written as lines. ──
   var STATUS = { ok: ['OK', 'b-delivered'], low: ['LOW', 'b-topack'], out: ['OUT', 'b-refunded'], 'new': ['Not counted yet', 'b-unpaid'] };
   function openInventory() {
@@ -1015,7 +1017,7 @@ header small{color:var(--ink2);opacity:1}
     });
   }
   [].forEach.call(document.querySelectorAll('#tabs .tab'), function (b) { b.onclick = function () { showTab(b.getAttribute('data-tab')); }; });
-  $('helpBtn').onclick = openHelp;
+  $('helpBtn').onclick = openHelp; $('filterBtn').onclick = openFilter;
 
   if (token) start(); else showLogin();
 })();

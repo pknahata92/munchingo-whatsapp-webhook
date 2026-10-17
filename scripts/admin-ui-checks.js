@@ -49,5 +49,27 @@ module.exports = function checks({ openAdmin, ok, sleep, until }) {
     s.close();
   });
 
+  // Task 3: filters live in a sheet
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, set } = o;
+    ok(!q('details.more') && !!q('#filterBtn'), 'the "More filters" accordion is replaced by a Filter button');
+    click(o.byText('#flow .step', /Delivered/)); await sleep(100);
+    const amounts = () => qa('#list .card .top').map((t) => Number((text(t).match(/₹([\d,.]+)$/) || [0, '0'])[1].replace(/,/g, '')));
+    click(q('#filterBtn')); await sleep(150);
+    ok(q('#sheet.on') && q('#panel #sort') && q('#panel #csv') && q('#panel #reset'), 'the Filter button opens a sheet with sort, download and clear');
+    set(q('#sort'), 'valueAsc'); await sleep(150);
+    const a = amounts(); ok(a.length < 2 || a.every((v, i) => i === 0 || a[i - 1] <= v), 'sorting by lowest value reorders the list (' + a.join(',') + ')');
+    click(o.byText('#panel button', /^Close$/)); await sleep(100); click(q('#filterBtn')); await sleep(150);
+    ok(q('#sort').value === 'valueAsc', 'the choice is remembered when the sheet is reopened');
+    ok(/•|on/.test(q('#filterBtn').className + text(q('#filterBtn'))), 'the Filter button shows a dot while a filter is active');
+    click(q('#reset')); await sleep(150);
+    ok(q('#sort').value === 'new' && /To pack/.test(text(q('#flow .step.on'))), 'Clear filters returns to the default view');
+    click(o.byText('#panel button', /^Close$/)); await sleep(100); click(o.byText('#tabs .tab', /^More$/)); await sleep(100); click(o.byText('.morebtn', /Prices/)); await until(() => q('#sheet.on') && /Prices/i.test(text(q('#panel'))), 3000, 'the Prices sheet').catch(() => {});
+    ok(!!q('#sheet.on') && /Prices/i.test(text(q('#panel'))), 'another sheet still opens normally after the filter sheet (the filter box is not lost)');
+    ok(!!o.doc.getElementById('filterBox'), 'the filter box survives other sheets');
+    ok(o.errors.length === 0, 'no page errors with the filter sheet (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };
