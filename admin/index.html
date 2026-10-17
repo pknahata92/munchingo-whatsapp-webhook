@@ -172,6 +172,7 @@ header small{color:var(--ink2);opacity:1}
 <div id="toast"></div>
 
 <script src="/admin/pdf-lib.min.js" defer></script>
+<script src="/admin/pdf.min.js" defer></script>
 <script src="/admin/labelsheet.js" defer></script>
 <script src="/admin/pickfooter.js" defer></script>
 <script>
@@ -873,21 +874,50 @@ header small{color:var(--ink2);opacity:1}
   function labelOpts() {
     var L = (window.MunchingoLabelSheet && window.MunchingoLabelSheet.LAYOUTS) || { '13x19': { name: '13 x 19 in sheet' } }, saved = {};
     try { saved = JSON.parse(localStorage.getItem('mun_labelopts') || '{}') || {}; } catch (e) {}
-    var save = function () { try { localStorage.setItem('mun_labelopts', JSON.stringify({ paper: paper.value, copies: copies.value, margin: margin.value, together: together.checked, tight: tight.checked, lines: lines.checked, w: pw.value, h: ph.value })); } catch (e) {} };
+    var save = function () { try { localStorage.setItem('mun_labelopts', JSON.stringify({ paper: paper.value, copies: copies.value, margin: margin.value, together: together.checked, std: std.checked, per: per.value, tight: tight.checked, lines: lines.checked, w: pw.value, h: ph.value })); } catch (e) {} };
     var paper = h('select', { onchange: function () { custom.hidden = paper.value !== 'custom'; save(); } }, Object.keys(L).map(function (k) { return h('option', { value: k, selected: k === (saved.paper || '13x19') }, L[k].name); }));
     var copies = h('select', { onchange: save }, [1, 2, 3, 4].map(function (n) { return h('option', { value: n, selected: n === Number(saved.copies || 2) }, n + (n === 1 ? ' copy' : ' copies') + ' of each label'); }));
     var pw = h('input', { type: 'number', step: '0.01', min: '4', value: saved.w || '13', onchange: save }), ph = h('input', { type: 'number', step: '0.01', min: '4', value: saved.h || '19', onchange: save });
     var custom = h('div', { hidden: (saved.paper || '13x19') !== 'custom' }, h('label', {}, 'Paper width × height (inches)'), h('div', { style: 'display:flex;gap:8px' }, pw, ph));
     var margin = h('input', { type: 'number', step: '0.05', min: '0', max: '1', value: saved.margin == null ? '0.125' : saved.margin, onchange: save });
-    var together = h('input', { type: 'checkbox', checked: !!saved.together, style: 'width:auto;margin-right:8px', onchange: save });
+    var together = h('input', { type: 'checkbox', checked: saved.together !== false, style: 'width:auto;margin-right:8px', onchange: save });
+    var per = h('select', { onchange: save }, [['0', 'As many as fit (saves paper)'], ['1', '1 label per sheet'], ['2', '2 labels per sheet'], ['3', '3 labels per sheet'], ['4', '4 labels per sheet']].map(function (x) { return h('option', { value: x[0], selected: x[0] === String(saved.per || '0') }, x[1]); }));
+    var std = h('input', { type: 'checkbox', checked: !!saved.std, style: 'width:auto;margin-right:8px', onchange: save });
     var tight = h('input', { type: 'checkbox', checked: !!saved.tight, style: 'width:auto;margin-right:8px', onchange: save });
     var lines = h('input', { type: 'checkbox', checked: saved.lines !== false, style: 'width:auto;margin-right:8px', onchange: save });
     var chk = function (box, text) { return h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, box, text); };
-    return { paper: paper, nodes: [h('label', {}, 'Paper'), paper, custom, h('label', {}, 'Copies'), copies, h('label', {}, 'Edge margin (inches, keep the printer from clipping)'), margin,
-      chk(tight, 'Fit more labels per sheet (some turned sideways: saves paper, harder to cut)'), chk(together, 'Keep each label\'s copies on the same sheet (uses more paper)'), chk(lines, 'Thin cut lines around each label')],
-      get: function () { return { layout: paper.value, copies: Number(copies.value), margin: Number(margin.value), keepTogether: together.checked, packTight: tight.checked, cutLines: lines.checked, pageW: Number(pw.value), pageH: Number(ph.value) }; } };
+    return { paper: paper, nodes: [h('label', {}, 'Paper'), paper, custom, h('label', {}, 'Labels per sheet'), per, h('label', {}, 'Copies'), copies, h('label', {}, 'Edge margin (inches, keep the printer from clipping)'), margin,
+      chk(std, 'Use standard 4 × 6 in cells (otherwise cells match the label\'s real size, so more fit)'), chk(tight, 'Fit more labels per sheet (some turned sideways: saves paper, harder to cut)'), chk(together, 'Keep each label\'s copies on the same sheet (uses more paper)'), chk(lines, 'Thin cut lines around each label')],
+      get: function () { return { layout: paper.value, copies: Number(copies.value), margin: Number(margin.value), keepTogether: together.checked, packTight: tight.checked, cell: std.checked ? 'standard' : 'actual', perSheet: Number(per.value), cutLines: lines.checked, pageW: Number(pw.value), pageH: Number(ph.value) }; } };
   }
-  function labelSummary(r) { return r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + r.paper + ', ' + r.perSheet + ' per page' + (r.sideways ? ', ' + r.sideways + ' turned sideways to fit more' : '') + (r.blank ? ', ' + r.blank + ' spot' + (r.blank === 1 ? '' : 's') + ' left empty' : '') + '). Ready: check the PDF (barcode sharp, address complete) before you print.' + (r.minScale < 0.95 ? ' WARNING: the labels were shrunk to ' + Math.round(r.minScale * 100) + '%. Delhivery needs barcodes at least 8 mm high and address text at least 8 pt, so use the 4 × 6 in label PDF, not a bigger page.' : ''); }
+  // Delhivery's PDF often has the label as a block on a bigger page (A4 or Letter). Find that block (the non-white area of each page) so only the
+  // label is placed on the sheet, at full size. If the reader is not available the pages are used as they are.
+  function detectCrops(files) {
+    var lib = window.pdfjsLib; if (!lib) return Promise.resolve(null);
+    try { lib.GlobalWorkerOptions.workerSrc = '/admin/pdf.worker.min.js'; } catch (e) {}
+    return Promise.all(files.map(function (f) {
+      var data = new Uint8Array(f.byteLength !== undefined ? f : f.buffer).slice();
+      return lib.getDocument({ data: data }).promise.then(function (doc) {
+        var out = [], chain = Promise.resolve();
+        for (var n = 1; n <= doc.numPages; n++) (function (n) { chain = chain.then(function () { return doc.getPage(n).then(function (pg) {
+          var vp = pg.getViewport({ scale: 1 }), cv = document.createElement('canvas'); cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+          var ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+          return pg.render({ canvasContext: ctx, viewport: vp }).promise.then(function () {
+            var d = ctx.getImageData(0, 0, cv.width, cv.height).data, x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1, x, y, i;
+            for (y = 0; y < cv.height; y++) for (x = 0; x < cv.width; x++) { i = (y * cv.width + x) * 4; if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+            if (x1 < 0) { out.push(null); return; }
+            var pad = 2, a = vp.convertToPdfPoint(Math.max(0, x0 - pad), Math.min(cv.height, y1 + pad)), b = vp.convertToPdfPoint(Math.min(cv.width, x1 + pad), Math.max(0, y0 - pad));
+            out.push({ left: Math.min(a[0], b[0]), right: Math.max(a[0], b[0]), bottom: Math.min(a[1], b[1]), top: Math.max(a[1], b[1]) });
+          });
+        }); }); })(n);
+        return chain.then(function () { return out; });
+      });
+    })).catch(function () { return null; });
+  }
+  function buildLabels(files, lo) {
+    return detectCrops(files).then(function (crops) { return window.MunchingoLabelSheet.build(window.PDFLib, files, Object.assign(lo.get(), { crops: crops || undefined })); });
+  }
+  function labelSummary(r) { return r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + r.paper + ', ' + r.perSheet + ' per page' + (r.cellW ? ', each label ' + (r.cellW / 72).toFixed(1) + ' × ' + (r.cellH / 72).toFixed(1) + ' in' : '') + (r.sideways ? ', ' + r.sideways + ' turned sideways to fit more' : '') + (r.blank ? ', ' + r.blank + ' spot' + (r.blank === 1 ? '' : 's') + ' left empty' : '') + '). Ready: check the PDF (barcode sharp, address complete) before you print.' + (r.minScale < 0.95 ? ' WARNING: the labels were shrunk to ' + Math.round(r.minScale * 100) + '%. Delhivery needs barcodes at least 8 mm high and address text at least 8 pt, so use the 4 × 6 in label PDF, not a bigger page.' : ''); }
   // After a PDF is made: let the person print it (opens the print dialog) or download it. Nothing downloads on its own.
   function pdfActions(bytes, filename) {
     var url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
@@ -915,7 +945,7 @@ header small{color:var(--ink2);opacity:1}
         if (!j.labels.length) throw new Error('No labels could be fetched. Use the Label sheet button with the PDF from Delhivery One.');
         var files = j.labels.map(function (l) { var bin = atob(l.pdf), a = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; });
         info.textContent = 'Making the sheet…';
-        return window.MunchingoLabelSheet.build(window.PDFLib, files, lo.get()).then(function (r) {
+        return buildLabels(files, lo).then(function (r) {
           out.textContent = ''; pdfActions(r.bytes, 'Munchingo-shipping-labels-' + paper.value + '-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf').forEach(function (b) { out.appendChild(b); });
           info.textContent = labelSummary(r);
         });
@@ -936,7 +966,7 @@ header small{color:var(--ink2);opacity:1}
       var files = Array.prototype.slice.call(file.files || []); if (!files.length) return toast('Choose the labels PDF first.', 4000);
       e.target.disabled = true; info.textContent = 'Making the sheet…';
       Promise.all(files.map(function (f) { return f.arrayBuffer(); })).then(function (bufs) {
-        return window.MunchingoLabelSheet.build(window.PDFLib, bufs, lo.get());
+        return buildLabels(bufs, lo);
       }).then(function (r) {
         out.textContent = ''; pdfActions(r.bytes, 'Munchingo-labels-' + paper.value + '-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf').forEach(function (b) { out.appendChild(b); });
         info.textContent = labelSummary(r);

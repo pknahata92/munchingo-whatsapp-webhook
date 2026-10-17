@@ -27,6 +27,9 @@ router.get(['/admin', '/'], (req, res, next) => {
 
 // Label sheet tool: both files are public code (a library and our own layout script), so no session is needed to load them.
 const LIB = path.join(__dirname, '..', 'node_modules', 'pdf-lib', 'dist', 'pdf-lib.min.js');
+const PDFJS = path.join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'build');
+router.get('/admin/pdf.min.js', (req, res) => res.set({ 'Cache-Control': 'public, max-age=86400', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(PDFJS, 'pdf.min.js')));
+router.get('/admin/pdf.worker.min.js', (req, res) => res.set({ 'Cache-Control': 'public, max-age=86400', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(PDFJS, 'pdf.worker.min.js')));
 router.get('/admin/pdf-lib.min.js', (req, res) => res.set({ 'Cache-Control': 'public, max-age=86400', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(LIB));
 router.get('/admin/pickfooter.js', (req, res) => res.set({ 'Cache-Control': 'no-cache', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(__dirname, '..', 'admin', 'pickfooter.js')));
 router.get('/admin/labelsheet.js', (req, res) => res.set({ 'Cache-Control': 'no-cache', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(__dirname, '..', 'admin', 'labelsheet.js')));
