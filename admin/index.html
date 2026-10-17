@@ -68,6 +68,28 @@ a{color:var(--terra)}
 .ctl[hidden]{display:none}
 .bar .btn{white-space:nowrap}.bar span:first-child{line-height:1.3}
 .chip.tog.on,.chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+
+/* ── Shell: light header, tabs ── */
+header{background:var(--paper);color:var(--ink);border-bottom:1px solid var(--line)}
+header .logo{display:inline-flex;background:var(--navy);border-radius:12px;padding:5px 12px}header .logo img{height:30px}
+header small{color:var(--ink2);opacity:1}
+.hdrbtn.plain{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:999px;cursor:pointer;font-weight:600}
+.hdrbtn.plain:hover{border-color:var(--terra);color:var(--terra)}
+#helpBtn{width:34px;padding:0}
+.tabs{display:flex;background:var(--paper);border-top:1px solid var(--line);position:fixed;left:0;right:0;bottom:0;z-index:25;padding-bottom:env(safe-area-inset-bottom)}
+.tabs[hidden]{display:none}
+.tab{flex:1;border:0;border-top:3px solid transparent;background:transparent;padding:12px 8px;min-height:54px;font-weight:700;font-size:15px;color:var(--ink2);cursor:pointer}
+.tab.on{color:var(--terra);border-top-color:var(--terra)}
+#app{padding-bottom:70px}
+@media(min-width:700px){
+  .tabs{position:sticky;top:55px;bottom:auto;border-top:0;border-bottom:1px solid var(--line);padding:0 16px;gap:4px;justify-content:center}
+  .tab{flex:0 0 auto;min-width:130px;border-top:0;border-bottom:3px solid transparent}.tab.on{border-bottom-color:var(--terra)}
+  #app{padding-bottom:0}
+}
+.moregrid{display:grid;gap:10px;margin-top:6px}
+.morebtn{display:block;width:100%;text-align:left;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:14px 16px;cursor:pointer;min-height:64px}
+.morebtn:hover{border-color:var(--terra)}.morebtn b{display:block;font-size:16px}.morebtn span{color:var(--ink2);font-size:13px}
+.pagehead{font-size:20px;font-weight:700;margin:4px 0 6px}
 </style>
 </head>
 <body>
@@ -90,10 +112,15 @@ a{color:var(--terra)}
 
 <div id="app" hidden>
   <header>
-    <img src="/admin/logo.png" alt="Munchingo"><span class="sp"></span><small id="who"></small>
-    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="priceBtn" hidden>Prices</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="couponBtn" hidden>Coupons</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="invBtn">Inventory</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="labelBtn">Label sheet</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
+    <span class="logo"><img src="/admin/logo.png" alt="Munchingo"></span><span class="sp"></span><small id="who"></small>
+    <button class="hdrbtn plain" id="helpBtn" aria-label="Help" type="button">?</button><button class="hdrbtn plain" id="out" type="button">Sign out</button>
   </header>
-  <main>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
+    <button class="tab on" data-tab="orders" role="tab" aria-selected="true" type="button">Orders</button>
+    <button class="tab" data-tab="stock" role="tab" aria-selected="false" type="button">Stock</button>
+    <button class="tab" data-tab="more" id="moreTab" role="tab" aria-selected="false" type="button" hidden>More</button>
+  </nav>
+  <main id="viewOrders">
     <div class="money" id="tiles" hidden></div>
     <p class="note" id="moneyNote" hidden></p>
     <div class="unpaidbar" id="unpaidBar" hidden></div>
@@ -124,6 +151,8 @@ a{color:var(--terra)}
     <div class="bar" id="bulk" hidden style="flex-wrap:wrap"></div>
     <div id="list"></div>
   </main>
+  <main id="viewStock" hidden></main>
+  <main id="viewMore" hidden></main>
 </div>
 
 <div class="sheet" id="sheet"><div class="panel" id="panel"></div></div>
@@ -192,8 +221,38 @@ a{color:var(--terra)}
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('priceBtn').hidden = $('teamBtn').hidden = $('couponBtn').hidden = j.role !== 'owner'; render(); } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('moreTab').hidden = j.role !== 'owner'; var t0 = ''; try { t0 = localStorage.getItem('mngAdminTab') || ''; } catch (e) {} render(); showTab(t0); } });
     load();
+  }
+  // ── tabs: Orders, Stock, More (owner) ──
+  var TABS = ['orders', 'stock', 'more'];
+  function showTab(n) {
+    if (TABS.indexOf(n) < 0 || (n === 'more' && state.role !== 'owner')) n = 'orders';
+    state.tab = n;
+    TABS.forEach(function (t) { $('view' + t.charAt(0).toUpperCase() + t.slice(1)).hidden = t !== n; });
+    [].forEach.call(document.querySelectorAll('#tabs .tab'), function (b) { var on = b.getAttribute('data-tab') === n; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    try { localStorage.setItem('mngAdminTab', n); } catch (e) {}
+    closeSheet();
+    if (n === 'stock') openInventory(); else if (n === 'more') renderMore();
+  }
+  function moreBtn(title, sub, fn) { return h('button', { class: 'morebtn', type: 'button', onclick: fn }, h('b', {}, title), h('span', {}, sub)); }
+  function renderMore() {
+    var v = $('viewMore'); v.textContent = '';
+    v.appendChild(h('div', { class: 'pagehead' }, 'More'));
+    v.appendChild(h('div', { class: 'moregrid' },
+      moreBtn('Prices', 'Change what each box and gift set costs on the website.', openPrices),
+      moreBtn('Coupons and offers', 'Create discount codes and the stock-up offer.', openCoupons),
+      moreBtn('Team', 'Who can sign in, and what they can do.', openTeam),
+      moreBtn('Label sheet', 'Make a print sheet from a labels PDF you already have.', openLabelSheet),
+      moreBtn('Help', 'The four steps, in plain words.', openHelp)));
+  }
+  function openHelp() {
+    ownerPanel('How this works', [h('ol', { class: 'muted', style: 'line-height:1.7' },
+      h('li', {}, h('b', {}, 'Pack. '), 'Orders tab, To pack: print the pick list and slips, put the boxes in the parcel, then tap Mark packed.'),
+      h('li', {}, h('b', {}, 'Create the shipment. '), 'Packed: tap Create shipment. You get a tracking number and the customer is emailed.'),
+      h('li', {}, h('b', {}, 'Print labels. '), 'Shipped: tick the orders and tap Shipping labels. Print, cut, stick one on each parcel.'),
+      h('li', {}, h('b', {}, 'Mark delivered. '), 'When it reaches the customer, tap Mark delivered.')),
+      h('p', { class: 'muted' }, 'Stock tab: Receive when boxes arrive, Count when you check the shelf, Mark low when something runs short.')]);
   }
   function refreshLow() {
     api('/admin/api/inventory').then(function (j) {
@@ -941,7 +1000,8 @@ a{color:var(--terra)}
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { save({ active: true }, { email: email.value, name: name.value, role: role.value, active: true }, e.target); } }, 'Add')))]);
     });
   }
-  $('invBtn').onclick = openInventory; $('labelBtn').onclick = openLabelSheet; $('couponBtn').onclick = openCoupons; $('priceBtn').onclick = openPrices; $('teamBtn').onclick = openTeam;
+  [].forEach.call(document.querySelectorAll('#tabs .tab'), function (b) { b.onclick = function () { showTab(b.getAttribute('data-tab')); }; });
+  $('helpBtn').onclick = openHelp;
 
   if (token) start(); else showLogin();
 })();
