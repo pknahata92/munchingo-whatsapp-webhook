@@ -17,10 +17,10 @@ const SELLER = { name: 'Munchingo', gstin: '06AIIPN5005C2ZP', hsn: '1905' };
 
 // Packed weight in grams = 250 g per box + packaging (mailer, filler, slip, tape). MEASURED by Prashant on 17 Oct 2026: a 3-box parcel
 // weighs 1,220 g and a 4-box parcel 1,500 g, i.e. 470 g and 500 g of packaging. The 1-box and 2-box figures are NOT measured (guesses).
-// A 3-box parcel at 1,220 g bills in the 1.0-1.5 kg slab, not the 1.0 kg one. Parcel SIZE (cm) below is still an unmeasured placeholder.
+// VOLUMETRIC WEIGHT: the 8 in cube is 20.3^3 / 5000 = 1,678 g, which is more than the contents weigh, so Delhivery charges 1,678 g (the 2 kg slab) for EVERY parcel of 1 to 4 boxes. A snugger box would be billed on actual weight instead.
 // The admin lets staff overwrite the weight per order.
 const PACKAGING_G = { 1: 350, 2: 420, 3: 470, 4: 500 };
-const SIZE_CM = { 1: [20, 15, 6], 2: [20, 15, 10], 3: [20, 15, 14], 4: [20, 15, 18] };
+const SIZE_CM = { 1: [20.3, 20.3, 20.3], 2: [20.3, 20.3, 20.3], 3: [20.3, 20.3, 20.3], 4: [20.3, 20.3, 20.3] };   // every parcel currently ships in the same 8 x 8 x 8 in (20.3 cm) box, per Prashant 18 Oct
 const MAX_BOXES = 4;   // 5+ boxes ship as two parcels (decided 12 Oct): book those in Delhivery One
 
 const estimateWeight = (boxes) => 250 * boxes + (PACKAGING_G[boxes] || 0);
