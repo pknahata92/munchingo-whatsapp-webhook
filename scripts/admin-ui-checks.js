@@ -104,7 +104,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     click(o.byText('#viewStock button', /Save hamper sale/)); await sleep(400);
     ok(!/Recorded/.test(text(q('#viewStock'))), 'an empty hamper sale is refused');
     click(o.byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back to stock');
-    await sleep(400); click(o.byText('#viewStock button', /Where did it go/)); await until(() => /Where did the stock go/.test(text(q('#viewStock'))), 4000, 'the flow report').catch(() => {});
+    await until(() => o.byText('#viewStock button', /Where did it go/), 4000, 'the flow button'); click(o.byText('#viewStock button', /Where did it go/)); await until(() => /Where did the stock go/.test(text(q('#viewStock'))), 4000, 'the flow report').catch(() => {});
     ok(/Where did the stock go/.test(text(q('#viewStock'))) && /On the shelf/.test(text(q('#viewStock'))), 'the flow report lists where each item went');
     ok(o.errors.length === 0, 'no page errors on the hamper screens (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
