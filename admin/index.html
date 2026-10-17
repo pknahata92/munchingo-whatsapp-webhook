@@ -874,7 +874,7 @@ header small{color:var(--ink2);opacity:1}
   function labelOpts() {
     var L = (window.MunchingoLabelSheet && window.MunchingoLabelSheet.LAYOUTS) || { '13x19': { name: '13 x 19 in sheet' } }, saved = {};
     try { saved = JSON.parse(localStorage.getItem('mun_labelopts') || '{}') || {}; } catch (e) {}
-    var save = function () { try { localStorage.setItem('mun_labelopts', JSON.stringify({ paper: paper.value, copies: copies.value, margin: margin.value, together: together.checked, std: std.checked, per: per.value, tight: tight.checked, lines: lines.checked, w: pw.value, h: ph.value })); } catch (e) {} };
+    var save = function () { try { localStorage.setItem('mun_labelopts', JSON.stringify({ paper: paper.value, copies: copies.value, margin: margin.value, together: together.checked, per: per.value, lines: lines.checked, w: pw.value, h: ph.value })); } catch (e) {} };
     var paper = h('select', { onchange: function () { custom.hidden = paper.value !== 'custom'; save(); } }, Object.keys(L).map(function (k) { return h('option', { value: k, selected: k === (saved.paper || '13x19') }, L[k].name); }));
     var copies = h('select', { onchange: save }, [1, 2, 3, 4].map(function (n) { return h('option', { value: n, selected: n === Number(saved.copies || 2) }, n + (n === 1 ? ' copy' : ' copies') + ' of each label'); }));
     var pw = h('input', { type: 'number', step: '0.01', min: '4', value: saved.w || '13', onchange: save }), ph = h('input', { type: 'number', step: '0.01', min: '4', value: saved.h || '19', onchange: save });
@@ -882,13 +882,11 @@ header small{color:var(--ink2);opacity:1}
     var margin = h('input', { type: 'number', step: '0.05', min: '0', max: '1', value: saved.margin == null ? '0.125' : saved.margin, onchange: save });
     var together = h('input', { type: 'checkbox', checked: saved.together !== false, style: 'width:auto;margin-right:8px', onchange: save });
     var per = h('select', { onchange: save }, [['0', 'As many as fit (saves paper)'], ['1', '1 label per sheet'], ['2', '2 labels per sheet'], ['3', '3 labels per sheet'], ['4', '4 labels per sheet']].map(function (x) { return h('option', { value: x[0], selected: x[0] === String(saved.per || '0') }, x[1]); }));
-    var std = h('input', { type: 'checkbox', checked: !!saved.std, style: 'width:auto;margin-right:8px', onchange: save });
-    var tight = h('input', { type: 'checkbox', checked: !!saved.tight, style: 'width:auto;margin-right:8px', onchange: save });
     var lines = h('input', { type: 'checkbox', checked: saved.lines !== false, style: 'width:auto;margin-right:8px', onchange: save });
     var chk = function (box, text) { return h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, box, text); };
     return { paper: paper, nodes: [h('label', {}, 'Paper'), paper, custom, h('label', {}, 'Labels per sheet'), per, h('label', {}, 'Copies'), copies, h('label', {}, 'Edge margin (inches, keep the printer from clipping)'), margin,
-      chk(std, 'Use standard 4 × 6 in cells (otherwise cells match the label\'s real size, so more fit)'), chk(tight, 'Fit more labels per sheet (some turned sideways: saves paper, harder to cut)'), chk(together, 'Keep each label\'s copies on the same sheet (uses more paper)'), chk(lines, 'Thin cut lines around each label')],
-      get: function () { return { layout: paper.value, copies: Number(copies.value), margin: Number(margin.value), keepTogether: together.checked, packTight: tight.checked, cell: std.checked ? 'standard' : 'actual', perSheet: Number(per.value), cutLines: lines.checked, pageW: Number(pw.value), pageH: Number(ph.value) }; } };
+      chk(together, 'Keep each label\'s copies on the same sheet (uses more paper)'), chk(lines, 'Thin cut lines around each label')],
+      get: function () { return { layout: paper.value, copies: Number(copies.value), margin: Number(margin.value), keepTogether: together.checked, perSheet: Number(per.value), cutLines: lines.checked, pageW: Number(pw.value), pageH: Number(ph.value) }; } };
   }
   // Delhivery's PDF often has the label as a block on a bigger page (A4 or Letter). Find that block (the non-white area of each page) so only the
   // label is placed on the sheet, at full size. If the reader is not available the pages are used as they are.
@@ -917,7 +915,7 @@ header small{color:var(--ink2);opacity:1}
   function buildLabels(files, lo) {
     return detectCrops(files).then(function (crops) { return window.MunchingoLabelSheet.build(window.PDFLib, files, Object.assign(lo.get(), { crops: crops || undefined })); });
   }
-  function labelSummary(r) { return r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + r.paper + ', ' + r.perSheet + ' per page' + (r.cellW ? ', each label ' + (r.cellW / 72).toFixed(1) + ' × ' + (r.cellH / 72).toFixed(1) + ' in' : '') + (r.sideways ? ', ' + r.sideways + ' turned sideways to fit more' : '') + (r.blank ? ', ' + r.blank + ' spot' + (r.blank === 1 ? '' : 's') + ' left empty' : '') + '). Ready: check the PDF (barcode sharp, address complete) before you print.' + (r.minScale < 0.95 ? ' WARNING: the labels were shrunk to ' + Math.round(r.minScale * 100) + '%. Delhivery needs barcodes at least 8 mm high and address text at least 8 pt, so use the 4 × 6 in label PDF, not a bigger page.' : ''); }
+  function labelSummary(r) { return r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + r.paper + ', ' + r.perSheet + ' per page' + (r.cellW ? ', each label ' + (r.cellW / 72).toFixed(1) + ' × ' + (r.cellH / 72).toFixed(1) + ' in' : '') + (r.landscape ? ', page turned to landscape' : '') + (r.blank ? ', ' + r.blank + ' spot' + (r.blank === 1 ? '' : 's') + ' left empty' : '') + '). Ready: check the PDF (barcode sharp, address complete) before you print.' + (r.minScale < 0.95 ? ' WARNING: the labels were shrunk to ' + Math.round(r.minScale * 100) + '%. Delhivery needs barcodes at least 8 mm high and address text at least 8 pt, so use the 4 × 6 in label PDF, not a bigger page.' : ''); }
   // After a PDF is made: let the person print it (opens the print dialog) or download it. Nothing downloads on its own.
   function pdfActions(bytes, filename) {
     var url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
@@ -953,7 +951,7 @@ header small{color:var(--ink2);opacity:1}
         .then(function () { e.target.disabled = false; });
     } }, 'Get the labels and make the PDF');
     ownerPanel('Shipping labels', [
-      h('p', { class: 'muted' }, 'Fetches each order\'s Delhivery label (4 × 6 in) and lays them out on the paper you pick: any sheet size (labels stay a full 4 × 6 in in a straight grid, or tick "Fit more labels per sheet" to turn some sideways and waste less paper) or a 4 × 6 in thermal roll for the TSC printer (one label per page). Nothing is stored. If Delhivery will not give a label here, use Label sheet with the PDF from Delhivery One.'),
+      h('p', { class: 'muted' }, 'Fetches each order\'s Delhivery label (4 × 6 in) and lays them out on the paper you pick: any sheet size (labels stay full size in a straight, easy-to-cut grid, and the page turns to landscape when that fits more labels) or a 4 × 6 in thermal roll for the TSC printer (one label per page). Nothing is stored. If Delhivery will not give a label here, use Label sheet with the PDF from Delhivery One.'),
       section.apply(null, ['Print'].concat(lo.nodes, [info, skipped, h('div', { class: 'acts' }, go), out]))]);
   }
   // ── Label sheet (staff + owner): courier labels PDF in, 13 x 19 in sheet out (3 x 3 of 4 x 6 in, N copies each). Stays on this device. ──
@@ -974,7 +972,7 @@ header small{color:var(--ink2);opacity:1}
         .then(function () { e.target.disabled = false; });
     } }, 'Make the PDF');
     ownerPanel('Label sheet', [
-      h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). Pick the paper: any sheet size (labels stay a full 4 × 6 in in a straight grid, or tick "Fit more labels per sheet" to turn some sideways and waste less paper) or a 4 × 6 in thermal roll for the TSC printer (one label per page). The file is not uploaded anywhere.'),
+      h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). Pick the paper: any sheet size (labels stay full size in a straight, easy-to-cut grid, and the page turns to landscape when that fits more labels) or a 4 × 6 in thermal roll for the TSC printer (one label per page). The file is not uploaded anywhere.'),
       section.apply(null, ['Labels', h('label', {}, 'Labels PDF'), file].concat(lo.nodes, [info, h('div', { class: 'acts' }, go), out]))]);
   }
   function openPrices() {

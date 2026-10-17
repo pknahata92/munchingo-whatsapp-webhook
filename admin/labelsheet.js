@@ -1,5 +1,5 @@
-/* Label sheet: packs standard 4 x 6 in courier labels (never shrunk, so barcodes and text keep Delhivery's minimum sizes) onto the paper you choose,
- * turning labels sideways where that fits more of them, so a sheet wastes as little paper as possible. Paper: 13 x 19, 12 x 18, A3, A4, Letter, any
+/* Label sheet: lays courier labels (never shrunk, so barcodes and text keep Delhivery's minimum sizes) out in a straight grid on the paper you choose,
+ * turning the page to landscape when that fits more labels. Paper: 13 x 19, 12 x 18, A3, A4, Letter, any
  * custom size, or a 4 x 6 in thermal roll (one label per page, e.g. TSC TTP-244 Pro). N copies of each label.
  * Runs in the browser (admin > Label sheet) and in node (scripts/labelsheet-test.js). Nothing is uploaded: the PDFs stay on the device.
  * Needs pdf-lib (served at /admin/pdf-lib.min.js).
@@ -19,41 +19,12 @@
   };
   Object.keys(LAYOUTS).forEach(function (k) { LAYOUTS[k].key = k; });
 
-  // Guillotine packing: split the area with straight cuts (so it can be cut with a guillotine or scissors) and place 4 x 6 labels, upright or
-  // sideways, to get the most per sheet. Cut positions are sums of 4 and 6 in, which is all that can ever matter.
-  function pack(W, H, LW, LH) {
-    LW = LW || STD_W; LH = LH || STD_H;
-    var memo = {};
-    function cuts(n) { var out = [], i, j, v; for (i = 0; i * LW <= n; i++) for (j = 0; i * LW + j * LH <= n; j++) { v = i * LW + j * LH; if (v > EPS && v < n - EPS) out.push(v); } return out; }
-    function best(w, h) {
-      var key = Math.round(w * 2) + 'x' + Math.round(h * 2); if (memo[key]) return memo[key];
-      var up = w >= LW - EPS && h >= LH - EPS, side = w >= LH - EPS && h >= LW - EPS;
-      var r = { n: 0 };
-      if (up || side) r = { n: 1, rect: up ? { w: LW, h: LH, turn: false } : { w: LH, h: LW, turn: true } };
-      if (w >= LW - EPS && h >= LW - EPS) {
-        var cx = cuts(w), cy = cuts(h), i, n;
-        for (i = 0; i < cx.length; i++) { n = best(cx[i], h).n + best(w - cx[i], h).n; if (n > r.n) r = { n: n, vx: cx[i] }; }
-        for (i = 0; i < cy.length; i++) { n = best(w, cy[i]).n + best(w, h - cy[i]).n; if (n > r.n) r = { n: n, hy: cy[i] }; }
-      }
-      return (memo[key] = r);
-    }
-    function lay(x, y, w, h, out) {   // y measured from the bottom
-      var r = best(w, h);
-      if (r.rect) out.push({ x: x, y: y, w: r.rect.w, h: r.rect.h, turn: r.rect.turn });
-      else if (r.vx) { lay(x, y, r.vx, h, out); lay(x + r.vx, y, w - r.vx, h, out); }
-      else if (r.hy) { lay(x, y, w, r.hy, out); lay(x, y + r.hy, w, h - r.hy, out); }
-      return out;
-    }
-    // Reading order: top to bottom, then left to right.
-    return lay(0, 0, W, H, []).sort(function (a, b) { return (b.y + b.h) - (a.y + a.h) || a.x - b.x; });
-  }
-
-  // Straight grid: every label upright (or every label sideways, whichever fits more), in even rows and columns, the block centred on the page so the
-  // margins are equal and the cuts are a few straight lines. Easiest to cut.
+  // Straight grid: every label upright, in even rows and columns, the block centred on the page so the margins are equal and the cuts are a few
+  // straight lines. Easiest to cut.
   function grid(W, H, LW, LH) {
     LW = LW || STD_W; LH = LH || STD_H;
     var best = null;
-    [[LW, LH, false], [LH, LW, true]].forEach(function (o) {
+    [[LW, LH, false]].forEach(function (o) {
       var cols = Math.floor((W + EPS) / o[0]), rows = Math.floor((H + EPS) / o[1]);
       if (cols * rows > 0 && (!best || cols * rows > best.cols * best.rows)) best = { cols: cols, rows: rows, w: o[0], h: o[1], turn: o[2] };
     });
@@ -64,7 +35,7 @@
   }
 
   // files: array of Uint8Array/ArrayBuffer (each a PDF; every page is one label).
-  // opts: { cell = 'actual' ('standard' forces 4 x 6 in cells), crops = [[{left,bottom,right,top} per page] per file] to cut each label out of a bigger page, layout = '13x19', copies = 2, margin (inches, default 0.125), keepTogether = false, perSheet = 0 (most that fit; or 1, 2, 3...), packTight = false (true: mixed upright and sideways labels, the most per sheet), cutLines = true, pageW, pageH (inches, layout 'custom') }
+  // opts: { cell = 'actual' ('standard' forces 4 x 6 in cells), crops = [[{left,bottom,right,top} per page] per file] to cut each label out of a bigger page, layout = '13x19', copies = 2, margin (inches, default 0.125), keepTogether = false, perSheet = 0 (most that fit; or 1, 2, 3...), cutLines = true, pageW, pageH (inches, layout 'custom') }
   async function build(PDFLib, files, opts) {
     opts = opts || {};
     var L = LAYOUTS[opts.layout] || LAYOUTS['13x19'];
@@ -88,7 +59,12 @@
       var a = 0, b = 0; labels.forEach(function (lb) { a = Math.max(a, Math.min(lb.w, lb.h)); b = Math.max(b, Math.max(lb.w, lb.h)); });
       cw = Math.min(STD_W, Math.ceil(a) + 2); ch = Math.min(STD_H, Math.ceil(b) + 2);
     }
-    var cells = L.roll ? [{ x: 0, y: 0, w: STD_W, h: STD_H, turn: false }] : (opts.packTight ? pack : grid)(pw - 2 * m, ph - 2 * m, cw, ch);
+    var cells, landscape = false;
+    if (L.roll) cells = [{ x: 0, y: 0, w: STD_W, h: STD_H, turn: false }];
+    else {   // the page is turned to landscape when that fits more labels, so the labels stay upright on screen and in the print dialog
+      var gp = grid(pw - 2 * m, ph - 2 * m, cw, ch), gl = grid(ph - 2 * m, pw - 2 * m, cw, ch);
+      if (gl.length > gp.length) { landscape = true; cells = gl; var tmp = pw; pw = ph; ph = tmp; } else cells = gp;
+    }
     if (!cells.length) throw new Error('That paper is too small for a 4 x 6 in label.');
     // Fewer labels per sheet on request (1 = a single label centred on the page).
     var cap = parseInt(opts.perSheet, 10);
@@ -122,9 +98,9 @@
     out.setTitle('Munchingo labels ' + L.key);
     var stickers = labels.length * copies;
     return { bytes: await out.save(), labels: labels.length, stickers: stickers, sheets: sheets, copies: copies, perSheet: perSheet, blank: sheets * perSheet - stickers,
-      minScale: minScale, layout: L.key, paper: L.name, cellW: cw, cellH: ch, sideways: cells.filter(function (c) { return c.turn; }).length };
+      minScale: minScale, layout: L.key, paper: L.name, cellW: cw, cellH: ch, landscape: landscape, sideways: cells.filter(function (c) { return c.turn; }).length };
   }
 
-  var api = { build: build, pack: pack, grid: grid, LAYOUTS: LAYOUTS };
+  var api = { build: build, grid: grid, LAYOUTS: LAYOUTS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.MunchingoLabelSheet = api;
 })(typeof window !== 'undefined' ? window : this);

@@ -27,23 +27,16 @@ async function labels(n, w = 288, h = 432) {
   r = await LS.build(PDFLib, [await labels(1)], { copies: 2, cutLines: false }); ok(r.sheets === 1, 'cut lines can be switched off');
   r = await LS.build(PDFLib, [await labels(1, 595, 842)], { copies: 1 }); ok(r.minScale < 0.95, 'a big source page reports it was shrunk, so the screen can warn');
   r = await LS.build(PDFLib, [await labels(4)], { copies: 1 }); ok(r.minScale === 1, '4 x 6 in labels are never shrunk (Delhivery minimums hold)');
-  // packing: more labels per sheet by turning some sideways
-  const cnt = (k, m) => { const l = LS.LAYOUTS[k], mm = (m == null ? 0.125 : m) * 72; return LS.pack(l.w - 2 * mm, l.h - 2 * mm); };
-  ok(cnt('13x19').length === 9, '13 x 19: 9 labels (the most that fits)');
-  ok(cnt('a4').length === 3 && cnt('a4').some((c) => c.turn), 'A4 packed tight: 3 labels, one turned sideways');
-  ok(cnt('a3').length === 6 && cnt('a3').some((c) => c.turn), 'A3 packed tight: 6 labels with sideways ones');
-  const gr = (k) => { const l = LS.LAYOUTS[k], mm = 9; return LS.grid(l.w - 2 * mm, l.h - 2 * mm); };
-  ok(gr('a4').length === 2 && gr('a3').length === 4 && gr('13x19').length === 9 && gr('letter').length === 2, 'straight grid: A4 2, A3 4, 13 x 19 9, Letter 2');
-  ok(gr('a4').every((c) => !c.turn) && new Set(gr('a4').map((c) => c.y)).size === 1, 'A4 grid: both labels upright in one straight row');
-  ok(cnt('letter').length === 3, 'Letter packed tight: 3 labels');
-  ok(cnt('12x18').length >= 6, '12 x 18: at least 6 labels');
+  // straight grid on standard 4 x 6 cells (labels upright; the page turns landscape only when that fits more)
+  const gr = (k, cw, ch) => { const l = LS.LAYOUTS[k], mm = 9; return LS.grid(l.w - 2 * mm, l.h - 2 * mm, cw, ch); };
+  ok(gr('13x19').length === 9 && gr('a3').length === 4 && gr('a4').length === 2 && gr('letter').length === 2 && gr('12x18').length === 4, 'straight grid: 13 x 19 holds 9, A3 4, A4 2, Letter 2, 12 x 18 4');
+  ok(gr('a4').every((c) => !c.turn) && new Set(gr('a4').map((c) => c.y)).size === 1, 'A4 grid: labels upright in one straight row');
   for (const k of ['13x19', 'a3', 'a4', 'letter', '12x18']) {   // no two labels overlap and all sit inside the page
-    const l = LS.LAYOUTS[k], cs = cnt(k), mm = 9; let bad = false;
+    const l = LS.LAYOUTS[k], cs = gr(k), mm = 9; let bad = false;
     cs.forEach((c, i) => { if (c.x < -0.01 || c.y < -0.01 || c.x + c.w > l.w - 2 * mm + 0.01 || c.y + c.h > l.h - 2 * mm + 0.01) bad = true; cs.forEach((d, j) => { if (j > i && c.x < d.x + d.w - 0.01 && d.x < c.x + c.w - 0.01 && c.y < d.y + d.h - 0.01 && d.y < c.y + c.h - 0.01) bad = true; }); });
     ok(!bad, k + ': labels do not overlap and stay inside the page');
   }
-  r = await LS.build(PDFLib, [await labels(7)], { copies: 1, layout: 'a4' }); ok(r.perSheet === 2 && r.sheets === 4 && r.sideways === 0, 'A4 default: 2 upright labels per sheet in a straight row (7 labels, 4 sheets)');
-  r = await LS.build(PDFLib, [await labels(7)], { copies: 1, layout: 'a4', packTight: true }); ok(r.perSheet === 3 && r.sheets === 3 && r.sideways >= 1, 'A4 packed tight: 3 per sheet, 7 labels over 3 sheets');
+  r = await LS.build(PDFLib, [await labels(7)], { copies: 1, layout: 'a4' }); ok(r.perSheet === 2 && r.sheets === 4 && r.landscape === false, 'A4 with full 4 x 6 labels: 2 per sheet, portrait page (7 labels, 4 sheets)');
   r = await LS.build(PDFLib, [await labels(3)], { copies: 1, layout: 'custom', pageW: 8.5, pageH: 12 }); ok(r.perSheet >= 2, 'a custom size works');
   r = await LS.build(PDFLib, [await labels(5)], { copies: 2, layout: 'roll' });
   doc = await PDFLib.PDFDocument.load(r.bytes); let z = doc.getPage(0).getSize();
@@ -57,7 +50,8 @@ async function labels(n, w = 288, h = 432) {
   r = await LS.build(PDFLib, [await labels(4, 595, 842)], { copies: 1, layout: '9x12', crops: [Array(4).fill({ left: 36, bottom: 393, right: 295, top: 806 })] });
   ok(r.perSheet === 4 && r.sheets === 1 && r.minScale >= 1, 'cut out of larger pages, 4 real-size labels fit on one 9 x 12 in sheet');
   r = await LS.build(PDFLib, [await labels(4, 595, 842)], { copies: 1, layout: 'a4', crops: [Array(4).fill({ left: 36, bottom: 393, right: 295, top: 806 })] });
-  ok(r.perSheet === 3 && r.sideways === 3, 'on A4 (8.27 x 11.69 in) real-size labels fit 3 per sheet, all turned the same way in one tidy column (4 do not fit with a printer margin)');
+  doc = await PDFLib.PDFDocument.load(r.bytes); z = doc.getPage(0).getSize();
+  ok(r.perSheet === 3 && r.landscape === true && z.width > z.height && r.minScale >= 1, 'A4 with real-size cut-out labels: the page turns landscape and holds 3 upright labels, none shrunk');
   let e = await LS.build(PDFLib, [], {}).catch((x) => x); ok(e instanceof Error, 'no files is an error');
   e = await LS.build(PDFLib, [new Uint8Array([1, 2, 3])], {}).catch((x) => x); ok(e instanceof Error, 'a non-PDF is an error');
   e = await LS.build(PDFLib, [await labels(1)], { layout: 'custom', pageW: 4, pageH: 4 }).catch((x) => x); ok(e instanceof Error, 'paper too small for a label is an error');
