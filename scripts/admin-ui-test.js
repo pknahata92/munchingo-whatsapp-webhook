@@ -37,7 +37,7 @@ async function openAdmin(role, { width = 390 } = {}) {
       win.confirm = () => true; win.prompt = (m, d) => (d == null ? '' : String(d)); win.alert = () => {};
       win.innerWidth = width; win.URL.createObjectURL = () => 'blob:test'; win.URL.revokeObjectURL = () => {};
       win.localStorage.setItem('mngAdminToken', token);
-      win.HTMLElement.prototype.scrollIntoView = () => {};
+      win.HTMLElement.prototype.scrollIntoView = () => {}; win.scrollTo = () => {};
     },
   });
   const win = dom.window, doc = win.document;

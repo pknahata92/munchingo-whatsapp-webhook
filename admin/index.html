@@ -90,6 +90,14 @@ header small{color:var(--ink2);opacity:1}
 .morebtn{display:block;width:100%;text-align:left;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:14px 16px;cursor:pointer;min-height:64px}
 .morebtn:hover{border-color:var(--terra)}.morebtn b{display:block;font-size:16px}.morebtn span{color:var(--ink2);font-size:13px}
 .pagehead{font-size:20px;font-weight:700;margin:4px 0 6px}
+
+/* ── Needs you now ── */
+.needs{display:grid;gap:8px;margin:2px 0 10px}
+@media(min-width:700px){.needs{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}}
+.need{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--paper);border:1px solid var(--line);border-left:4px solid var(--terra);border-radius:14px;padding:11px 14px;cursor:pointer;min-height:56px}
+.need:hover{border-color:var(--terra)}.need b{font-size:26px;line-height:1;min-width:32px;text-align:center}.need span{font-size:14px;color:var(--ink)}
+.need.hot{border-left-color:var(--red)}.need.calm{border-left-color:var(--green);cursor:default}
+.today{margin:0 0 10px}.today b{color:var(--ink)}
 </style>
 </head>
 <body>
@@ -121,10 +129,9 @@ header small{color:var(--ink2);opacity:1}
     <button class="tab" data-tab="more" id="moreTab" role="tab" aria-selected="false" type="button" hidden>More</button>
   </nav>
   <main id="viewOrders">
-    <div class="money" id="tiles" hidden></div>
+    <div class="needs" id="needs"></div>
+    <p class="muted today" id="todayLine" hidden></p>
     <p class="note" id="moneyNote" hidden></p>
-    <div class="unpaidbar" id="unpaidBar" hidden></div>
-    <div class="unpaidbar" id="lowBar" hidden></div>
     <div class="flow" id="flow"></div>
     <div class="hint" id="hint"></div>
     <div class="chips" id="chips"></div>
@@ -255,12 +262,7 @@ header small{color:var(--ink2);opacity:1}
       h('p', { class: 'muted' }, 'Stock tab: Receive when boxes arrive, Count when you check the shelf, Mark low when something runs short.')]);
   }
   function refreshLow() {
-    api('/admin/api/inventory').then(function (j) {
-      var b = $('lowBar'); if (!j || !j.ok || !j.low.length) { b.hidden = true; return; }
-      b.hidden = false; b.textContent = '';
-      b.appendChild(h('span', {}, '📦 Running low: ', h('b', {}, j.low.map(function (x) { return x.name + (x.status === 'out' ? ' (out)' : ''); }).join(', '))));
-      b.appendChild(h('button', { class: 'btn small', onclick: function () { openInventory(); } }, 'Open inventory'));
-    }).catch(function () {});
+    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; renderNeeds(); }).catch(function () {});
   }
   function load() {
     refreshLow();
@@ -268,12 +270,31 @@ header small{color:var(--ink2);opacity:1}
     api('/admin/api/orders').then(function (j) { if (!j.ok) return toast(j.error || 'Could not load orders'); state.orders = j.orders; if (j.moneyLive != null) state.moneyLive = j.moneyLive; state.truncated = !!j.truncated; render(); });
   }
   function tiles(s) {
-    var t = $('tiles'); t.textContent = '';
+    var t = $('todayLine');
     if (state.role !== 'owner') { t.hidden = true; return; }
-    t.hidden = false; state.moneyLive = s.moneyLive;
-    t.appendChild(h('span', {}, 'Today ', h('b', {}, inr(s.today.revenue)), ' · ' + s.today.orders + ' order' + (s.today.orders === 1 ? '' : 's') + ', ' + s.today.boxes + ' boxes'));
-    t.appendChild(h('span', {}, 'Received in total ', h('b', {}, inr(s.receivedTotal))));
+    state.moneyLive = s.moneyLive;
+    t.hidden = false; t.textContent = '';
+    t.appendChild(document.createTextNode('Today '));
+    t.appendChild(h('b', {}, inr(s.today.revenue)));
+    t.appendChild(document.createTextNode(' from ' + s.today.orders + ' order' + (s.today.orders === 1 ? '' : 's') + ' (' + s.today.boxes + ' boxes). Received in total '));
+    t.appendChild(h('b', {}, inr(s.receivedTotal)));
     var n = $('moneyNote'); n.textContent = (s.moneyLive ? '' : 'Razorpay could not be reached, so these figures come from the order records, not from Razorpay.') + (s.test ? (s.moneyLive ? '' : ' ') + s.test + ' test-phase order' + (s.test === 1 ? '' : 's') + ' left out (shown under Test).' : ''); n.hidden = !n.textContent;
+  }
+  // One strip of what needs doing now. A card appears only when its count is above zero.
+  function renderNeeds() {
+    var box = $('needs'); box.textContent = '';
+    var by = function (st) { return state.orders.filter(function (o) { return o.state === st; }); };
+    var go = function (st) { return function () { showTab('orders'); state.filter = st; saveView(); render(); window.scrollTo(0, 0); }; };
+    var add = function (n, one, many, fn, hot) { if (n > 0) box.appendChild(h('button', { class: 'need' + (hot ? ' hot' : ''), type: 'button', onclick: fn }, h('b', {}, String(n)), h('span', {}, n === 1 ? one : many))); };
+    var unp = by('unpaid'), old1h = unp.filter(function (o) { return Date.now() - new Date(o.created_at).getTime() > 3600000; }).length;
+    add(by('topack').length, 'order to pack', 'orders to pack', go('topack'));
+    add(by('packed').length, 'packed, ready to ship', 'packed, ready to ship', go('packed'));
+    add(state.orders.filter(labelable).length, 'shipped: tap for labels or delivery', 'shipped: tap for labels or delivery', go('shipped'));
+    add(unp.length, 'order waiting for payment' + (old1h ? ' (' + old1h + ' over an hour old)' : ''), 'orders waiting for payment' + (old1h ? ' (' + old1h + ' over an hour old)' : ''), go('unpaid'), old1h > 0);
+    var low = state.low || [];
+    add(low.length, 'running low: ' + low.map(function (x) { return x.name; }).join(', '), 'running low: ' + low.map(function (x) { return x.name; }).join(', '), function () { showTab('stock'); }, low.some(function (x) { return x.status === 'out'; }));
+    if (state.role === 'owner') { var att = state.orders.filter(function (o) { return o.needs_attention && o.state !== 'test'; }).length; add(att, 'order needs attention (invoice or accounting)', 'orders need attention (invoice or accounting)', go('attention'), true); }
+    if (!box.children.length) box.appendChild(h('div', { class: 'need calm' }, h('b', {}, '✓'), h('span', {}, 'Nothing needs you right now.')));
   }
   function inRange(o) {
     var d = istDay(o.paid_at || o.created_at), r = state.range;
@@ -308,14 +329,7 @@ header small{color:var(--ink2);opacity:1}
     var hint = STEPS.filter(function (f) { return f[0] === state.filter; })[0];
     var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
     $('hint').hidden = !hint; if (hint) $('hint').textContent = hint[3] + (pre && (state.filter === 'topack' || state.filter === 'packed') ? '  PRE-ORDER PERIOD: pack now if you like, but do NOT ship before ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '.' : '');
-    var ub = $('unpaidBar'), unp = state.orders.filter(function (o) { return o.state === 'unpaid'; });
-    ub.textContent = '';
-    if (unp.length && state.filter !== 'unpaid') {
-      var amt = unp.reduce(function (n, o) { return n + o.total; }, 0), old1h = unp.filter(function (o) { return Date.now() - new Date(o.created_at).getTime() > 3600000; }).length;
-      ub.hidden = false; ub.className = 'unpaidbar' + (old1h ? ' hot' : '');
-      ub.appendChild(h('span', {}, '⏳ ', h('b', {}, unp.length + ' order' + (unp.length === 1 ? '' : 's') + ' waiting for payment'), ' · ' + inr(amt) + (old1h ? ' · ' + old1h + ' over an hour old, worth a nudge' : '')));
-      ub.appendChild(h('button', { class: 'btn small', onclick: function () { state.filter = 'unpaid'; saveView(); render(); } }, 'See them'));
-    } else ub.hidden = true;
+    renderNeeds();
     var c = $('chips'); c.textContent = '';
     FILTERS.forEach(function (f) {
       if (f[0] === 'attention' && (state.role !== 'owner' || !state.orders.some(function (o) { return o.needs_attention && o.state !== 'test'; }))) return;

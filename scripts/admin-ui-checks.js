@@ -25,5 +25,29 @@ module.exports = function checks({ openAdmin, ok, sleep, until }) {
     s.close();
   });
 
+  // Task 2: the Needs-you-now strip replaces the stacked bars
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    ok(!o.doc.getElementById('unpaidBar') && !o.doc.getElementById('lowBar'), 'the old unpaid and low-stock bars are gone');
+    const cards = qa('#needs .need');
+    ok(cards.length >= 2, 'the strip shows cards for what needs doing (' + cards.map((c) => text(c)).join(' | ') + ')');
+    const step = (re) => o.byText('#flow .step', re);
+    const topackCount = Number(text(step(/To pack/).querySelector('b')));
+    const needPack = cards.find((c) => /to pack/.test(text(c)));
+    ok(topackCount === 0 ? !needPack : (needPack && Number(text(needPack.querySelector('b'))) === topackCount), 'the to-pack card carries the same count as the step button');
+    ok(cards.every((c) => Number(text(c.querySelector('b'))) > 0), 'a card appears only when its count is above zero');
+    click(o.byText('#flow .step', /Delivered/)); await sleep(100);
+    if (needPack) { click(qa('#needs .need').find((c) => /to pack/.test(text(c)))); await sleep(100); ok(/To pack/.test(text(q('#flow .step.on'))), 'tapping the card opens that step'); }
+    const low = qa('#needs .need').find((c) => /low/i.test(text(c)));
+    ok(!!low, 'a running-low card shows the flavours that are low');
+    if (low) { click(low); await sleep(300); ok(!q('#viewStock').hidden, 'the running-low card opens the Stock tab'); }
+    ok(/Today/.test(text(q('#todayLine'))) && !q('#todayLine').hidden, 'the owner sees one quiet line of today\'s money');
+    ok(o.errors.length === 0, 'no page errors with the strip (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+    const s = await openAdmin('staff');
+    ok(s.q('#todayLine').hidden, 'staff do not see the money line');
+    s.close();
+  });
+
   return list;
 };
