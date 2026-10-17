@@ -136,7 +136,7 @@ header small{color:var(--ink2);opacity:1}
     <div class="hint" id="hint"></div>
     <div class="chips" id="chips"></div>
     <div class="row"><input id="q" placeholder="Search name, phone, address, pincode, order or invoice no."><button class="btn ghost small" id="filterBtn" type="button">Filter</button><button class="btn ghost small" id="reload">Refresh</button></div>
-    <div class="bar"><span id="count"></span></div>
+    <div class="bar"><span id="count"></span><span class="sp"></span><button class="chip" id="sortFlip" type="button" aria-label="Reverse the order of the list"></button></div>
     <div class="bar" id="bulk" hidden style="flex-wrap:wrap"></div>
     <div id="list"></div>
   </main>
@@ -147,7 +147,7 @@ header small{color:var(--ink2);opacity:1}
       <select id="sort" aria-label="Sort by">
         <option value="new">Newest first</option><option value="old">Oldest first</option>
         <option value="valueDesc">Highest value</option><option value="valueAsc">Lowest value</option>
-        <option value="boxesDesc">Most boxes</option><option value="nameAZ">Name A to Z</option>
+        <option value="boxesDesc">Most boxes</option><option value="boxesAsc">Fewest boxes</option><option value="nameAZ">Name A to Z</option><option value="nameZA">Name Z to A</option>
       </select>
       <select id="range" aria-label="Date">
         <option value="all">Any date</option><option value="today">Today</option><option value="yesterday">Yesterday</option>
@@ -319,7 +319,7 @@ header small{color:var(--ink2);opacity:1}
     var key = function (o) { return o.paid_at || o.created_at; };
     var by = { new: function (a, b) { return key(b) < key(a) ? -1 : 1; }, old: function (a, b) { return key(a) < key(b) ? -1 : 1; },
       valueDesc: function (a, b) { return b.total - a.total; }, valueAsc: function (a, b) { return a.total - b.total; },
-      boxesDesc: function (a, b) { return b.boxes - a.boxes; }, nameAZ: function (a, b) { return a.name.localeCompare(b.name); } };
+      boxesDesc: function (a, b) { return b.boxes - a.boxes; }, boxesAsc: function (a, b) { return a.boxes - b.boxes; }, nameAZ: function (a, b) { return a.name.localeCompare(b.name); }, nameZA: function (a, b) { return b.name.localeCompare(a.name); } };
     return rows.sort(by[state.sort] || by.new);
   }
   function render() {
@@ -344,7 +344,7 @@ header small{color:var(--ink2);opacity:1}
     $('count').textContent = '';
     $('count').appendChild(h('b', {}, rows.length + ' order' + (rows.length === 1 ? '' : 's')));
     $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes' + (state.truncated ? ' · latest 600 orders only' : '') + (state.role === 'owner' ? ' · ' + inr(sum) + (state.moneyLive === false ? ' paid (order records)' : ' received') : '')));
-    $('sort').value = state.sort; $('range').value = state.range; $('dFrom').value = state.from; $('dTo').value = state.to; $('customDates').hidden = state.range !== 'custom';
+    $('sort').value = state.sort; var so = $('sort').options[$('sort').selectedIndex]; $('sortFlip').textContent = (so ? so.text : 'Newest first') + ' ⇅'; $('range').value = state.range; $('dFrom').value = state.from; $('dTo').value = state.to; $('customDates').hidden = state.range !== 'custom';
     [['fGift', 'gift'], ['fCoupon', 'coupon'], ['fSet', 'set']].forEach(function (x) { $(x[0]).classList.toggle('on', !!state[x[1]]); });
     var fb = $('filterBtn'), active = state.sort !== 'new' || state.range !== 'all' || state.gift || state.coupon || state.set; fb.textContent = active ? 'Filter •' : 'Filter'; fb.classList.toggle('on', !!active);
     var list = $('list'); list.textContent = '';
@@ -1081,6 +1081,8 @@ header small{color:var(--ink2);opacity:1}
   }
   [].forEach.call(document.querySelectorAll('#tabs .tab'), function (b) { b.onclick = function () { showTab(b.getAttribute('data-tab')); }; });
   $('helpBtn').onclick = openHelp; $('filterBtn').onclick = openFilter;
+  var FLIP = { 'new': 'old', old: 'new', valueDesc: 'valueAsc', valueAsc: 'valueDesc', boxesDesc: 'boxesAsc', boxesAsc: 'boxesDesc', nameAZ: 'nameZA', nameZA: 'nameAZ' };
+  $('sortFlip').onclick = function () { state.sort = FLIP[state.sort] || 'new'; saveView(); render(); };
 
   if (token) start(); else showLogin();
 })();
