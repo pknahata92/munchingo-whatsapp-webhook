@@ -60,7 +60,9 @@ async function fetchLabel(awbRaw) {
   const token = process.env.DELHIVERY_API_TOKEN;
   if (!token) throw new LabelError('DELHIVERY_API_TOKEN is not set on Render.', 503);
   let last = '';
-  for (const size of ['4R', null]) {
+  // DELHIVERY_LABEL_SIZE picks Delhivery's own template size ('4R' default; try 'A4' to see if their layout differs). 'default' skips the size.
+  const want = String(process.env.DELHIVERY_LABEL_SIZE || '4R').trim();
+  for (const size of (want.toLowerCase() === 'default' ? [null] : [want, null])) {
     try {
       const r = await attempt(awb, size, token);
       if (r.pdf) return r.pdf;
