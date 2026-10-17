@@ -74,6 +74,14 @@ function normaliseItems(cartItems) {
                 return { error: `Sorry, "${nameForSlug(c.slug)}" is currently sold out. Please remove it from your cart and try again.` };
           }
     }
+    // Quantity-aware: boxes of each flavour in the cart (gift sets opened up) against what the stock ledger says is still sellable.
+    // Flavours with no stock recorded are never limited.
+    const short = require('../utils/inventory').firstShortage(cartItems, require('../utils/stock').sellable);
+    if (short) {
+          return { error: short.have > 0
+                ? `Sorry, only ${short.have} box${short.have === 1 ? ' is' : 'es are'} of "${nameForSlug(short.slug)}" left right now. Please reduce the quantity in your cart and try again.`
+                : `Sorry, "${nameForSlug(short.slug)}" is currently sold out. Please remove it from your cart and try again.` };
+    }
     const items = cartItems.map((c) => ({
           productName: nameForSlug(c.slug),
           quantity: c.qty,

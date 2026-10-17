@@ -44,6 +44,23 @@ function boxesBySlug(items) {
   return out;
 }
 
+// What the website may still sell per flavour: boxes on the shelf minus boxes already paid for but not yet packed (stock is only
+// deducted at Packed). Only flavours that have stock recorded are included; an item nobody has counted yet is left alone.
+function computeSellable(items, byLotRows, committed) {
+  const out = {}; const has = new Set(); const sum = {};
+  for (const r of byLotRows) { has.add(r.item_slug); sum[r.item_slug] = (sum[r.item_slug] || 0) + r.qty; }
+  for (const i of items) { if (i.kind === 'product' && i.active && has.has(i.slug)) out[i.slug] = (sum[i.slug] || 0) - ((committed || {})[i.slug] || 0); }
+  return out;
+}
+
+// First flavour in a cart that asks for more boxes than can still be sold, or null. `sellable(slug)` returns a number, or null when
+// the flavour has no stock recorded (then it is never limited).
+function firstShortage(cartItems, sellable) {
+  const need = boxesBySlug(cartItems.map((c) => ({ slug: c.slug, quantity: c.qty })));
+  for (const [slug, boxes] of Object.entries(need)) { const have = sellable(slug); if (have != null && boxes > have) return { slug, have: Math.max(0, have), boxes }; }
+  return null;
+}
+
 function makeInventory(store) {
   async function onHandMap() {
     const rows = await store.byLot();   // [{item_slug, lot_code, best_before, qty}]
@@ -61,13 +78,13 @@ function makeInventory(store) {
   }
 
   async function overview() {
-    const [items, map, ev] = await Promise.all([store.items(), onHandMap(), store.events()]);
+    const [items, map, ev, committed, paused] = await Promise.all([store.items(), onHandMap(), store.events(), store.committed().catch(() => ({})), store.paused().catch(() => [])]);
     const outAt = {}; const events = {};
     for (const e of ev) { const out = e.taken - e.returned; if (out <= 0) continue; outAt[e.item_slug] = (outAt[e.item_slug] || 0) + out; (events[e.ref] = events[e.ref] || []).push({ slug: e.item_slug, taken: e.taken, returned: e.returned, out }); }
     const list = items.filter((i) => i.active).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((i) => {
       const m = map[i.slug];
       const lots = m ? m.lots.filter((l) => l.qty !== 0).sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9'))) : [];
-      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots };
+      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, committed: committed[i.slug] || 0, sellable: i.kind === 'product' && m && m.any ? m.total - (committed[i.slug] || 0) : null, paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots };
     });
     const nameOf = Object.fromEntries(items.map((i) => [i.slug, i.name]));
     const open = Object.keys(events).map((ref) => ({ ref, items: events[ref].map((x) => ({ ...x, name: nameOf[x.slug] || x.slug })) }));
@@ -228,7 +245,10 @@ function makeInventory(store) {
     return { rows: rows.length };
   }
 
-  return { overview, receive, take, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
+  // { slug: boxes still sellable } for the flavours that have stock recorded (used by utils/stock.js for the automatic sold-out).
+  async function sellable() { const [items, rows, committed] = await Promise.all([store.items(), store.byLot(), store.committed()]); return computeSellable(items, rows, committed); }
+
+  return { overview, sellable, receive, take, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────
@@ -250,6 +270,11 @@ function supabaseStore() {
     updateItem: async (slug, fields) => { ok(await c().from('stock_items').update(fields).eq('slug', slug)); },
     insertItem: async (row) => { ok(await c().from('stock_items').insert(row)); },
     setting: async (key) => { const r = ok(await c().from('stock_settings').select('value').eq('key', key).maybeSingle()); return r ? r.value : null; },
+    committed: async () => {
+      const rows = ok(await c().from('orders').select('items').eq('status', 'paid').is('packed_at', null)) || [];
+      const m = {}; for (const r of rows) { const b = boxesBySlug(r.items); for (const k of Object.keys(b)) m[k] = (m[k] || 0) + b[k]; } return m;
+    },
+    paused: async () => (ok(await c().from('product_stock').select('slug').eq('available', false)) || []).map((r) => r.slug),
     events: async () => ok(await c().from('stock_events').select('*')) || [],
     eventRows: async (ref, slug) => ok(await c().from('stock_movements').select('*').eq('ref', ref).eq('item_slug', slug).in('type', ['EXHIBITION', 'EXHIBITION_RETURN'])) || [],
     salesOf: async (orderId) => ok(await c().from('stock_movements').select('*').like('ref', `${orderId}@%`).in('type', ['SALE', 'SALE_UNDO'])) || [],
@@ -259,4 +284,4 @@ function supabaseStore() {
 let real = null;
 const instance = () => real || (real = makeInventory(supabaseStore()));
 
-module.exports = { makeInventory, supabaseStore, StockError, allocate, boxesBySlug, instance };
+module.exports = { makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, firstShortage, instance };

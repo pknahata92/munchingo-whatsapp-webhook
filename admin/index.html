@@ -91,7 +91,7 @@ a{color:var(--terra)}
 <div id="app" hidden>
   <header>
     <img src="/admin/logo.png" alt="Munchingo"><span class="sp"></span><small id="who"></small>
-    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="stockBtn" hidden>Stock</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="priceBtn" hidden>Prices</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="couponBtn" hidden>Coupons</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="invBtn">Inventory</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="labelBtn">Label sheet</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
+    <button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="priceBtn" hidden>Prices</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="couponBtn" hidden>Coupons</button><button class="btn ghost small owner hdrbtn" style="color:#fff;border-color:#ffffff88" id="teamBtn" hidden>Team</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="invBtn">Inventory</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="labelBtn">Label sheet</button><button class="btn ghost small hdrbtn" style="color:#fff;border-color:#ffffff88" id="out">Sign out</button>
   </header>
   <main>
     <div class="money" id="tiles" hidden></div>
@@ -192,7 +192,7 @@ a{color:var(--terra)}
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('stockBtn').hidden = $('priceBtn').hidden = $('teamBtn').hidden = $('couponBtn').hidden = j.role !== 'owner'; render(); } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('priceBtn').hidden = $('teamBtn').hidden = $('couponBtn').hidden = j.role !== 'owner'; render(); } });
     load();
   }
   function refreshLow() {
@@ -584,18 +584,20 @@ a{color:var(--terra)}
     api('/admin/api/inventory').then(function (j) {
       if (!j.ok) return toast(j.error || 'Could not load stock', 6000);
       var row = function (it) {
-        var st = STATUS[it.status] || STATUS['new'];
+        var st = (it.paused || (it.sellable != null && it.sellable <= 0 && it.kind === 'product')) ? ['SOLD OUT ONLINE', 'b-refunded'] : (STATUS[it.status] || STATUS['new']);
         var lots = it.lots.length ? it.lots.map(function (l) { return (l.lot_code || 'no lot') + ': ' + l.qty + (l.best_before ? ' (best before ' + new Date(l.best_before + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ')' : ''); }).join(' · ') : '';
         return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:8px' },
           h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap' }, h('b', { style: 'flex:1 1 140px' }, it.name),
             h('span', { style: 'font-size:22px;font-weight:700' }, String(it.on_hand), h('small', { style: 'font-size:12px;font-weight:500;margin-left:4px' }, it.unit)),
             h('span', { class: 'badge ' + st[1] }, st[0])),
           lots ? h('small', { class: 'muted' }, lots) : null,
+          it.kind === 'product' ? h('small', { class: 'muted', style: 'color:' + (it.paused || (it.sellable != null && it.sellable <= 0) ? 'var(--red)' : 'inherit') }, it.paused ? 'Paused: customers cannot order this on the website.' : (it.sellable == null ? 'Website: no stock recorded yet, so it is not limited.' : (it.sellable <= 0 ? 'Website: sold out automatically (everything left is already paid for).' : 'Website: ' + it.sellable + ' can still be ordered' + (it.committed ? ' (' + it.committed + ' more are paid for and waiting to be packed)' : '') + '.'))) : null,
           it.at_events ? h('small', { class: 'muted', style: 'color:var(--amber)' }, it.at_events + ' ' + it.unit + ' are out at events (not on the shelf)') : null,
           h('div', { class: 'acts' },
             h('button', { class: 'btn small', onclick: function () { invReceive(it); } }, 'Receive'),
             h('button', { class: 'btn ghost small', onclick: function () { invTake(it); } }, 'Take out'),
             h('button', { class: 'btn ghost small', onclick: function () { invCount(it); } }, 'Count'),
+            it.kind === 'product' ? h('button', { class: 'btn ghost small' + (it.paused ? '' : ' red'), onclick: function (e) { if (!it.paused && !confirm('Pause ' + it.name + ' on the website? Customers will not be able to order it (or any gift set that contains it) until you resume.')) return; e.target.disabled = true; api('/admin/api/inventory/pause', { method: 'POST', body: { slug: it.slug, paused: !it.paused } }).then(function (r) { toast(r.ok ? (it.paused ? it.name + ' is on sale again' : it.name + ' paused on the website') : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); }); } }, it.paused ? 'Resume selling' : 'Pause selling') : null,
             h('button', { class: 'btn ghost small' + (it.manual_low ? ' red' : ''), onclick: function (e) { e.target.disabled = true; api('/admin/api/inventory/low', { method: 'POST', body: { slug: it.slug, low: !it.manual_low } }).then(function (r) { toast(r.ok ? (it.manual_low ? 'Low flag cleared' : 'Marked as running low') : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, it.manual_low ? 'Clear low flag' : 'Mark low'),
             state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Show LOW when ' + it.name + ' is at or below how many ' + it.unit + '? (0 = only the manual Low flag)', it.low_level); if (v === null) return; api('/admin/api/inventory/level', { method: 'POST', body: { slug: it.slug, lowLevel: v } }).then(function (r) { toast(r.ok ? 'Saved' : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, 'Low level: ' + it.low_level) : null));
       };
@@ -728,19 +730,6 @@ a{color:var(--terra)}
       h('p', { class: 'muted' }, 'In Delhivery One, select your orders and choose Print label with the 4 × 6 in size. Save the PDF and add it here (you can add several). You get a 13 × 19 in sheet with 3 across and 3 down, each label repeated (a label\'s copies never split across two sheets, so with 2 copies a sheet holds 4 labels and one cell stays blank), with cut marks in the margin. The file is not uploaded anywhere.'),
       section('Labels', h('label', {}, 'Labels PDF'), file, h('label', {}, 'Copies'), copies,
         h('label', { style: 'display:flex;align-items:center;margin-top:12px;font-weight:500;text-transform:none;letter-spacing:0' }, marks, 'Cut marks in the margin'), info, h('div', { class: 'acts' }, go))]);
-  }
-  function openStock() {
-    api('/admin/api/stock').then(function (j) {
-      if (!j.ok) return toast(j.error);
-      ownerPanel('Stock', [h('p', { class: 'muted' }, 'Switch a flavour off and it cannot be bought on the website (single boxes and any gift set that contains it). Takes effect within 30 seconds.'),
-        section('Flavours', j.stock.map(function (x) {
-          return h('div', { class: 'sw' }, h('div', {}, h('b', {}, x.name), h('div', { class: 'muted' }, x.available ? 'On sale' : 'SOLD OUT')),
-            h('button', { class: 'btn small' + (x.available ? ' red' : ''), onclick: function (e) {
-              if (x.available && !confirm('Mark ' + x.name + ' SOLD OUT? Customers will not be able to order it or any gift set that includes it.')) return;
-              e.target.disabled = true; api('/admin/api/stock', { method: 'POST', body: { slug: x.slug, available: !x.available } }).then(function (r) { toast(r.ok ? x.name + (x.available ? ' marked sold out' : ' back on sale') : (r.error || 'Failed'), 4500); openStock(); });
-            } }, x.available ? 'Mark sold out' : 'Back on sale'));
-        }))]);
-    });
   }
   function openPrices() {
     api('/admin/api/prices').then(function (j) {
@@ -952,7 +941,7 @@ a{color:var(--terra)}
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { save({ active: true }, { email: email.value, name: name.value, role: role.value, active: true }, e.target); } }, 'Add')))]);
     });
   }
-  $('invBtn').onclick = openInventory; $('labelBtn').onclick = openLabelSheet; $('couponBtn').onclick = openCoupons; $('priceBtn').onclick = openPrices; $('stockBtn').onclick = openStock; $('teamBtn').onclick = openTeam;
+  $('invBtn').onclick = openInventory; $('labelBtn').onclick = openLabelSheet; $('couponBtn').onclick = openCoupons; $('priceBtn').onclick = openPrices; $('teamBtn').onclick = openTeam;
 
   if (token) start(); else showLogin();
 })();
