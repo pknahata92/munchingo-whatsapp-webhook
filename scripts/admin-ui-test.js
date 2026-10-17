@@ -29,7 +29,7 @@ async function tokenFor(email) {
 }
 
 // Opens the admin page as `role`, already signed in. `size` is the window width in px (default phone).
-async function openAdmin(role, { width = 390 } = {}) {
+async function openAdmin(role, { width = 390, guide = false } = {}) {
   const token = await tokenFor(role === 'owner' ? 'owner@example.com' : 'staff@example.com');
   const errors = []; const vc = new VirtualConsole(); vc.on('jsdomError', (e) => errors.push(String(e.message || e))); vc.on('error', (e) => errors.push(String(e)));
   const dom = await JSDOM.fromURL(BASE + '/admin', {
@@ -39,6 +39,7 @@ async function openAdmin(role, { width = 390 } = {}) {
       win.confirm = () => true; win.prompt = (m, d) => (d == null ? '' : String(d)); win.alert = () => {};
       win.innerWidth = width; win.URL.createObjectURL = () => 'blob:test'; win.URL.revokeObjectURL = () => {};
       win.localStorage.setItem('mngAdminToken', token);
+      if (!guide) win.localStorage.setItem('mngGuideSeen', '1');   // the first-time card is only shown to the tests that ask for it
       win.HTMLElement.prototype.scrollIntoView = () => {}; win.scrollTo = () => {};
     },
   });

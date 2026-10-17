@@ -1,6 +1,6 @@
 'use strict';
 // Checks for the redesigned admin, one block per plan task. Each is an async function run by admin-ui-test.js.
-module.exports = function checks({ openAdmin, ok, sleep, until }) {
+module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
   const list = [];
   const vis = (el) => !!el && !el.hidden && !el.closest('[hidden]');
 
@@ -150,6 +150,38 @@ module.exports = function checks({ openAdmin, ok, sleep, until }) {
     set(q('#sort'), 'new'); await sleep(100); const newest = ids(); click(q('#sortFlip')); await sleep(100); ok(q('#sort').value === 'old' && JSON.stringify(ids()) === JSON.stringify(newest.slice().reverse()), 'newest and oldest are exact reverses');
     ok(o.errors.length === 0, 'no page errors while sorting (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
+  });
+
+  // Task 7: first-time guide, Help, accessibility
+  list.push(async () => {
+    const o = await openAdmin('owner', { guide: true }); const { q, qa, text, click } = o;
+    const g = q('#guide'); ok(!!g && !g.hidden, 'a first-time visitor sees the guide');
+    ok(qa('#guide li').length === 4 && /Pack/.test(text(g)) && /shipment/i.test(text(g)) && /label/i.test(text(g)) && /delivered/i.test(text(g)), 'the guide has the four steps in plain words');
+    click(o.byText('#guide button', /Got it/)); await sleep(100);
+    ok(q('#guide').hidden && o.win.localStorage.getItem('mngGuideSeen') === '1', 'Got it hides it and remembers that on this device');
+    click(q('#helpBtn')); await sleep(150);
+    ok(!!q('#sheet.on') && /How this works/.test(text(q('#panel'))) && qa('#panel li').length === 4, 'the ? button reopens the four steps as Help');
+    click(o.byText('#panel button', /^Close$/)); await sleep(60);
+    // accessibility
+    const unnamed = qa('button').filter((b) => !text(b) && !b.getAttribute('aria-label') && !b.getAttribute('title'));
+    ok(unnamed.length === 0, 'every button has a name (' + unnamed.map((b) => b.id || b.className).join(',') + ')');
+    ok(q('#tabs').getAttribute('role') === 'tablist' && qa('#tabs .tab').every((t) => t.getAttribute('role') === 'tab' && /true|false/.test(t.getAttribute('aria-selected'))), 'tabs are announced as tabs with a selected state');
+    click(o.byText('#tabs .tab', /^Stock$/)); await sleep(300); ok(o.byText('#tabs .tab', /^Stock$/).getAttribute('aria-selected') === 'true', 'the selected tab is marked');
+    ok(!!q('#q').getAttribute('aria-label'), 'the search box has an accessible name');
+    ok(o.errors.length === 0, 'no page errors with the guide and help (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+    const seen = await openAdmin('owner'); ok(seen.q('#guide').hidden, 'someone who has seen it does not get it again'); seen.close();
+  });
+
+  // Contrast: text and button colours meet WCAG AA (4.5:1) in the light and dark palettes
+  list.push(async () => {
+    const html = await (await fetch(BASE + '/admin')).text();
+    const root = (re) => Object.fromEntries([...(html.match(re) || [''])[0].matchAll(/--([a-z0-9-]+):(#[0-9A-Fa-f]{3,6})/g)].map((m) => [m[1], m[2]]));
+    const light = root(/:root\{[^}]*\}/); const darkOver = root(/prefers-color-scheme:dark\)\{:root\{[^}]*\}/); const dark = { ...light, ...darkOver };
+    const lum = (hex) => { let h = hex.slice(1); if (h.length === 3) h = h.replace(/./g, '$&$&'); const c = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4))); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+    const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    const pairs = (t) => [['ink on paper', t.ink, t.paper], ['ink2 on paper', t.ink2, t.paper], ['ink on cream', t.ink, t.cream], ['ink2 on cream', t.ink2, t.cream], ['white on terracotta button', '#FFFFFF', t['terra']], ['white on green button', '#FFFFFF', t.green], ['white on red button', '#FFFFFF', t.red], ['terracotta text on paper', t['tx-terra'], t.paper], ['amber note on cream', t['tx-amber'], t.cream], ['red text on paper', t['tx-red'], t.paper], ['green text on paper', t['tx-green'], t.paper], ['terracotta text on cream', t['tx-terra'], t.cream], ['badge: amber on pale amber', t.amber, '#FDF0D5'], ['badge: green on pale green', t.green, '#DDEFE3'], ['badge: red on pale red', t.red, '#F6DAD8'], ['badge: navy on pale blue', t.navy, '#E3ECF6'], ['badge: purple on pale purple', '#5A3E99', '#E8E1F4'], ['white on navy', '#FFFFFF', t.navy], ['white on delivered green', '#FFFFFF', t.green]];
+    for (const [name, theme] of [['light', light], ['dark', dark]]) for (const [label, fg, bg] of pairs(theme)) { if (!fg || !bg) continue; const r = ratio(fg, bg); ok(r >= 4.5, name + ': ' + label + ' is ' + r.toFixed(2) + ':1 (needs 4.5)'); }
   });
 
   return list;
