@@ -156,27 +156,28 @@ function makeInventory(store) {
     return { onHand: await onHand(slug) };
   }
 
-  // A hamper sold offline: the boxes opened for it (whole boxes, per flavour) plus the supplies in each hamper, all in ONE entry so it
-  // either all happens or none of it does. `boxes` = { 'atta-original': 2, ... }; `perHamper` = { 'goodie-bag': 1, 'candle': 1, 'shredded-paper': 0 }.
-  async function offlineHamper({ hampers, boxes = {}, perHamper = {}, buyer, invoice, note, allowNegative = false, actor }) {
+  // A hamper sold offline. Only the biscuit boxes come off stock (whole boxes opened, per flavour); bag, candle and paper are not tracked.
+  // The hamper's name and count go in the note so the history shows how many hampers went. One entry: all of it happens or none of it.
+  async function offlineHamper({ hamper, hampers, boxes = {}, buyer, invoice, note, allowNegative = false, actor }) {
     const n = int(hampers);
     if (!Number.isInteger(n) || n < 1 || n > MAX_QTY) throw new StockError('Enter how many hampers were sold (a whole number, 1 or more).');
+    const name = cleanText(hamper, 60); if (!name) throw new StockError('Enter which hamper it was.');
     const who1 = cleanText(buyer, 80); if (!who1) throw new StockError('Enter who bought them.');
     const inv = cleanText(invoice, 40); if (!inv) throw new StockError('Enter the invoice number (write PENDING if it is not made yet and fix it later).');
     const plan = [];   // { item, qty }
-    for (const [slug, b] of Object.entries(boxes)) { const q = int(b || 0); if (!q) continue; if (!Number.isInteger(q) || q < 0 || q > MAX_QTY) throw new StockError('Boxes opened must be whole numbers.'); plan.push({ item: await need(slug), qty: q }); }
-    for (const [slug, per] of Object.entries(perHamper)) { const p = int(per || 0); if (!p) continue; if (!Number.isInteger(p) || p < 0 || p > 1000) throw new StockError('Supplies per hamper must be whole numbers.'); plan.push({ item: await need(slug), qty: p * n }); }
-    if (!plan.some((x) => x.item.kind === 'product')) throw new StockError('Enter how many boxes you opened for these hampers, so the biscuits are taken off stock.');
+    for (const [slug, b] of Object.entries(boxes)) { const q = int(b || 0); if (!q) continue; if (!Number.isInteger(q) || q < 0 || q > MAX_QTY) throw new StockError('Boxes opened must be whole numbers.'); const item = await need(slug); if (item.kind !== 'product') throw new StockError('Only biscuit boxes are counted for hampers.'); plan.push({ item, qty: q }); }
+    if (!plan.length) throw new StockError('Enter how many boxes you opened for these hampers, so the biscuits are taken off stock.');
     if (!allowNegative) {
       const short = [];
       for (const x of plan) { const have = await onHand(x.item.slug); if (x.qty > have) short.push(`${x.item.name}: need ${x.qty}, have ${have}`); }
       if (short.length) throw new StockError('Not enough on hand: ' + short.join('; ') + '. Count first, or confirm to go below zero.', 409, { needsConfirm: 'negative' });
     }
-    const base = { type: 'OFFLINE_SALE', ref: inv, party: who1, note: cleanText(note, 300) || `${n} hamper${n === 1 ? '' : 's'}`, ...who(actor) };
+    const tag = `Hamper: ${name} x ${n}`, extra = cleanText(note, 200);
+    const base = { type: 'OFFLINE_SALE', ref: inv, party: who1, note: extra ? `${tag}. ${extra}` : tag, ...who(actor) };
     const rows = [];
     for (const x of plan) rows.push(...await outRows(x.item, x.qty, base));
     await store.insert(rows);
-    return { hampers: n, lines: plan.map((x) => ({ slug: x.item.slug, name: x.item.name, qty: x.qty })) };
+    return { hamper: name, hampers: n, lines: plan.map((x) => ({ slug: x.item.slug, name: x.item.name, qty: x.qty })) };
   }
 
   // Where did the stock go? Per flavour: what came in, and where each box went. Reversals are netted into the line they cancel.

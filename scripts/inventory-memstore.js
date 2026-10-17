@@ -8,9 +8,6 @@ function memStore(trackingFrom) {
     { slug: 'atta-ajwain', name: 'Atta Ajwain', kind: 'product', unit: 'boxes', low_level: 30, manual_low: false, active: true, sort: 12 },
     { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', kind: 'product', unit: 'boxes', low_level: 30, manual_low: false, active: true, sort: 13 },
     { slug: 'packing-tape', name: 'Packing tape', kind: 'packaging', unit: 'rolls', low_level: 0, manual_low: false, active: true, sort: 33 },
-    { slug: 'goodie-bag', name: 'Transparent goodie bags', kind: 'packaging', unit: 'bags', low_level: 0, manual_low: false, active: true, sort: 50 },
-    { slug: 'candle', name: 'Candles (for hampers)', kind: 'packaging', unit: 'candles', low_level: 0, manual_low: false, active: true, sort: 51 },
-    { slug: 'shredded-paper', name: 'Coloured shredded paper', kind: 'packaging', unit: 'packs', low_level: 0, manual_low: false, active: true, sort: 52 },
   ];
   const settings = { tracking_from: trackingFrom };
   const uniq = (r) => `${r.ref}|${r.item_slug}|${r.lot_code || ''}|${r.type}`;

@@ -100,7 +100,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const o = await openAdmin('owner'); const { q, qa, text, click } = o;
     click(o.byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock page');
     click(o.byText('#viewStock button', /Sold offline: hamper/)); await sleep(200);
-    ok(/Hamper sold offline/.test(text(q('#viewStock'))) && /goodie bag/i.test(text(q('#viewStock'))) && /candle/i.test(text(q('#viewStock'))), 'the hamper form asks for boxes opened and supplies per hamper');
+    ok(/Hamper sold offline/.test(text(q('#viewStock'))) && /Which hamper/.test(text(q('#viewStock'))) && !/candle/i.test(text(q('#viewStock')).replace(/Bags, candles and paper are not counted here\./,'')), 'the hamper form asks which hamper, how many and the boxes opened (no supplies)');
     click(o.byText('#viewStock button', /Save hamper sale/)); await sleep(400);
     ok(!/Recorded/.test(text(q('#viewStock'))), 'an empty hamper sale is refused');
     click(o.byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back to stock');

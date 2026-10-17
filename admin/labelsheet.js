@@ -38,7 +38,7 @@
     var perOrder = SHEET.roll ? 1 : Math.max(1, Math.floor(perSheet / copies));
     var pagesPer = SHEET.roll ? copies : 1;
     var sheets = Math.ceil(labels.length / perOrder) * pagesPer;
-    var gray = PDFLib.rgb(0.35, 0.35, 0.35);
+    var minScale = 1, gray = PDFLib.rgb(0.35, 0.35, 0.35);
     for (var s = 0; s < sheets; s++) {
       var sheet = out.addPage([SHEET.w, SHEET.h]);
       if (opts.cutMarks !== false && !SHEET.roll) drawMarks(sheet, PDFLib, gray);
@@ -50,7 +50,7 @@
           var x0 = MARGIN_X + col * SHEET.cellW, yTop = SHEET.h - MARGIN_Y - row * SHEET.cellH;
           // A landscape source label is turned a quarter turn so it fills the portrait cell.
           var turn = lab.w > lab.h, sw = turn ? lab.h : lab.w, sh = turn ? lab.w : lab.h;
-          var f = Math.min(SHEET.cellW / sw, SHEET.cellH / sh), dw = sw * f, dh = sh * f;
+          var f = Math.min(SHEET.cellW / sw, SHEET.cellH / sh); if (f < minScale) minScale = f; var dw = sw * f, dh = sh * f;
           var cx = x0 + (SHEET.cellW - dw) / 2, cy = yTop - SHEET.cellH + (SHEET.cellH - dh) / 2;
           if (turn) sheet.drawPage(lab.page, { x: cx + dw, y: cy, xScale: f, yScale: f, rotate: PDFLib.degrees(90) });
           else sheet.drawPage(lab.page, { x: cx, y: cy, xScale: f, yScale: f });
@@ -58,7 +58,7 @@
       }
     }
     out.setTitle('Munchingo labels ' + SHEET.key);
-    return { bytes: await out.save(), labels: labels.length, stickers: labels.length * copies, sheets: sheets, copies: copies, perSheet: SHEET.roll ? 1 : perOrder * copies, layout: SHEET.key, paper: SHEET.name };
+    return { bytes: await out.save(), labels: labels.length, stickers: labels.length * copies, sheets: sheets, copies: copies, perSheet: SHEET.roll ? 1 : perOrder * copies, minScale: minScale, layout: SHEET.key, paper: SHEET.name };
   }
 
   // Short ticks in the margin at every cut line (vertical cuts at the top and bottom, horizontal cuts at the sides).

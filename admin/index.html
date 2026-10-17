@@ -827,21 +827,18 @@ header small{color:var(--ink2);opacity:1}
       postInv('count', { slug: it.slug, counted: c.value, note: note.value }, done, function (x) { return x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'; });
     }, 'Save count');
   }
-  // A hamper sold offline: boxes opened (whole boxes per flavour) + supplies per hamper, one entry.
+  // A hamper sold offline: which hamper, how many, and the biscuit boxes opened for them. Bag, candle and paper are not counted.
   function invHamper() {
     var prods = ((state.inv && state.inv.items) || []).filter(function (i) { return i.kind === 'product'; });
-    var supply = function (slug) { var x = ((state.inv && state.inv.items) || []).filter(function (i) { return i.slug === slug; })[0]; return x ? x.name : slug; };
-    var hampers = numIn('how many hampers'), buyer = h('input', { placeholder: 'e.g. Mehta Family Office' }), inv = h('input', { placeholder: 'e.g. MUN/OFF/26-27/0002 (or PENDING)' }), note = h('input', { placeholder: 'Note (optional)' });
+    var name = h('input', { placeholder: 'e.g. Diwali Classic' }), hampers = numIn('how many hampers'), buyer = h('input', { placeholder: 'e.g. Mehta Family Office' }), inv = h('input', { placeholder: 'e.g. MUN/OFF/26-27/0002 (or PENDING)' }), note = h('input', { placeholder: 'Note (optional)' });
     var boxIn = {}; prods.forEach(function (p) { boxIn[p.slug] = numIn('0'); });
-    var per = { 'goodie-bag': numIn('1'), candle: numIn('1'), 'shredded-paper': numIn('0') }; per['goodie-bag'].value = '1'; per.candle.value = '1'; per['shredded-paper'].value = '0';
-    var fields = [h('p', { class: 'muted' }, 'A hamper = a transparent goodie bag, 3 to 4 biscuits, a candle and shredded paper. Stock counts whole boxes, so enter the boxes you OPENED for these hampers. Counting corrects any rounding.'),
-      h('label', {}, 'How many hampers were sold'), hampers, h('label', {}, 'Who bought them'), buyer, h('label', {}, 'Invoice number'), inv,
-      h('label', {}, 'Boxes opened for these hampers')].concat(prods.map(function (p) { return h('div', { class: 'line', style: 'align-items:center' }, h('span', {}, p.name + ' (on hand ' + p.on_hand + ')'), h('span', { style: 'width:90px' }, boxIn[p.slug])); }))
-      .concat([h('label', {}, 'Supplies in each hamper')]).concat(Object.keys(per).map(function (k) { return h('div', { class: 'line', style: 'align-items:center' }, h('span', {}, supply(k)), h('span', { style: 'width:90px' }, per[k])); })).concat([h('label', {}, 'Note'), note]);
+    var fields = [h('p', { class: 'muted' }, 'Record which hamper and how many. Stock counts whole boxes, so enter the biscuit boxes you opened for these hampers. Bags, candles and paper are not counted here.'),
+      h('label', {}, 'Which hamper'), name, h('label', {}, 'How many hampers were sold'), hampers, h('label', {}, 'Who bought them'), buyer, h('label', {}, 'Invoice number'), inv,
+      h('label', {}, 'Biscuit boxes opened for these hampers')].concat(prods.map(function (p) { return h('div', { class: 'line', style: 'align-items:center' }, h('span', {}, p.name + ' (on hand ' + p.on_hand + ')'), h('span', { style: 'width:90px' }, boxIn[p.slug])); }))
+      .concat([h('label', {}, 'Note'), note]);
     invForm('Hamper sold offline', { name: 'hamper', on_hand: '', unit: '' }, fields, function (done) {
       var boxes = {}; prods.forEach(function (p) { if (boxIn[p.slug].value) boxes[p.slug] = boxIn[p.slug].value; });
-      var perH = {}; Object.keys(per).forEach(function (k) { perH[k] = per[k].value; });
-      postInv('hamper', { hampers: hampers.value, boxes: boxes, perHamper: perH, buyer: buyer.value, invoice: inv.value, note: note.value }, done, function (x) { return 'Recorded ' + x.hampers + ' hamper' + (x.hampers === 1 ? '' : 's') + ': ' + x.lines.map(function (l) { return l.qty + ' ' + l.name; }).join(', '); });
+      postInv('hamper', { hamper: name.value, hampers: hampers.value, boxes: boxes, buyer: buyer.value, invoice: inv.value, note: note.value }, done, function (x) { return 'Recorded ' + x.hampers + ' × ' + x.hamper + ': ' + x.lines.map(function (l) { return l.qty + ' ' + l.name; }).join(', '); });
     }, 'Save hamper sale');
   }
   function invFlow() {
@@ -895,7 +892,7 @@ header small{color:var(--ink2);opacity:1}
           var url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
           var a = h('a', { href: url, download: 'Munchingo-shipping-labels-' + paper.value + '-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
           setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-          info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + paperName(r) + '). Downloaded: check the PDF (barcode sharp, address complete) before you send it to print.';
+          info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + paperName(r) + '). Downloaded: check the PDF (barcode sharp, address complete) before you send it to print.' + (r.minScale < 0.95 ? ' WARNING: the labels were shrunk to ' + Math.round(r.minScale * 100) + '%. Delhivery needs barcodes at least 8 mm high and address text at least 8 pt, so use the 4 × 6 in label PDF, not a bigger page.' : '');
         });
       }).catch(function (err) { info.textContent = 'Could not make the sheet: ' + (err && err.message || err); })
         .then(function () { e.target.disabled = false; });
@@ -920,7 +917,7 @@ header small{color:var(--ink2);opacity:1}
         var url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
         var a = h('a', { href: url, download: 'Munchingo-labels-' + paper.value + '-' + new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) + '.pdf' }); document.body.appendChild(a); a.click(); a.remove();
         setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-        info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + paperName(r) + '). Downloaded: check the PDF before you send it to print.';
+        info.textContent = r.labels + ' label' + (r.labels === 1 ? '' : 's') + ' × ' + r.copies + ' = ' + r.stickers + ' stickers on ' + r.sheets + ' page' + (r.sheets === 1 ? '' : 's') + ' (' + paperName(r) + '). Downloaded: check the PDF before you send it to print.' + (r.minScale < 0.95 ? ' WARNING: the labels were shrunk to ' + Math.round(r.minScale * 100) + '%. Delhivery needs barcodes at least 8 mm high and address text at least 8 pt, so use the 4 × 6 in label PDF, not a bigger page.' : '');
       }).catch(function (err) { info.textContent = 'Could not make the sheet: ' + (err && err.message || err) + '. Use the 4 x 6 in labels PDF from Delhivery One.'; })
         .then(function () { e.target.disabled = false; });
     } }, 'Make the PDF');

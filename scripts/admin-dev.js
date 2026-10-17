@@ -138,8 +138,6 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
   const real = inv.makeInventory(store);
   real.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', bestBefore: '2027-01-13', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
   real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: '2027-01-13', note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
-  real.receive({ slug: 'goodie-bag', received: 100, actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
-  real.receive({ slug: 'candle', received: 100, actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
   inv.instance = () => real;
 }
 app.listen(8430, () => console.log('Admin practice copy: http://localhost:8430/admin'));

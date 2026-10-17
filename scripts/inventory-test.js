@@ -89,17 +89,16 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
   await inv.take({ slug: 'atta-original', qty: 5, type: 'OFFLINE_SALE', who: 'Acme Corp', invoice: 'MUN/OFF/26-27/0001', actor: A });
   const sale = st.mv.slice(-1)[0];
   ok(await onHand(inv, 'atta-original') === o0 - 5 && sale.type === 'OFFLINE_SALE' && sale.ref === 'MUN/OFF/26-27/0001' && sale.party === 'Acme Corp', 'a bulk sale lowers stock and records the buyer and the invoice number');
-  await inv.receive({ slug: 'goodie-bag', received: 100, actor: A }); await inv.receive({ slug: 'candle', received: 100, actor: A });
-  await inv.receive({ slug: 'shredded-paper', received: 3, actor: A });
   const k0 = await onHand(inv, 'atta-kesari');
-  r = await inv.offlineHamper({ hampers: 40, boxes: { 'atta-kesari': 3, 'atta-original': 2 }, perHamper: { 'goodie-bag': 1, candle: 1, 'shredded-paper': 0 }, buyer: 'Mehta Family Office', invoice: 'MUN/OFF/26-27/0002', actor: A });
-  ok(await onHand(inv, 'atta-kesari') === k0 - 3 && await onHand(inv, 'goodie-bag') === 60 && await onHand(inv, 'candle') === 60 && await onHand(inv, 'shredded-paper') === 3, 'a hamper entry takes off the boxes opened and a bag and a candle per hamper');
-  ok(st.mv.filter((m) => m.ref === 'MUN/OFF/26-27/0002').every((m) => m.type === 'OFFLINE_SALE' && m.party === 'Mehta Family Office'), 'every line of the hamper entry is an offline sale with the buyer and invoice');
+  r = await inv.offlineHamper({ hamper: 'Diwali Classic', hampers: 40, boxes: { 'atta-kesari': 3, 'atta-original': 2 }, buyer: 'Mehta Family Office', invoice: 'MUN/OFF/26-27/0002', actor: A });
+  ok(await onHand(inv, 'atta-kesari') === k0 - 3 && r.hampers === 40, 'a hamper entry takes off only the boxes opened');
+  ok(st.mv.filter((m) => m.ref === 'MUN/OFF/26-27/0002').every((m) => m.type === 'OFFLINE_SALE' && m.party === 'Mehta Family Office' && /Hamper: Diwali Classic x 40/.test(m.note)), 'every line is an offline sale with buyer, invoice and the hamper name and count');
   const rowsBefore = st.mv.length;
-  await rejects(inv.offlineHamper({ hampers: 500, boxes: { 'atta-kesari': 1 }, perHamper: { candle: 1 }, buyer: 'X', invoice: 'I1', actor: A }), /Not enough on hand: Candles/, 'not enough candles stops the whole entry');
+  await rejects(inv.offlineHamper({ hamper: 'X', hampers: 5, boxes: { 'atta-kesari': 9999 }, buyer: 'X', invoice: 'I1', actor: A }), /Not enough on hand/, 'not enough boxes stops the entry');
   ok(st.mv.length === rowsBefore, 'a refused hamper entry changes nothing (all or nothing)');
-  await rejects(inv.offlineHamper({ hampers: 2, boxes: {}, perHamper: { candle: 1 }, buyer: 'X', invoice: 'I1', actor: A }), /boxes you opened/, 'a hamper entry must say which boxes were opened');
-  await rejects(inv.offlineHamper({ hampers: 2, boxes: { 'atta-kesari': 1 }, buyer: '', invoice: 'I1', actor: A }), /who bought/, 'a hamper entry needs a buyer');
+  await rejects(inv.offlineHamper({ hamper: 'X', hampers: 2, boxes: {}, buyer: 'X', invoice: 'I1', actor: A }), /boxes you opened/, 'a hamper entry must say which boxes were opened');
+  await rejects(inv.offlineHamper({ hamper: '', hampers: 2, boxes: { 'atta-kesari': 1 }, buyer: 'X', invoice: 'I1', actor: A }), /which hamper/, 'a hamper entry needs the hamper name');
+  await rejects(inv.offlineHamper({ hamper: 'X', hampers: 2, boxes: { 'atta-kesari': 1 }, buyer: '', invoice: 'I1', actor: A }), /who bought/, 'a hamper entry needs a buyer');
   // where did the stock go
   const fl = (await inv.flow()).items.find((i) => i.slug === 'atta-original');
   ok(fl.offline === 7 && fl.on_hand === await onHand(inv, 'atta-original'), 'the flow summary counts offline sales (5 + 2 boxes) and agrees with the shelf');
