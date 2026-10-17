@@ -53,6 +53,18 @@ function computeSellable(items, byLotRows, committed) {
   return out;
 }
 
+// Boxes already paid for but not yet packed, per flavour. Only orders created on or after `from` count: earlier ones are pre-launch
+// test orders (paid in the database, unknown to the live Razorpay account) and must not hold back real stock.
+const ORDERS_FROM_DEFAULT = '2026-10-10T00:00:00+05:30';
+function committedBoxes(rows, from) {
+  const t0 = Date.parse(from || ORDERS_FROM_DEFAULT); const m = {};
+  for (const r of rows || []) {
+    if (!(Date.parse(r.created_at) >= t0)) continue;
+    const b = boxesBySlug(r.items); for (const k of Object.keys(b)) m[k] = (m[k] || 0) + b[k];
+  }
+  return m;
+}
+
 // First flavour in a cart that asks for more boxes than can still be sold, or null. `sellable(slug)` returns a number, or null when
 // the flavour has no stock recorded (then it is never limited).
 function firstShortage(cartItems, sellable) {
@@ -271,8 +283,9 @@ function supabaseStore() {
     insertItem: async (row) => { ok(await c().from('stock_items').insert(row)); },
     setting: async (key) => { const r = ok(await c().from('stock_settings').select('value').eq('key', key).maybeSingle()); return r ? r.value : null; },
     committed: async () => {
-      const rows = ok(await c().from('orders').select('items').eq('status', 'paid').is('packed_at', null)) || [];
-      const m = {}; for (const r of rows) { const b = boxesBySlug(r.items); for (const k of Object.keys(b)) m[k] = (m[k] || 0) + b[k]; } return m;
+      const rows = ok(await c().from('orders').select('items, created_at').eq('status', 'paid').is('packed_at', null)) || [];
+      const from = ok(await c().from('stock_settings').select('value').eq('key', 'orders_from').maybeSingle());
+      return committedBoxes(rows, from && from.value);
     },
     paused: async () => (ok(await c().from('product_stock').select('slug').eq('available', false)) || []).map((r) => r.slug),
     events: async () => ok(await c().from('stock_events').select('*')) || [],
@@ -284,4 +297,4 @@ function supabaseStore() {
 let real = null;
 const instance = () => real || (real = makeInventory(supabaseStore()));
 
-module.exports = { makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, firstShortage, instance };
+module.exports = { makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, committedBoxes, firstShortage, instance };

@@ -19,6 +19,15 @@ const A = { email: 'x@y.z', name: 'X' };
   ok(inv.firstShortage([{ slug: 'trio-gift-set-kesari-lite-sugar-original', qty: 1 }], sellOf({ 'atta-lite-sugar': 0 })).slug === 'atta-lite-sugar', 'a gift set is limited by its scarcest flavour');
   ok(inv.firstShortage([{ slug: 'full-range-set', qty: 2 }, { slug: 'atta-ajwain', qty: 1 }], sellOf({ 'atta-ajwain': 2 })).boxes === 3, 'a set and a single of the same flavour are added together');
   ok(inv.firstShortage([{ slug: 'atta-kesari', qty: 40 }], sellOf({})) === null, 'a flavour with no stock recorded is never limited');
+  // test orders from before launch must not hold back real stock
+  const rowsC = [
+    { created_at: '2026-09-23T10:00:00+05:30', items: [{ slug: 'atta-ajwain', quantity: 1 }] },                 // FX82-2309: a pre-launch test order, paid, not packed
+    { created_at: '2026-10-11T09:00:00+05:30', items: [{ slug: 'full-range-set', quantity: 1 }] },              // a real pre-order
+    { created_at: '2026-10-17T14:48:00+05:30', items: [{ slug: 'trio-gift-set-kesari-lite-sugar-original', quantity: 1 }] },
+  ];
+  const cm = inv.committedBoxes(rowsC);
+  ok(cm['atta-ajwain'] === 1 && cm['atta-lite-sugar'] === 2 && cm['atta-kesari'] === 2, 'the 23 Sep test order is not counted as committed; real orders from launch week are');
+  ok(inv.committedBoxes(rowsC, '2026-09-01T00:00:00+05:30')['atta-ajwain'] === 2, 'the cut-off can be moved (stock_settings.orders_from)');
   // overview carries the numbers the screen needs
   await real.receive({ slug: 'atta-kesari', received: 30, lot: 'L1', actor: A });
   st.committedMap = { 'atta-kesari': 28 }; st.pausedList = ['atta-ajwain'];
