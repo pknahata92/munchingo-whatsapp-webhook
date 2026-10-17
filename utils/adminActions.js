@@ -42,7 +42,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
   const items = (o.items || []).map((it) => ({ name: it.productName || it.product_retailer_id, qty: it.quantity, unit: it.unit || '', contents: contentsOf(it), price: it.item_price, boxes: boxesIn(it) * (it.quantity || 1) }));
   let state = 'topack';
   if (/^pending/.test(o.status)) state = 'unpaid';
-  else if (o.status === 'cancelled' && !o.payment_id) state = 'cancelled';
+  else if (o.status === 'cancelled' && !o.payment_id && !(refundedPaise > 0)) state = 'cancelled';
   else if (o.status === 'cancelled' || (refundedPaise > 0 && refundedPaise >= totalPaise)) state = 'refunded';
   else if (money && money.live && o.payment_id && o.status === 'paid' && money.refundedFull.has(o.payment_id)) state = 'refunded';   // fully refunded at Razorpay; the order is closed below
   else if (money && money.live && o.payment_id && o.status === 'paid' && !(o.payment_id in money.byId)) state = 'test';   // paid in the database, unknown to Razorpay: a test-phase order

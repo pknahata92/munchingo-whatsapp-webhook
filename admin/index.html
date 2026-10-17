@@ -231,8 +231,8 @@ header small{color:var(--ink2);opacity:1}
 
   // ── main list ──
   var STEPS = [['topack', '1', 'To pack', 'Tick the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Tap Create shipment on each order. You get a tracking number and the customer is emailed. For Porter or hand delivery, open the order.'], ['shipped', '3', 'Shipped', 'On the way. Tick orders and tap Shipping labels to print the courier labels together. When it reaches the customer, tap Mark delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
-  var FILTERS = [['attention', 'Needs attention'], ['refunded', 'Cancelled'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
-  var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'CANCELLED', cancelled: 'CANCELLED' };
+  var FILTERS = [['attention', 'Needs attention'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
+  var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'REFUNDED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
     api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('moreTab').hidden = j.role !== 'owner'; var t0 = ''; try { t0 = localStorage.getItem('mngAdminTab') || ''; } catch (e) {} render(); renderGuide(); showTab(t0); } });
@@ -324,10 +324,12 @@ header small{color:var(--ink2);opacity:1}
     if (r === 'custom') return (!state.from || d >= state.from) && (!state.to || d <= state.to);
     return true;
   }
+  // Cancelled = an unpaid order that was cancelled. Refunded = money went back to the customer (full or partial; a part-refunded order also stays in its step).
+  function inFilter(o, f) { return f === 'refunded' ? (o.state === 'refunded' || o.refunded > 0) : o.state === f; }
   function visible() {
     var q = $('q').value.trim().toLowerCase();
     var rows = state.orders.filter(function (o) {
-      var okState = state.filter === 'all' || (state.filter === 'attention' ? (o.needs_attention && o.state !== 'test') : o.state === state.filter) || (state.filter === 'refunded' && o.state === 'cancelled');
+      var okState = state.filter === 'all' || (state.filter === 'attention' ? (o.needs_attention && o.state !== 'test') : inFilter(o, state.filter));
       var hay = [o.id, o.name, o.phone, o.invoice_no, o.email, o.address].join(' ').toLowerCase();
       return okState && inRange(o) && (!q || hay.indexOf(q) >= 0)
         && (!state.gift || !!o.gift_note) && (!state.coupon || !!o.coupon)
@@ -340,7 +342,7 @@ header small{color:var(--ink2);opacity:1}
     return rows.sort(by[state.sort] || by.new);
   }
   function render() {
-    var cnt = function (st) { return state.orders.filter(function (o) { return o.state === st || (st === 'refunded' && o.state === 'cancelled'); }).length; };
+    var cnt = function (st) { return state.orders.filter(function (o) { return inFilter(o, st); }).length; };
     var fl = $('flow'); fl.textContent = '';
     STEPS.forEach(function (f) { fl.appendChild(h('div', { class: 'step' + (state.filter === f[0] ? ' on' : ''), role: 'button', tabindex: '0', onclick: function () { state.filter = f[0]; saveView(); render(); } }, h('small', {}, 'STEP ' + f[1]), h('b', {}, cnt(f[0])), h('span', {}, f[2]))); });
     var hint = STEPS.filter(function (f) { return f[0] === state.filter; })[0];
@@ -356,11 +358,11 @@ header small{color:var(--ink2);opacity:1}
       c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; saveView(); render(); } }, f[1] + ' ' + n));
     });
     var rows = visible();
-    var sum = rows.reduce(function (n, o) { return n + (o.state === 'unpaid' || o.state === 'cancelled' || o.state === 'test' ? 0 : o.received); }, 0);
+    var sum = rows.reduce(function (n, o) { return n + (o.state === 'unpaid' || o.state === 'cancelled' || o.state === 'test' ? 0 : o.received); }, 0), refSum = rows.reduce(function (n, o) { return n + (o.refunded || 0); }, 0);
     var bx = rows.reduce(function (n, o) { return n + o.boxes; }, 0);
     $('count').textContent = '';
     $('count').appendChild(h('b', {}, rows.length + ' order' + (rows.length === 1 ? '' : 's')));
-    $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes' + (state.truncated ? ' · latest 600 orders only' : '') + (state.role === 'owner' ? ' · ' + inr(sum) + (state.moneyLive === false ? ' paid (order records)' : ' received') : '')));
+    $('count').appendChild(document.createTextNode(' · ' + bx + ' boxes' + (state.truncated ? ' · latest 600 orders only' : '') + (state.role === 'owner' ? (state.filter === 'refunded' ? ' · ' + inr(refSum) + ' refunded' : ' · ' + inr(sum) + (state.moneyLive === false ? ' paid (order records)' : ' received')) : '')));
     $('sort').value = state.sort; var so = $('sort').options[$('sort').selectedIndex]; $('sortFlip').textContent = (so ? so.text : 'Newest first') + ' ⇅'; $('range').value = state.range; $('dFrom').value = state.from; $('dTo').value = state.to; $('customDates').hidden = state.range !== 'custom';
     [['fGift', 'gift'], ['fCoupon', 'coupon'], ['fSet', 'set']].forEach(function (x) { $(x[0]).classList.toggle('on', !!state[x[1]]); });
     var fb = $('filterBtn'), active = state.sort !== 'new' || state.range !== 'all' || state.gift || state.coupon || state.set; fb.textContent = active ? 'Filter •' : 'Filter'; fb.classList.toggle('on', !!active);
@@ -373,7 +375,7 @@ header small{color:var(--ink2);opacity:1}
       list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
         h('div', {},
           h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? h('span', { class: 'badge b-gift' }, 'GIFT') : null, o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, 'NO INVOICE') : null), h('span', {}, inr(o.total))),
-          h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '')),
+          h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '') + (o.refunded > 0 ? ' · refunded ' + inr(o.refunded) + (o.state === 'refunded' ? '' : ' (part)') : '')),
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));
     });

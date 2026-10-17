@@ -110,6 +110,20 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Refunded is its own tab, apart from Cancelled
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    const chips = qa('#chips .chip').map((c) => text(c));
+    ok(chips.some((t) => /^Cancelled \d+/.test(t)) && chips.some((t) => /^Refunded \d+/.test(t)), 'Cancelled and Refunded are separate filter tabs (' + chips.join(' | ') + ')');
+    click(o.byText('#chips .chip', /^Refunded/)); await sleep(150);
+    ok(qa('#list .card').some((c) => /MNG-EEEE-1008/.test(text(c)) && /REFUNDED/.test(text(c))), 'a refunded order sits under Refunded with a REFUNDED badge');
+    ok(/refunded/.test(text(q('#count'))), 'the Refunded tab totals the money refunded');
+    click(o.byText('#chips .chip', /^Cancelled/)); await sleep(150);
+    ok(!qa('#list .card').some((c) => /MNG-EEEE-1008/.test(text(c))), 'a refunded order is not listed under Cancelled');
+    ok(o.errors.length === 0, 'no page errors on the refunded tab');
+    o.close();
+  });
+
   // Task 5: plain words
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click } = o;
