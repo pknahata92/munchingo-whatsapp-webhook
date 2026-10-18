@@ -68,6 +68,7 @@ router.get('/admin/api/orders/:id', wrap(async (req) => ({ order: (await actions
 // Staff and owner: move an order forward, add notes, print.
 router.post('/admin/api/orders/:id/advance', wrap(async (req) => actions.advance({ ...enc(req), to: (req.body || {}).to, carrier: (req.body || {}).carrier, awb: (req.body || {}).awb, method: (req.body || {}).method, deliverNow: !!(req.body || {}).deliverNow })));
 router.post('/admin/api/orders/:id/delhivery-shipment', wrap(async (req) => actions.createDelhiveryShipment({ ...enc(req), weightGrams: (req.body || {}).weightGrams })));
+router.post('/admin/api/pickup', wrap(async (req) => actions.requestDelhiveryPickup({ ids: (req.body || {}).ids, actor: req.admin })));
 router.post('/admin/api/labels', wrap(async (req) => actions.shippingLabels((req.body || {}).ids)));
 // Stock ledger (staff and owner can receive, take out, count and flag; owner adds items and sets levels). See utils/inventory.js.
 const stock = () => require('../utils/inventory');

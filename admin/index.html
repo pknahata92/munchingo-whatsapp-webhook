@@ -231,7 +231,7 @@ header small{color:var(--ink2);opacity:1}
   $('out').onclick = function () { signOut(false); };
 
   // ── main list ──
-  var STEPS = [['topack', '1', 'To pack', 'Tick the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Tap Create shipment on each order. You get a tracking number and the customer is emailed. For Porter or hand delivery, open the order.'], ['shipped', '3', 'Shipped', 'On the way. Tick orders and tap Shipping labels to print the courier labels together. When it reaches the customer, tap Mark delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
+  var STEPS = [['topack', '1', 'To pack', 'Tick the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Tap Create shipment on each order. You get a tracking number and the customer is emailed. For Porter or hand delivery, open the order.'], ['shipped', '3', 'Shipped', 'On the way. Tick orders and tap Shipping labels to print the courier labels together, then Request pickup so Delhivery collects them. When it reaches the customer, tap Mark delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
   var FILTERS = [['attention', 'Needs attention'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'REFUNDED', cancelled: 'CANCELLED' };
   function start() {
@@ -376,7 +376,7 @@ header small{color:var(--ink2);opacity:1}
       list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
         h('div', {},
           h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? h('span', { class: 'badge b-gift' }, 'GIFT') : null, o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, 'NO INVOICE') : null), h('span', {}, inr(o.total))),
-          h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '') + (o.refunded > 0 ? ' · refunded ' + inr(o.refunded) + (o.state === 'refunded' ? '' : ' (part)') : '')),
+          h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.source ? ' · from ' + o.source : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '') + (o.refunded > 0 ? ' · refunded ' + inr(o.refunded) + (o.state === 'refunded' ? '' : ' (part)') : '')),
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));
     });
@@ -423,6 +423,7 @@ header small{color:var(--ink2);opacity:1}
     if (n) b.appendChild(h('button', { class: 'chip', onclick: function () { state.sel = {}; render(); } }, 'Clear (' + n + ')'));
     var lab = ids.filter(function (id) { return state.orders.some(function (o) { return o.id === id && labelable(o); }); });
     b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function () { if (!lab.length) return toast('None of these have a Delhivery tracking number, so there is no label to print.', 5000); openOrderLabels(lab); } }, 'Shipping labels (' + lab.length + ')'));
+    b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px', onclick: function (e) { requestPickup(lab, e.target); } }, 'Request pickup (' + lab.length + ')'));
     b.appendChild(h('button', { class: 'btn', style: 'flex:1 1 140px;background:var(--green)', onclick: function () { bulkDeliver(ids); } }, 'Mark delivered (' + ids.length + ')'));
   }
   // Runs one request per order, showing a green or red line each. One failure never stops the rest.
@@ -450,6 +451,14 @@ header small{color:var(--ink2);opacity:1}
     bulkRun('Creating shipments', ids, function (id) {
       return api('/admin/api/orders/' + encodeURIComponent(id) + '/delhivery-shipment', { method: 'POST', body: {} }).then(function (j) { return j.ok ? { ok: true, msg: 'Created. Tracking number ' + j.awb + (j.emailed ? ', customer emailed' : '') } : { ok: false, error: j.error }; });
     }, 'shipped');
+  }
+  // Ask Delhivery to collect the ticked parcels: one request for all of them (Delhivery books a pickup per place and day, not per order).
+  function requestPickup(ids, btn) {
+    if (!ids.length) return toast('None of these are Delhivery shipments, so there is nothing to collect.', 5000);
+    if (!confirm('Ask Delhivery to collect ' + ids.length + ' parcel' + (ids.length === 1 ? '' : 's') + '?\n\nOne pickup request is made for all of them. Parcels that already have a pickup request are skipped. Have the parcels packed and labelled first.')) return;
+    act('/admin/api/pickup', { ids: ids }, function (j) {
+      return 'Pickup requested for ' + j.count + ' parcel' + (j.count === 1 ? '' : 's') + ' on ' + j.date + ' (pickup ' + j.pickupId + ')' + (j.skipped && j.skipped.length ? '. Skipped ' + j.skipped.length + ': ' + j.skipped.map(function (x) { return x.orderId + ' (' + x.reason + ')'; }).join('; ') : '');
+    }, btn);
   }
   function bulkDeliver(ids) {
     if (!confirm('Mark ' + ids.length + ' order' + (ids.length === 1 ? '' : 's') + ' as delivered? Only do this once the parcels have reached the customers.')) return;
@@ -612,6 +621,7 @@ header small{color:var(--ink2);opacity:1}
   function draw(o) {
     var p = $('panel'); p.textContent = '';
     p.appendChild(h('div', { class: 'row' }, h('div', { style: 'flex:1' }, h('b', { style: 'font-size:18px' }, o.id), h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase())), h('button', { class: 'btn ghost small', onclick: closeSheet }, 'Close')));
+    if (o.source) p.appendChild(h('div', { class: 'meta', style: 'margin:6px 0' }, 'Source: ' + o.source + (o.source_network ? ' (network order)' : '')));
     if (o.gift_note) p.appendChild(h('div', { class: 'gift' }, h('b', { style: 'color:var(--terra)' }, 'Gift message to write on the card'), h('div', { style: 'font-size:17px;margin-top:4px' }, o.gift_note)));
 
     var items = h('div', {});
@@ -700,7 +710,7 @@ header small{color:var(--ink2);opacity:1}
         act('/admin/api/orders/' + encodeURIComponent(o.id) + '/delhivery-shipment', { weightGrams: weight.value ? Number(weight.value) : undefined },
           function (j) { return 'Delhivery shipment created · AWB ' + j.awb + (j.emailed ? ' · customer emailed' : ''); }, e.target);
       } }, 'Create Delhivery shipment'),
-      h('p', { class: 'muted' }, 'Pickup: request it in Delhivery One. Labels: Shipped tab, select orders, Shipping labels.'));
+      h('p', { class: 'muted' }, 'Pickup and labels: Shipped tab, select orders, then Request pickup or Shipping labels.'));
     return section('Mark shipped', dlBox, h('label', {}, 'Or enter the shipment details yourself: how is it going out?'), method, courierWrap, awbLabel, awb, nowWrap, hint,
       h('button', { class: 'btn small', onclick: function (e) {
         if (preNow && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;

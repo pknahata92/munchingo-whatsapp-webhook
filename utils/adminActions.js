@@ -1,4 +1,5 @@
 'use strict';
+const { labelSource, isNetwork } = require('./orderSource');
 
 /** Everything the admin page can do. Pure functions of (inputs) so the HTTP layer stays thin. */
 const db = require('./database');
@@ -56,6 +57,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
     address: (o.delivery_address && o.delivery_address.raw) || '', gift_note: o.gift_note || '',
     ship_name: (o.delivery_address && o.delivery_address.recipientName) || o.customer_name, ship_phone: (o.delivery_address && o.delivery_address.recipientPhone) || o.customer_phone, gift_for: !!(o.delivery_address && o.delivery_address.recipientName),
     coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
+    source: labelSource(o.delivery_address && o.delivery_address.source), source_network: isNetwork(o.delivery_address && o.delivery_address.source),
     payment_id: o.payment_id || '', boxes: items.reduce((n, i) => n + i.boxes, 0), items,
     sent: invoice ? { email: !!invoice.email_sent_at, whatsapp: !!invoice.wa_sent_at, zoho: !!invoice.zoho_synced_at && creditNotes.every((c) => !!c.zoho_credit_note_id) } : null,
     needs_attention: !!o.payment_id && o.status !== 'pending_payment' && (
@@ -400,6 +402,30 @@ async function createDelhiveryShipment({ orderId, actor, weightGrams }) {
   }
 }
 
+// Ask Delhivery to collect the ticked shipped parcels: ONE request for all of them (a pickup is per location and day, not per order).
+// Parcels that are not Delhivery, are already delivered, or already have a pickup request are skipped with the reason; nothing is logged unless Delhivery says yes.
+async function requestDelhiveryPickup({ ids, actor, now }) {
+  const dl = require('./delhiveryPickup');
+  const list = Array.from(new Set(ids || [])).slice(0, 100);
+  const eligible = []; const skipped = [];
+  for (const id of list) {
+    try {
+      const { order, shaped } = await getOrderDetail(id);
+      if (order.status !== 'paid' || shaped.state !== 'shipped') { skipped.push({ orderId: id, reason: `Not a shipped order (it is "${shaped.state}").` }); continue; }
+      if (!/delhivery/i.test(order.carrier || '') || !/^[0-9]{8,20}$/.test(String(order.awb || '').trim())) { skipped.push({ orderId: id, reason: 'Not a Delhivery shipment.' }); continue; }
+      const prior = (shaped.events || []).filter((e) => e.event === 'delhivery_pickup_requested').pop();
+      if (prior) { skipped.push({ orderId: id, reason: `Pickup already requested${prior.meta && prior.meta.pickupId ? ' (pickup ' + prior.meta.pickupId + ')' : ''}.` }); continue; }
+      eligible.push(id);
+    } catch (e) { skipped.push({ orderId: id, reason: e.message || 'Failed.' }); }
+  }
+  if (!eligible.length) throw new AdminError(skipped.length && skipped.every((s) => /already requested/.test(s.reason)) ? 'A pickup was already requested for all of these parcels. Check Pickup Requests in Delhivery One.' : 'None of these parcels can have a pickup requested.' + (skipped[0] ? ' ' + skipped[0].reason : ''), 409, { skipped });
+  let made;
+  try { made = await dl.requestPickup({ count: eligible.length, now }); }
+  catch (e) { if (e instanceof dl.PickupError) throw new AdminError(e.message, e.status); throw e; }
+  for (const id of eligible) await logEvent(id, 'delhivery_pickup_requested', actor, { meta: { pickupId: made.pickupId, date: made.date, time: made.time, location: made.location, parcels: made.count } });
+  return { pickupId: made.pickupId, count: made.count, date: made.date, time: made.time, location: made.location, requested: eligible, skipped };
+}
+
 // Owner only: undo the latest step (delivered -> shipped -> packed -> to pack). The customer is not un-emailed.
 async function undoStep({ orderId, actor }) {
   const { order, shaped } = await getOrderDetail(orderId);
@@ -547,4 +573,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
