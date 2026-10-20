@@ -20,7 +20,7 @@ function stageOf(status) {
   if (type === 'RT' || /\b(rto|return|returned|returning)\b/.test(word)) return 'returning';
   if (type === 'DL' || word === 'delivered') return 'delivered';
   if (/^(dispatched|out for delivery)$/.test(word)) return 'out_for_delivery';
-  if (/^(manifested|not picked|pickup pending|pickup scheduled|pickup requested|pickup not done)$/.test(word) || type === 'PP') return 'booked';
+  if (/^(manifested|not picked|pickup pending|pickup scheduled|pickup requested|pickup not done|pickup not attempted)$/.test(word) || type === 'PP') return 'booked';
   if (/^(in transit|pending|picked up|reached .*|.*in transit.*)$/.test(word) || type === 'PU') return 'picked_up';
   return 'unknown';
 }

@@ -19,7 +19,7 @@ global.fetch = async (url, opts) => {
 
   // Pure mapping. Anything we do not recognise is "unknown" (no customer message is ever sent on a guess).
   for (const [s, want] of [
-    [st('Manifested'), 'booked'], [st('Not Picked'), 'booked'], [st('Pickup Pending', 'PP'), 'booked'], [st('Pickup Scheduled', 'PP'), 'booked'],
+    [st('Manifested'), 'booked'], [st('Pickup not attempted'), 'booked'], [st('Not Picked'), 'booked'], [st('Pickup Pending', 'PP'), 'booked'], [st('Pickup Scheduled', 'PP'), 'booked'],
     [st('In Transit'), 'picked_up'], [st('Pending'), 'picked_up'], [st('Picked Up', 'PU'), 'picked_up'],
     [st('Dispatched'), 'out_for_delivery'], [st('Out For Delivery'), 'out_for_delivery'],
     [st('Delivered', 'DL'), 'delivered'],
