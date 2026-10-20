@@ -373,6 +373,12 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
     const trackUrl = /^https?:\/\//i.test(fields.awb) ? fields.awb : (how === 'delhivery' && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '');
     try { await require('./mailer').sendShippedEmail({ order, carrier: fields.carrier, awb: fields.awb, trackUrl }); emailed = true; } catch (e) { console.error('[ADMIN] shipped email failed:', e.message); }
   }
+  if (to === 'shipped') {
+    // WhatsApp twin of the shipped email (own try/catch inside: a WhatsApp failure never blocks shipping). Off until SHIPPED_WA_ENABLED=1.
+    const trackUrl = /^https?:\/\//i.test(fields.awb) ? fields.awb : (how === 'delhivery' && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '');
+    const wa = await require('./shipNotify').notifyShipped({ order, carrier: fields.carrier, awb: /^https?:\/\//i.test(fields.awb) ? '' : fields.awb, trackUrl });
+    if (wa.sent) await logEvent(orderId, 'shipped_whatsapped', actor, { meta: { to: order.customer_phone } });
+  }
   // Handed over on the spot (hand delivery / Porter drop): record it as delivered straight away.
   if (to === 'shipped' && deliverNow) {
     const done = new Date().toISOString();

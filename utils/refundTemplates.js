@@ -216,6 +216,33 @@ const TEMPLATES = [
       'Any issues? Just reply here.' + SIGN,
   },
 
+  // ── C2. Order updates (owner-triggered from Admin when an order ships / pickup is late) ──────────
+  {
+    key: 'order_shipped',
+    name: 'munchingo_order_shipped',
+    trigger: 'auto', // Admin: Mark shipped / Create Delhivery shipment (utils/shipNotify.js, needs SHIPPED_WA_ENABLED=1)
+    when: 'Order marked shipped with a tracking number or link. Same moment as the shipped email.',
+    params: ['customer_name', 'order_id', 'courier', 'awb', 'tracking_url'],
+    example: ['Aarav', 'MNG-4821-0310', 'Delhivery', '1234567890123', 'https://www.delhivery.com/track/package/1234567890123'],
+    body:
+      'Hi {{1}}, your order {{2}} is packed and booked with {{3}}.\n\n' +
+      '*Tracking ID:* {{4}}\n\n' +
+      'Track it here: {{5}}\n\n' +
+      'The link starts showing movement once the courier collects the parcel. Any questions? Just reply here.' + SIGN,
+  },
+  {
+    key: 'pickup_delay',
+    name: 'munchingo_pickup_delay_notice',
+    trigger: 'manual', // Admin / script: owner sends to orders waiting for courier pickup (utils/shipNotify.js)
+    when: 'Parcel is packed and booked but the courier has not collected it. No delivery date is promised.',
+    params: ['customer_name', 'order_id'],
+    example: ['Aarav', 'MNG-4821-0310'],
+    body:
+      'Hi {{1}}, a quick update on order {{2}}: your parcel is packed, but the courier has not collected it yet.\n\n' +
+      "We're following up with them and will message you as soon as it is on its way. You don't need to do anything. We're sorry for the wait.\n\n" +
+      "If you'd rather cancel, reply *CANCEL* and we'll refund you in full." + SIGN,
+  },
+
   // ── D. Delivery failures ───────────────────────────────────────────────────
   {
     key: 'delivery_delay',
