@@ -12,6 +12,8 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   for (const [key, name, params] of [
     ['order_shipped', 'munchingo_order_shipped', ['customer_name', 'order_id', 'courier', 'awb', 'tracking_url']],
     ['pickup_delay', 'munchingo_pickup_delay_notice', ['customer_name', 'order_id']],
+    ['order_packed', 'munchingo_order_packed', ['customer_name', 'order_id']],
+    ['order_delivered', 'munchingo_order_delivered', ['customer_name', 'order_id']],
   ]) {
     const t = rt.BY_KEY[key];
     ok(t && t.name === name, `${key}: template exists as ${name}`);
@@ -20,6 +22,17 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   }
   ok(rt.validate().length === 0, 'all templates still pass Meta validation: ' + rt.validate().join('; '));
   ok(!/\b(delivered in|within \d+ days?|by \d{1,2} (oct|nov))/i.test(rt.BY_KEY.order_shipped.body + rt.BY_KEY.pickup_delay.body), 'no delivery-day promise in either notice');
+
+  ok(/picked up|collected/i.test(rt.BY_KEY.order_shipped.body), 'shipped template says the courier has collected the parcel');
+  ok(!/booked with/i.test(rt.BY_KEY.order_shipped.body), 'shipped template no longer hedges with "booked"');
+
+  // Emails for the two new steps render, name the order, and promise no delivery day.
+  const et = require('../utils/emailTemplates');
+  for (const [fn, re] of [['packedHtml', /packed/i], ['deliveredHtml', /delivered/i]]) {
+    const html = typeof et[fn] === 'function' ? et[fn]({ order: { ...order, items: [] } }) : '';
+    ok(html.includes('MNG-4821-0310') && re.test(html) && html.includes('Aarav'), `${fn}: renders with order id and first name`);
+    ok(!/\b(within \d+ (working )?days?|by \d{1,2} (oct|nov))/i.test(html.replace(/within 48 hours/gi, '')), `${fn}: no delivery-day promise`);
+  }
 
   const n = require('../utils/shipNotify');
   const sent = [];
@@ -57,6 +70,18 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   n._setSender(async () => { throw new Error('Template name does not exist in the translation'); });
   r = await n.notifyShipped({ order, carrier: 'Delhivery', awb: '1', trackUrl: 'https://x.test/1' });
   ok(r.sent === false && /Template name/.test(r.error), 'sender error returned, not thrown');
+
+  // Packed and delivered use the same switch and the same safety.
+  n._setSender(async (to, key, data) => { sent.push({ to, key, data }); return { ok: true }; });
+  sent.length = 0;
+  r = await n.notifyPacked({ order }); ok(r.sent && sent[0].key === 'order_packed' && Object.keys(sent[0].data).sort().join() === 'customer_name,order_id', 'packed notice: name + order only');
+  r = await n.notifyDelivered({ order }); ok(r.sent && sent[1].key === 'order_delivered', 'delivered notice sent');
+  delete process.env.SHIPPED_WA_ENABLED; sent.length = 0;
+  r = await n.notifyPacked({ order }); ok(!r.sent && r.reason === 'disabled' && !sent.length, 'packed/delivered also off until enabled');
+  process.env.SHIPPED_WA_ENABLED = '1';
+  n._setSender(async () => { throw new Error('x'); });
+  r = await n.notifyDelivered({ order }); ok(!r.sent && r.reason === 'error', 'delivered: sender error returned, not thrown');
+  n._setSender(async (to, key, data) => { sent.push({ to, key, data }); return { ok: true }; });
 
   // Pickup-delay notice: owner-triggered for many orders; one failure does not stop the rest.
   const got = [];

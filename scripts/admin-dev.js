@@ -87,12 +87,15 @@ stub('utils/database.js', {
   updateCouponRow: async (c, f) => Object.assign(coupons.find((x) => x.code === c), f),
   countCouponRedemptions: async (c) => couponReds.filter((r) => r.coupon_code === c).length,
   deleteCouponRow: async (c) => { coupons.splice(coupons.findIndex((x) => x.code === c), 1); },
+  getOrdersInTransit: async () => orders.filter((o) => o.status === 'paid' && o.shipped_at && !o.delivered_at),
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
 stub('utils/mailer.js', {
   sendAdminCode: async (email, code) => { fs.writeFileSync('/tmp/admin-dev-code-' + email.split('@')[0] + '.txt', code); fs.writeFileSync('/tmp/admin-dev-code.txt', code); console.log('[dev] login code for', email, '=', code); },
   sendShippedEmail: async ({ order }) => console.log('[dev] shipped email ->', order.customer_email),
+  sendPackedEmail: async ({ order }) => console.log('[dev] packed email ->', order.customer_email),
+  sendDeliveredEmail: async ({ order }) => console.log('[dev] delivered email ->', order.customer_email),
   sendOwnerPaidEmail: async () => console.log('[dev] owner email'),
   sendPaymentReminderEmail: async ({ email, paymentUrl }) => console.log('[dev] payment reminder ->', email, paymentUrl),
   sendCustomerConfirmationEmail: async ({ order }) => console.log('[dev] invoice email ->', order.customer_email),
@@ -108,6 +111,8 @@ stub('utils/razorpay.js', {
 const express = require('express');
 const app = express();
 app.use(express.json());
+app.post('/dev/track', (req, res) => { global.__trackStatus = (req.body && req.body.status) || 'Manifested'; res.json({ ok: true }); });   // practice copy only: what the stand-in Delhivery tracking says
+app.post('/dev/sweep', async (req, res) => res.json(await require('../utils/orderUpdates').sweepOnce()));
 app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body && req.body.ready); res.json({ ok: true }); });   // practice copy only: pretend the coupons migration has / has not run
 app.use(require('../routes/admin'));
 // Practice-only stand-in for Delhivery's API (shipment creation and labels) so the ship and label buttons can be clicked through.
@@ -122,6 +127,8 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
       const out = sh.pin === '400050' ? { success: false, packages: [{ status: 'Fail', remarks: ['Pincode not serviceable'] }] } : { success: true, packages: [{ status: 'Success', waybill: String(880000000000 + (++seq)) }] };
       const buf = Buffer.from(JSON.stringify(out)); return { ok: true, status: 200, text: async () => buf.toString() };
     }
+    if (/\/api\/v1\/packages\/json\//.test(u)) { const st = global.__trackStatus || 'Manifested'; const buf = Buffer.from(JSON.stringify({ ShipmentData: [{ Shipment: { Status: { Status: st, StatusType: st === 'Delivered' ? 'DL' : 'UD' } } }] })); return { ok: true, status: 200, text: async () => buf.toString() }; }
+    if (/\/api\/v1\/packages\/json\//.test(u)) { const st = global.__trackStatus || 'Manifested'; const buf = Buffer.from(JSON.stringify({ ShipmentData: [{ Shipment: { Status: { Status: st, StatusType: st === 'Delivered' ? 'DL' : 'UD' } } }] })); return { ok: true, status: 200, text: async () => buf.toString() }; }
     if (/packing_slip\?wbns=/.test(u)) {
       const PDFLib = require('pdf-lib'); const d2 = await PDFLib.PDFDocument.create(); const p2 = d2.addPage([288, 432]);
       p2.drawRectangle({ x: 2, y: 2, width: 284, height: 428, borderWidth: 1, color: PDFLib.rgb(1, 1, 1), borderColor: PDFLib.rgb(0, 0, 0) });

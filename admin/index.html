@@ -262,7 +262,7 @@ header small{color:var(--ink2);opacity:1}
       moreBtn('Help', 'The four steps, in plain words.', openHelp)));
   }
   var GUIDE = [['Pack. ', 'Orders tab, To pack: print the pick list and slips, put the boxes in the parcel, then tap Mark packed.'],
-    ['Create the shipment. ', 'Packed: tap Create shipment. You get a tracking number and the customer is emailed.'],
+    ['Create the shipment. ', 'Packed: tap Create shipment. You get a tracking number. The customer is told it has shipped only once Delhivery has collected the parcel, so request the pickup next.'],
     ['Print labels. ', 'Shipped: tick the orders and tap Shipping labels. Print, cut, stick one on each parcel.'],
     ['Mark delivered. ', 'When it reaches the customer, tap Mark delivered.']];
   var guideList = function () { return h('ol', {}, GUIDE.map(function (g) { return h('li', {}, h('b', {}, g[0]), g[1]); })); };
@@ -447,9 +447,9 @@ header small{color:var(--ink2);opacity:1}
   function bulkShip(ids) {
     var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
     if (pre && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
-    if (!confirm('Create ' + ids.length + ' Delhivery shipment' + (ids.length === 1 ? '' : 's') + '?\n\nThis charges your Delhivery wallet and emails each customer a tracking link.')) return;
+    if (!confirm('Create ' + ids.length + ' Delhivery shipment' + (ids.length === 1 ? '' : 's') + '?\n\nThis charges your Delhivery wallet. Customers are told it has shipped only once Delhivery has collected the parcel.')) return;
     bulkRun('Creating shipments', ids, function (id) {
-      return api('/admin/api/orders/' + encodeURIComponent(id) + '/delhivery-shipment', { method: 'POST', body: {} }).then(function (j) { return j.ok ? { ok: true, msg: 'Created. Tracking number ' + j.awb + (j.emailed ? ', customer emailed' : '') } : { ok: false, error: j.error }; });
+      return api('/admin/api/orders/' + encodeURIComponent(id) + '/delhivery-shipment', { method: 'POST', body: {} }).then(function (j) { return j.ok ? { ok: true, msg: 'Created. Tracking number ' + j.awb + (j.emailed ? ', customer emailed' : (j.deferred ? ', customer told once collected' : '')) } : { ok: false, error: j.error }; });
     }, 'shipped');
   }
   // Ask Delhivery to collect the ticked parcels: one request for all of them (Delhivery books a pickup per place and day, not per order).
@@ -695,7 +695,7 @@ header small{color:var(--ink2);opacity:1}
       courierWrap.hidden = method.value !== 'other';
       nowWrap.hidden = !(method.value === 'hand' || method.value === 'porter');
       if (nowWrap.hidden) now.checked = false;
-      hint.textContent = (o.email ? (method.value === 'hand' ? 'The customer is emailed that it is on its way by hand.' : method.value === 'porter' ? 'The customer is emailed that Porter is delivering it' + ' (with your link if you paste one).' : 'The customer is emailed with a tracking link.') : 'No customer email, so no email is sent.');
+      hint.textContent = (o.email ? (method.value === 'hand' ? 'The customer is emailed that it is on its way by hand.' : method.value === 'porter' ? 'The customer is emailed that Porter is delivering it' + ' (with your link if you paste one).' : 'The customer is emailed and WhatsApped once the courier has collected the parcel (checked automatically).') : 'No customer email, so no email is sent.');
     }
     method.addEventListener('change', sync); sync();
     // One tap for Delhivery: creates the shipment (charges the Delhivery wallet), gets the AWB, marks shipped and emails the customer.
@@ -708,14 +708,14 @@ header small{color:var(--ink2);opacity:1}
         if (pre && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
         if (!confirm('Create the Delhivery shipment for ' + (o.ship_name || o.name) + '?\n\nThis charges your Delhivery wallet, marks the order shipped and emails the customer the tracking link.')) return;
         act('/admin/api/orders/' + encodeURIComponent(o.id) + '/delhivery-shipment', { weightGrams: weight.value ? Number(weight.value) : undefined },
-          function (j) { return 'Delhivery shipment created · AWB ' + j.awb + (j.emailed ? ' · customer emailed' : ''); }, e.target);
+          function (j) { return 'Delhivery shipment created · AWB ' + j.awb + (j.emailed ? ' · customer emailed' : (j.deferred ? ' · customer is told once Delhivery collects it' : '')); }, e.target);
       } }, 'Create Delhivery shipment'),
       h('p', { class: 'muted' }, 'Pickup and labels: Shipped tab, select orders, then Request pickup or Shipping labels.'));
     return section('Mark shipped', dlBox, h('label', {}, 'Or enter the shipment details yourself: how is it going out?'), method, courierWrap, awbLabel, awb, nowWrap, hint,
       h('button', { class: 'btn small', onclick: function (e) {
         if (preNow && !confirm('This is the PRE-ORDER period: orders ship from ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '. Ship now anyway?')) return;
         act('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'shipped', method: method.value, carrier: method.value === 'other' ? courierName.value : '', awb: awb.value, deliverNow: now.checked },
-          function (j) { return (j.state === 'delivered' ? 'Marked delivered' : 'Marked shipped') + (j.emailed ? ' · customer emailed' : ''); }, e.target);
+          function (j) { return (j.state === 'delivered' ? 'Marked delivered' : 'Marked shipped') + (j.emailed ? ' · customer emailed' : (j.deferred ? ' · customer is told once Delhivery collects it' : '')); }, e.target);
       } }, 'Mark as shipped'));
   }
 

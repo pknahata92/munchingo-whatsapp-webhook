@@ -225,10 +225,32 @@ const TEMPLATES = [
     params: ['customer_name', 'order_id', 'courier', 'awb', 'tracking_url'],
     example: ['Aarav', 'MNG-4821-0310', 'Delhivery', '1234567890123', 'https://www.delhivery.com/track/package/1234567890123'],
     body:
-      'Hi {{1}}, your order {{2}} is packed and booked with {{3}}.\n\n' +
+      'Hi {{1}}, your order {{2}} has been picked up by {{3}} and is on its way.\n\n' +
       '*Tracking ID:* {{4}}\n\n' +
       'Track it here: {{5}}\n\n' +
-      'The link starts showing movement once the courier collects the parcel. Any questions? Just reply here.' + SIGN,
+      'Any questions? Just reply here.' + SIGN,
+  },
+  {
+    key: 'order_packed',
+    name: 'munchingo_order_packed',
+    trigger: 'auto', // Admin: Mark packed (utils/orderUpdates.js, needs SHIPPED_WA_ENABLED=1)
+    when: 'Order marked packed. Not a shipping promise: the courier has not collected it yet.',
+    params: ['customer_name', 'order_id'],
+    example: ['Aarav', 'MNG-4821-0310'],
+    body:
+      'Hi {{1}}, your order {{2}} is packed and ready for the courier.\n\n' +
+      "We'll message you again with your tracking link as soon as the courier has collected it. Any questions? Just reply here." + SIGN,
+  },
+  {
+    key: 'order_delivered',
+    name: 'munchingo_order_delivered',
+    trigger: 'auto', // Delhivery tracking says delivered, or Admin: Mark delivered (utils/orderUpdates.js)
+    when: 'Order delivered. Restates the 48-hour damaged / wrong / stale policy so the customer knows how to reach us.',
+    params: ['customer_name', 'order_id'],
+    example: ['Aarav', 'MNG-4821-0310'],
+    body:
+      'Hi {{1}}, your order {{2}} has been delivered. We hope you enjoy every bite.\n\n' +
+      'If anything arrived damaged, wrong or stale, reply here with a photo within 48 hours and we will make it right.' + SIGN,
   },
   {
     key: 'pickup_delay',

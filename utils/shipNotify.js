@@ -2,7 +2,7 @@
 
 /**
  * WhatsApp order-update notices that go out next to the shipped email:
- *   notifyShipped        one order, called from Admin's Mark shipped (never throws, never blocks shipping)
+ *   notifyPacked / notifyShipped / notifyDelivered   one order each (never throw; utils/orderUpdates.js decides WHEN)
  *   notifyPickupDelayBatch  owner-triggered, for parcels packed but not collected by the courier
  *
  * Both use approved UTILITY templates (never free text: that only delivers inside WhatsApp's 24h window).
@@ -33,6 +33,16 @@ async function notifyShipped({ order, carrier, awb, trackUrl }) {
   return send(order, 'order_shipped', { courier: carrier || 'our courier', awb: awb || 'See link', tracking_url: trackUrl || `on ${carrier || 'the courier'}'s website, using tracking ID ${awb}` });
 }
 
+async function notifyPacked({ order }) {
+  if (!enabled()) return { sent: false, reason: 'disabled' };
+  return send(order, 'order_packed', {});
+}
+
+async function notifyDelivered({ order }) {
+  if (!enabled()) return { sent: false, reason: 'disabled' };
+  return send(order, 'order_delivered', {});
+}
+
 async function notifyPickupDelayBatch(orders) {
   const out = { sent: 0, failed: [], skipped: [] };
   if (!enabled()) { out.skipped = orders.map((o) => ({ orderId: o.order_id, reason: 'disabled' })); return out; }
@@ -48,4 +58,4 @@ async function notifyPickupDelayBatch(orders) {
   return out;
 }
 
-module.exports = { notifyShipped, notifyPickupDelayBatch, _setSender };
+module.exports = { notifyPacked, notifyShipped, notifyDelivered, notifyPickupDelayBatch, _setSender };

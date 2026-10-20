@@ -364,30 +364,34 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
     where = { status: 'paid', shipped_at: null, delivered_at: null };
   } else { fields = { delivered_at: now, delivered_by: by }; where = { status: 'paid', delivered_at: null }; }
   if (!(await db.updateOrderIf(orderId, where, fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
-  await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb } : null });
+  await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb, ...(require('./orderUpdates').deferShipped(methodFrom(method, carrier)) ? { notify: 'deferred' } : {}) } : null });
   // Stock: boxes leave the shelf when the order is packed (oldest lot first). Never blocks packing: a failure is only logged.
   if (to === 'packed') { try { await require('./inventory').instance().deductForOrder({ orderId, items: order.items, at: now }); } catch (e) { console.error('[STOCK] could not deduct for', orderId, e.message); } }
-  let emailed = false;
-  if (to === 'shipped' && order.customer_email) {
-    // A pasted link (Porter, India Post, any courier) is used as is; a Delhivery number becomes their tracking page.
-    const trackUrl = /^https?:\/\//i.test(fields.awb) ? fields.awb : (how === 'delhivery' && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '');
-    try { await require('./mailer').sendShippedEmail({ order, carrier: fields.carrier, awb: fields.awb, trackUrl }); emailed = true; } catch (e) { console.error('[ADMIN] shipped email failed:', e.message); }
-  }
+  // Customer updates (email + WhatsApp, utils/orderUpdates.js; each one never throws and never blocks the step):
+  //   packed: now. delivered: now. shipped: now for Porter / India Post / by hand, but for Delhivery only once Delhivery's tracking says
+  //   the courier has the parcel (the sweep sends it), so "shipped" is never told while the parcel is still on our shelf.
+  const updates = require('./orderUpdates');
+  let emailed = false; let deferred = false;
+  if (to === 'packed') await updates.onPacked(order);
   if (to === 'shipped') {
-    // WhatsApp twin of the shipped email (own try/catch inside: a WhatsApp failure never blocks shipping). Off until SHIPPED_WA_ENABLED=1.
-    const trackUrl = /^https?:\/\//i.test(fields.awb) ? fields.awb : (how === 'delhivery' && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '');
-    const wa = await require('./shipNotify').notifyShipped({ order, carrier: fields.carrier, awb: /^https?:\/\//i.test(fields.awb) ? '' : fields.awb, trackUrl });
-    if (wa.sent) await logEvent(orderId, 'shipped_whatsapped', actor, { meta: { to: order.customer_phone } });
+    if (updates.deferShipped(how)) deferred = true;
+    else {
+      // A pasted link (Porter, India Post, any courier) is used as is; a Delhivery number becomes their tracking page.
+      const trackUrl = /^https?:\/\//i.test(fields.awb) ? fields.awb : (how === 'delhivery' && fields.awb ? `https://www.delhivery.com/track/package/${encodeURIComponent(fields.awb)}` : '');
+      const r = await updates.onShipped(order, { carrier: fields.carrier, awb: /^https?:\/\//i.test(fields.awb) ? '' : fields.awb, trackUrl });
+      emailed = r.email === 'sent';
+    }
   }
+  if (to === 'delivered') await updates.onDelivered(order);
   // Handed over on the spot (hand delivery / Porter drop): record it as delivered straight away.
   if (to === 'shipped' && deliverNow) {
     const done = new Date().toISOString();
     if (await db.updateOrderIf(orderId, { status: 'paid', delivered_at: null }, { delivered_at: done, delivered_by: by })) {
       await logEvent(orderId, 'delivered', actor, { from: 'shipped', to: 'delivered', meta: { method: how } });
-      return { state: 'delivered', emailed };
+      return { state: 'delivered', emailed, deferred };
     }
   }
-  return { state: to, emailed };
+  return { state: to, emailed, deferred };
 }
 
 // One tap: create the Delhivery shipment (wallet is charged), then mark the order shipped with the new AWB and email the customer.

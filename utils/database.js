@@ -231,6 +231,20 @@ async function getOrdersPaidSince(sinceISO, untilISO) {
   return data || [];
 }
 
+/** Paid orders that left the house but are not delivered yet (the shipment-tracking sweep watches these). */
+async function getOrdersInTransit(limit = 300) {
+  const { data, error } = await db()
+    .from('orders')
+    .select('*')
+    .eq('status', 'paid')
+    .not('shipped_at', 'is', null)
+    .is('delivered_at', null)
+    .order('shipped_at', { ascending: true })
+    .limit(limit);
+  if (error) { console.error('[DB] getOrdersInTransit error:', error.message); return []; }
+  return data || [];
+}
+
 async function getOrderByPaymentId(paymentId) {
   const { data, error } = await db()
     .from('orders')
@@ -511,7 +525,7 @@ const client = () => db();
 module.exports = {
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

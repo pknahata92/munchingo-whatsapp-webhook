@@ -273,6 +273,30 @@ async function sendShippedEmail({ order, carrier, awb, trackUrl }) {
   console.log(`[MAILER] Shipped email sent for #${order.order_id}`);
 }
 
+async function sendPackedEmail({ order }) {
+  const t = require('./emailTemplates');
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [order.customer_email],
+    subject: `Your Munchingo box is packed (${order.order_id})`,
+    html: t.packedHtml({ order }),
+  });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Packed email sent for #${order.order_id}`);
+}
+
+async function sendDeliveredEmail({ order }) {
+  const t = require('./emailTemplates');
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [order.customer_email],
+    subject: `Your Munchingo box has been delivered (${order.order_id})`,
+    html: t.deliveredHtml({ order }),
+  });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Delivered email sent for #${order.order_id}`);
+}
+
 // One email to the owner for every refund, with the credit note attached.
 async function sendOwnerRefundEmail({ order, refund, creditNote, pdf }) {
   const t = require('./emailTemplates');
@@ -360,4 +384,4 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendAdminCode, sendShippedEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+module.exports = { sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
