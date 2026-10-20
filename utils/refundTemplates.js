@@ -219,7 +219,7 @@ const TEMPLATES = [
   // ── C2. Order updates (owner-triggered from Admin when an order ships / pickup is late) ──────────
   {
     key: 'order_shipped',
-    name: 'munchingo_order_shipped',
+    name: 'munchingo_order_shipped_v2', // v2: the first wording ("booked with") may already have been submitted to Meta; names cannot be edited
     trigger: 'auto', // Admin: Mark shipped / Create Delhivery shipment (utils/shipNotify.js, needs SHIPPED_WA_ENABLED=1)
     when: 'Order marked shipped with a tracking number or link. Same moment as the shipped email.',
     params: ['customer_name', 'order_id', 'courier', 'awb', 'tracking_url'],

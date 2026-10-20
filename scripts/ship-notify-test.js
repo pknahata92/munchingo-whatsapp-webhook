@@ -10,7 +10,7 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
 
   // Templates: defined once, valid for Meta, English + Hindi.
   for (const [key, name, params] of [
-    ['order_shipped', 'munchingo_order_shipped', ['customer_name', 'order_id', 'courier', 'awb', 'tracking_url']],
+    ['order_shipped', 'munchingo_order_shipped_v2', ['customer_name', 'order_id', 'courier', 'awb', 'tracking_url']],
     ['pickup_delay', 'munchingo_pickup_delay_notice', ['customer_name', 'order_id']],
     ['order_packed', 'munchingo_order_packed', ['customer_name', 'order_id']],
     ['order_delivered', 'munchingo_order_delivered', ['customer_name', 'order_id']],
