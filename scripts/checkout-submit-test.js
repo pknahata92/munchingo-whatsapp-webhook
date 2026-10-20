@@ -20,13 +20,36 @@ class Local extends ResourceLoader {   // local scripts from the site folder; no
   }
 }
 
-async function run(label, { source, expectSent = true }) {
+async function prefill() {
+  const html = fs.readFileSync(path.join(SITE, 'checkout.html'), 'utf8');
+  const dom = new JSDOM(html, { url: 'http://localhost/checkout.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+    beforeParse(w) { w.localStorage.setItem('munchingo_cart', JSON.stringify([{ slug: 'atta-original', name: 'Atta Original', price: 300, unit: '250g', qty: 3 }])); w.localStorage.setItem('munchingo_customer', JSON.stringify({ name: 'Saved Person', phone: '9999900002', address: '1 Old Road', pincode: '110049', city: 'Delhi', state: 'Delhi', email: 's@example.com' })); w.scrollTo = () => {}; w.fetch = () => Promise.resolve({ ok: false, status: 404, json: async () => ({}), text: async () => '' }); } });
+  await wait(1200);
+  const d = dom.window.document;
+  ok(d.getElementById('ck-name').value === 'Saved Person' && d.getElementById('ck-addr-line1').value === '1 Old Road' && d.getElementById('ck-phone').value === '9999900002', 'a returning customer sees their saved name, phone and address filled in');
+  dom.window.close();
+}
+async function remembersBeforePaying() {
+  const html = fs.readFileSync(path.join(SITE, 'checkout.html'), 'utf8');
+  const dom = new JSDOM(html, { url: 'http://localhost/checkout.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+    beforeParse(w) { w.localStorage.setItem('munchingo_cart', JSON.stringify([{ slug: 'atta-original', name: 'Atta Original', price: 300, unit: '250g', qty: 3 }])); w.scrollTo = () => {}; w.fetch = () => Promise.resolve({ ok: false, status: 404, json: async () => ({}), text: async () => '' }); } });
+  const w = dom.window, d = w.document; await wait(1200);
+  const set = (id, v) => { const e = d.getElementById(id); e.value = v; e.dispatchEvent(new w.Event('input', { bubbles: true })); e.dispatchEvent(new w.Event('change', { bubbles: true })); };
+  set('ck-name', 'Early Typer'); set('ck-phone', '9999900003'); set('ck-addr-line1', '9 Typed Street'); await wait(300);
+  const mem = JSON.parse(w.localStorage.getItem('munchingo_customer') || 'null');
+  ok(mem && mem.name === 'Early Typer' && mem.address === '9 Typed Street', 'details are remembered as soon as they are typed, even if the customer leaves before paying');
+  d.getElementById('ck-remember').checked = false; d.getElementById('ck-remember').dispatchEvent(new w.Event('change', { bubbles: true })); await wait(200);
+  ok(w.localStorage.getItem('munchingo_customer') === null, 'unticking Remember forgets what was saved');
+  w.close();
+}
+async function run(label, { source, expectSent = true, saved }) {
   const html = fs.readFileSync(path.join(SITE, 'checkout.html'), 'utf8');
   const sent = [];
   const dom = new JSDOM(html, {
     url: 'http://localhost/checkout.html?utm_source=ig', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
     beforeParse(w) {
       w.localStorage.setItem('munchingo_cart', JSON.stringify([{ slug: 'atta-original', name: 'Atta Original', price: 300, unit: '250g', qty: 3 }]));
+      if (saved) w.localStorage.setItem('munchingo_customer', JSON.stringify(saved));
       w.scrollTo = () => {}; w.matchMedia = w.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
       w.fetch = (u, o) => {
         const U = String(u);
@@ -53,6 +76,7 @@ async function run(label, { source, expectSent = true }) {
     ok(b.name === 'Test Buyer' && b.items.length === 1 && b.total === 900, `${label}: name, items and total are in the request`);
     if (source) ok(b.source && b.source.how === source, `${label}: the "how did you hear" answer rides along`);
   }
+  if (expectSent) { const mem = JSON.parse(w.localStorage.getItem('munchingo_customer') || 'null'); ok(mem && mem.name === 'Test Buyer' && mem.pincode === '121007', `${label}: details are remembered after a successful order`); }
   ok(w.location.hash === '#paid', `${label}: the page moves on to the payment link`);
   w.close();
 }
@@ -60,5 +84,7 @@ async function run(label, { source, expectSent = true }) {
 (async () => {
   await run('with a source answer', { source: 'instagram' });
   await run('without a source answer', {});
+  await prefill();
+  await remembersBeforePaying();
   console.log(`checkout-submit-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
