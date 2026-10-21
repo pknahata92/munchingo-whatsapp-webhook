@@ -103,6 +103,7 @@ router.post('/admin/api/orders/:id/cancel', owner, wrap(async (req) => actions.c
 router.post('/admin/api/orders/:id/issue-invoice', owner, wrap(async (req) => actions.issueMissingInvoice(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/billing-state', owner, wrap(async (req) => actions.setBillingState({ orderId: req.params.id, state: (req.body || {}).state, actor: req.admin })));
 router.post('/admin/api/orders/:id/retry-zoho', owner, wrap(async (req) => actions.retryZoho(req.params.id, req.admin)));
+router.post('/admin/api/orders/:id/whatsapp-update', owner, wrap(async (req) => actions.sendWhatsappUpdate(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/resend-invoice', owner, wrap(async (req) => actions.resendInvoice(req.params.id, req.admin)));
 router.post('/admin/api/orders/:id/undo', owner, wrap(async (req) => actions.undoStep(enc(req))));
 router.get('/admin/api/coupons', owner, wrap(async () => require('../utils/adminCoupons').list()));

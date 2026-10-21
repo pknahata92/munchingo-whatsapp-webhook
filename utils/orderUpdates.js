@@ -57,6 +57,15 @@ async function send(kind, order, { carrier, awb, trackUrl, events, skipEmail = f
   return out;
 }
 
+/** The owner pressed "Send WhatsApp update": send the WhatsApp notice for that step now, even if one already went. WhatsApp only (no email). */
+async function resendWhatsapp(order, kind, { carrier, awb, trackUrl } = {}) {
+  const { db, notify } = D();
+  const cap = kind[0].toUpperCase() + kind.slice(1);
+  const r = await notify[`notify${cap}`]({ order, carrier, awb, trackUrl: trackUrl || trackUrlFor(awb) });
+  if (r.sent) await db.logOrderEvent({ actor_name: 'Owner (button)', order_id: order.order_id, event: `${kind}_wa_manual`, meta: null });
+  return r;
+}
+
 const onPacked = (order) => send('packed', order);
 const onShipped = (order, { carrier, awb, trackUrl }) => send('shipped', order, { carrier, awb, trackUrl: trackUrl || trackUrlFor(awb) });
 const onDelivered = (order) => send('delivered', order);
@@ -105,4 +114,4 @@ function startSweep() {
   if (timer.unref) timer.unref();
 }
 
-module.exports = { setDeps, onPacked, onShipped, onDelivered, sweepOnce, startSweep, deferShipped };
+module.exports = { setDeps, resendWhatsapp, onPacked, onShipped, onDelivered, sweepOnce, startSweep, deferShipped };

@@ -220,6 +220,23 @@ async function retryZoho(orderId, actor) {
   return { sent: done };
 }
 
+// Owner button: send the WhatsApp notice for the order's current step again (packed, shipped or delivered). Needs the Meta templates approved and
+// SHIPPED_WA_ENABLED=1 on Render; otherwise it says so. Shipped needs a tracking number or link.
+async function sendWhatsappUpdate(orderId, actor) {
+  const { order, shaped } = await getOrderDetail(orderId);
+  const kind = ['packed', 'shipped', 'delivered'].includes(shaped.state) ? shaped.state : null;
+  if (!kind) throw new AdminError(`WhatsApp updates are for packed, shipped or delivered orders. This one is "${shaped.state}".`, 409);
+  if (kind === 'shipped' && !order.awb) throw new AdminError('This order has no tracking number or link yet, so there is nothing to send.', 409);
+  const r = await require('./orderUpdates').resendWhatsapp(order, kind, { carrier: order.carrier, awb: order.awb });
+  if (!r.sent) {
+    const why = r.reason === 'disabled' ? 'WhatsApp updates are switched off. Set SHIPPED_WA_ENABLED=1 in Render once Meta has approved the message templates.'
+      : r.reason === 'no phone' ? 'This order has no WhatsApp number.' : r.reason === 'error' ? 'WhatsApp refused it: ' + r.error : 'Not sent (' + (r.reason || 'unknown') + ').';
+    throw new AdminError(why, 409);
+  }
+  await logEvent(orderId, 'whatsapp_update_sent', actor, { meta: { kind } });
+  return { kind };
+}
+
 async function cancelUnpaid(orderId, actor) {
   const { order } = await getOrderDetail(orderId);
   if (!/^pending/.test(order.status)) throw new AdminError(`Order is "${order.status}". Paid orders are cancelled by refunding them.`, 409);
@@ -583,4 +600,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { sendWhatsappUpdate, setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

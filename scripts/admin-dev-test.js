@@ -84,6 +84,11 @@ async function login(email) {
   ok(typeof cat.isAvailable === 'function', 'catalog loads');
   await call('/stock', o.token, { slug: 'atta-kesari', available: true });
 
+  // owner button: WhatsApp update for the current step
+  ok((await call('/orders/MNG-CCCC-1009/whatsapp-update', s.token, {})).s === 403, 'staff cannot use Send WhatsApp update');
+  const wb = await call('/orders/MNG-DDDD-1009/whatsapp-update', o.token, {}); ok(wb.s === 409 && /packed, shipped or delivered/.test(wb.j.error || ''), 'the button refuses an order that is not packed, shipped or delivered');
+  const wc = await call('/orders/MNG-CCCC-1009/whatsapp-update', o.token, {}); ok(wc.s === 409 && /switched off/.test(wc.j.error || ''), 'with WhatsApp updates off the owner is told how to switch them on');
+
   // gift: the label/ship-to uses the recipient, the buyer is kept
   const gl = (await call('/orders', o.token)).j; const g = (gl.orders || gl.rows || []).find((x) => x.id === 'MNG-GGGG-1010');
   ok(g && g.gift_for === true && g.ship_name === 'Anita Rao' && g.ship_phone === '919820012345' && /Customer/.test(g.name), 'gift order exposes recipient as ship-to, buyer kept');

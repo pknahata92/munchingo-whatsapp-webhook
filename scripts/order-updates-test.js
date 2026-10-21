@@ -98,6 +98,11 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   process.env.ORDER_UPDATES_POLL = '0'; ok(u.deferShipped('delhivery') === false, 'poll off: Delhivery not deferred');
   delete process.env.ORDER_UPDATES_POLL; ok(u.deferShipped('delhivery') === true && u.deferShipped('porter') === false && u.deferShipped('hand') === false, 'poll on: only Delhivery is deferred');
 
+  // owner button: a WhatsApp notice for the current step, even if one already went
+  reset(); { const o = mk('MNG-BTN-0001'); orders.push(o); events.push({ order_id: o.order_id, event: 'packed_wa' });
+    let r = await u.resendWhatsapp(o, 'packed');
+    ok(r.sent && wa.length === 1 && events.some((e) => e.event === 'packed_wa_manual'), 'button: sends again although one already went, and records it');
+    waOn = false; r = await u.resendWhatsapp(o, 'packed'); ok(!r.sent && r.reason === 'disabled' && wa.length === 1, 'button: says so when WhatsApp updates are switched off'); waOn = true; }
   console.log(`order-updates: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

@@ -640,6 +640,7 @@ header small{color:var(--ink2);opacity:1}
       o.invoice_no ? h('div', { class: 'acts' },
         h('button', { class: 'btn ghost small', onclick: function () { viewInvoice(o); } }, 'View invoice PDF'),
         h('button', { class: 'btn ghost small', onclick: function () { viewInvoice(o, true); } }, 'Download PDF'),
+        state.role !== 'owner' || ['packed', 'shipped', 'delivered'].indexOf(o.state) < 0 ? null : h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the customer a WhatsApp "' + o.state + '" message now?\n\nThis sends it even if one already went. It uses the approved template and does not send an email.')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/whatsapp-update', {}, function (j) { return 'WhatsApp ' + j.kind + ' message sent.'; }, e.target); } }, 'Send WhatsApp update'),
         state.role !== 'owner' ? null : h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Send the invoice again to the customer?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/resend-invoice', {}, function (j) { return 'Invoice sent by ' + j.sent.join(' and '); }, e.target); } }, 'Resend invoice')) : null));
 
     if (o.invoice_missing && o.state !== 'test') p.appendChild(h('div', { class: 'gift', style: 'background:#FDECEA;border-color:var(--red)' }, h('b', { style: 'color:var(--red)' }, 'No invoice was created for this paid order'),
