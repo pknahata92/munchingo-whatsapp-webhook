@@ -28,9 +28,14 @@ create table if not exists founding_tasters (
   name            text,
   first_order_id  text,
   note            text,
+  removed         boolean not null default false,               -- the owner unticked them: kept so they are not re-added
   added_at        timestamptz not null default now()
 );
+alter table founding_tasters add column if not exists removed boolean not null default false;   -- for a table created by an earlier run of this file
 alter table founding_tasters enable row level security;
 
 -- Owner's toggle for orders placed before the "How did you hear about us?" question existed (19 Oct 2026).
 alter table orders add column if not exists known_to_us boolean not null default false;
+
+-- One review ask and one reminder per order, ever: two overlapping runs cannot both message a buyer.
+create unique index if not exists order_events_review_once on order_events (order_id, event) where event in ('review_requested','review_reminded');

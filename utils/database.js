@@ -445,11 +445,19 @@ async function setKnownToUs(orderId, known) {
   const { error } = await db().from('orders').update({ known_to_us: !!known }).eq('order_id', orderId);
   if (error) throw new Error(error.message);
 }
+// Record an event that must happen once per order (review asks): true if recorded, false if it already exists
+// (unique index in reviews_migration.sql), throws on any other error so the caller never acts on an unrecorded claim.
+async function claimOrderEvent(ev) {
+  const { error } = await db().from('order_events').insert(ev);
+  if (!error) return true;
+  if (error.code === '23505') return false;
+  throw new Error(`claimOrderEvent failed: ${error.message}`);
+}
 // Which of these orders have an event with this name? One query per 200 orders (the admin list uses it for the courier pick-up marker).
 async function listOrderEventsByName(name, orderIds) {
   const out = [];
   for (let i = 0; i < orderIds.length; i += 200) {
-    const { data, error } = await db().from('order_events').select('order_id,event,created_at').eq('event', name).in('order_id', orderIds.slice(i, i + 200));
+    const { data, error } = await db().from('order_events').select('order_id,event,created_at,meta').eq('event', name).in('order_id', orderIds.slice(i, i + 200));
     if (error) throw new Error(error.message);
     out.push(...(data || []));
   }
@@ -577,7 +585,7 @@ const client = () => db();
 module.exports = {
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

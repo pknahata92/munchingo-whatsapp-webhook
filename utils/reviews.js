@@ -43,9 +43,13 @@ function readToken(token) {
   return crypto.timingSafeEqual(given, expected) ? orderId : null;
 }
 
+// Orders placed in the WhatsApp catalog store Meta's retailer id instead of the website slug (handlers/messageHandler.js PRODUCTS).
+const RETAILER_SLUG = { '91slwpjdqq': 'atta-original', 'w2w5ynf2m5': 'atta-kesari', 'vf5p90bcy5': 'atta-lite-sugar', '97q9r5q5q3': 'atta-ajwain' };
+
 /** One row per flavour the buyer received; gift sets are opened up into their flavours. */
 function flavoursFor(order) {
-  const boxes = boxesBySlug((order && order.items) || []);
+  const items = ((order && order.items) || []).map((it) => (it && !it.slug && RETAILER_SLUG[it.product_retailer_id] ? { ...it, slug: RETAILER_SLUG[it.product_retailer_id] } : it));
+  const boxes = boxesBySlug(items);
   return FLAVOURS.filter(([slug]) => boxes[slug] > 0).map(([slug, name]) => ({ slug, name }));
 }
 
@@ -68,6 +72,7 @@ const fail = (error) => ({ ok: false, status: 400, error });
 function validateSubmission(order, body) {
   const b = body || {};
   const wanted = flavoursFor(order).map((f) => f.slug);
+  if (!wanted.length) return fail('There is nothing to rate in this order.');
   const given = b.ratings && typeof b.ratings === 'object' ? b.ratings : {};
   if (Object.keys(given).some((k) => !wanted.includes(k))) return fail('That flavor is not in this order.');
   if (wanted.some((k) => !(k in given))) return fail('Please rate every flavor.');
@@ -124,17 +129,19 @@ function dueRequests({ orders, eventsByOrder = {}, tasters = [], now }) {
   const tasterPhones = new Set(tasters.map((t) => normPhone(t.phone)));
   // The latest ask (or reminder) sent to each phone, across all its orders.
   const lastAskByPhone = {};
+  const foundersSent = new Set();   // the founders message goes once per phone, ever
   for (const o of orders) {
     const ph = normPhone(o.customer_phone);
     for (const e of eventsByOrder[o.order_id] || []) {
       if (e.event !== 'review_requested' && e.event !== 'review_reminded') continue;
       if (!lastAskByPhone[ph] || at(e) > lastAskByPhone[ph]) lastAskByPhone[ph] = at(e);
+      if (e.event === 'review_requested' && e.meta && e.meta.founders) foundersSent.add(ph);
     }
   }
   const out = [];
   const askedThisRun = new Set();
   const eligible = orders
-    .filter((o) => o.status === 'paid' && o.delivered_at && !/^MNG-TEST/i.test(o.order_id) && normPhone(o.customer_phone))
+    .filter((o) => o.status === 'paid' && o.delivered_at && !/^MNG-TEST/i.test(o.order_id) && normPhone(o.customer_phone) && flavoursFor(o).length)
     .sort((a, b) => Date.parse(a.delivered_at) - Date.parse(b.delivered_at));
   for (const o of eligible) {
     const ev = eventsByOrder[o.order_id] || [];
@@ -146,7 +153,7 @@ function dueRequests({ orders, eventsByOrder = {}, tasters = [], now }) {
       if (askedThisRun.has(ph)) continue;
       if (lastAskByPhone[ph] && nowMs - lastAskByPhone[ph] < PHONE_GAP_DAYS * DAY) continue;
       askedThisRun.add(ph);
-      out.push({ order: o, kind: 'ask', founders: tasterPhones.has(ph) });
+      out.push({ order: o, kind: 'ask', founders: tasterPhones.has(ph) && !foundersSent.has(ph) });
     } else if (!last(ev, 'review_reminded') && nowMs - at(asked) >= REMIND_AFTER_DAYS * DAY) {
       out.push({ order: o, kind: 'reminder', founders: false });
     }
@@ -154,18 +161,30 @@ function dueRequests({ orders, eventsByOrder = {}, tasters = [], now }) {
   return out;
 }
 
-/** The daily job: send what is due, record each send on the order timeline. Never throws for one order. */
+/** The daily job: send what is due, record each send on the order timeline. Never throws for one order.
+ *  Safety: the timeline is read with a call that throws (a failed read must never look like "never asked"), each ask is
+ *  claimed on the timeline BEFORE anything is sent (a unique index stops two overlapping runs claiming the same order),
+ *  and nothing is sent while the founding tasters list is empty (they would otherwise get the standard message). */
 async function sweepRequests() {
   if (!enabled()) return { disabled: true };
   const { db, wa, mail, now } = D();
   const nowMs = now();
+  const saved = await db.listFoundingTasters();
+  const tasters = saved.filter((t) => !t.removed);
+  if (!saved.length) return { blocked: 'Save the founding tasters list in the admin first (More > Founding tasters).' };
   const orders = await db.listDeliveredOrders({ since: new Date(nowMs - 120 * DAY).toISOString() });
-  const tasters = await db.listFoundingTasters();
+  const ids = orders.map((o) => o.order_id);
   const eventsByOrder = {};
-  for (const o of orders) eventsByOrder[o.order_id] = await db.listOrderEvents(o.order_id);
+  for (const name of ['review_requested', 'review_reminded', 'review_received']) {
+    for (let i = 0; i < ids.length; i += 200) {
+      for (const e of await db.listOrderEventsByName(name, ids.slice(i, i + 200))) (eventsByOrder[e.order_id] = eventsByOrder[e.order_id] || []).push(e);
+    }
+  }
   const list = dueRequests({ orders, eventsByOrder, tasters, now: nowMs });
   const res = { checked: orders.length, asked: 0, reminded: 0, skipped: orders.length - list.length, failed: 0 };
   for (const { order, kind, founders } of list) {
+    const event = kind === 'ask' ? 'review_requested' : 'review_reminded';
+    if (!(await db.claimOrderEvent({ actor_name: 'System', order_id: order.order_id, event, meta: { founders } }))) { res.skipped++; continue; }
     const token = signToken(order.order_id);
     const url = REVIEW_URL + token;
     let waResult = 'sent', emailResult = 'none';
@@ -176,7 +195,7 @@ async function sweepRequests() {
       catch (e) { emailResult = 'failed'; console.error(`[REVIEWS] email ${kind} failed for ${order.order_id}:`, e.message); }
     }
     if (waResult === 'failed' || emailResult === 'failed') res.failed++;
-    await db.logOrderEvent({ actor_name: 'System', order_id: order.order_id, event: kind === 'ask' ? 'review_requested' : 'review_reminded', meta: { founders, wa: waResult, email: emailResult } });
+    await db.logOrderEvent({ actor_name: 'System', order_id: order.order_id, event: 'review_request_result', meta: { kind, founders, wa: waResult, email: emailResult } });
     if (kind === 'ask') res.asked++; else res.reminded++;
   }
   return res;
@@ -204,7 +223,7 @@ async function submit(token, body) {
   const v = validateSubmission(order, body);
   if (!v.ok) return { status: v.status, body: { error: v.error } };
   const phone = normPhone(order.customer_phone);
-  const tasters = await db.listFoundingTasters();
+  const tasters = (await db.listFoundingTasters()).filter((t) => !t.removed);
   const src = order.delivery_address && order.delivery_address.source;
   const row = { ...v.row, network: require('./orderSource').isNetwork(src) || order.known_to_us === true, founding_taster: tasters.some((t) => normPhone(t.phone) === phone), status: 'new' };
   try { await db.insertReview(row); }
@@ -220,4 +239,4 @@ async function submit(token, body) {
   return { status: 201, body: { ok: true, googleUrl: process.env.GOOGLE_REVIEW_URL || '' } };
 }
 
-module.exports = { getForm, submit, signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT, setDeps, normPhone, dueRequests, sweepRequests, TEMPLATE, REVIEW_URL };
+module.exports = { _deps: () => D(), getForm, submit, signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT, setDeps, normPhone, dueRequests, sweepRequests, TEMPLATE, REVIEW_URL };

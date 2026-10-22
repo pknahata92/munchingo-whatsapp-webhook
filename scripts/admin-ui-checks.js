@@ -420,8 +420,10 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(/asked/i.test(text(q('#panel'))) && /received/i.test(text(q('#panel'))), 'the totals line');
     click(byText('#panel button', /^Close$/)); await sleep(100);
     click(byText('#viewMore button', /Founding tasters/)); await until(() => /Founding tasters/.test(text(q('#panel'))) && qa('#panel input[type=checkbox]').length >= 1, 4000, 'the tasters list');
-    const boxes = qa('#panel input[type=checkbox]');
-    ok(boxes.length >= 1 && boxes.every((b) => b.checked), 'the candidates come pre-ticked (' + boxes.length + ')');
+    const rowsT = qa('#panel label.sw');
+    const saved = rowsT.find((l) => /REVB-1002/.test(text(l)));
+    ok(!!saved && saved.querySelector('input').checked, 'a buyer already on the saved list is ticked');
+    ok(rowsT.filter((l) => !/REVB-1002/.test(text(l))).every((l) => !l.querySelector('input').checked), 'after the first save, other 11-17 Oct buyers are listed unticked (nobody is added silently)');
     ok(o.errors.length === 0, 'no page errors on reviews and tasters (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
     const s2 = await openAdmin('staff');

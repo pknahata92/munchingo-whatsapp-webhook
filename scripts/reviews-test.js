@@ -72,15 +72,27 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   ok(kinds(due([mk('MNG-A-0018', { customer_phone: '9810000002' })], {}, [{ phone: '919810000002' }])) === 'MNG-A-0018:ask:F', 'and the other way round');
   ok(kinds(due([mk('MNG-A-0019', { customer_phone: '919810000003', delivered_at: ago(12) })], { 'MNG-A-0019': [ev('review_requested', 7)] }, [{ phone: '919810000003' }])) === 'MNG-A-0019:reminder', "a founding taster's reminder is the standard one");
 
-  // ── Task 3: sending ──
+  // ── Final review fixes: who is due ──
+  // (1) the founders message goes once per phone, ever
+  ok(kinds(due([mk('MNG-B-0001', { customer_phone: p, delivered_at: ago(60) }), mk('MNG-B-0002', { customer_phone: p, delivered_at: ago(5) })], { 'MNG-B-0001': [{ ...ev('review_requested', 56), meta: { founders: true } }, ev('review_received', 50)] }, [{ phone: p }])) === 'MNG-B-0002:ask', "a founding taster's later order gets the standard ask, not the founders message again");
+  // (3) WhatsApp-catalog orders carry product_retailer_id, not slug
+  ok(slugs({ items: [{ product_retailer_id: 'w2w5ynf2m5', productName: 'Munchingo Atta Kesari', quantity: 3 }] }) === 'atta-kesari', 'a WhatsApp catalog order (retailer id, no slug) still gets its flavour rows');
+  ok(slugs({ items: [{ product_retailer_id: '91slwpjdqq', quantity: 1 }, { product_retailer_id: '97q9r5q5q3', quantity: 2 }] }) === 'atta-original,atta-ajwain', 'catalog ids for Original and Ajwain');
+  ok(kinds(due([mk('MNG-B-0003', { items: [{ product_retailer_id: 'unknown', quantity: 1 }] })])) === '', 'an order with no recognisable flavour is never asked');
+  v = r.validateSubmission({ ...order, items: [] }, { ratings: {}, showAs: 'name', consent: true });
+  ok(!v.ok && v.status === 400, 'a review with nothing to rate is refused');
+
+  // ── Task 3: sending (claim first, strict reads) ──
   const sent = [], mails = [], logged = [];
-  let waThrows = false, store = [];
+  let waThrows = false, store = [], readThrows = false, claimThrows = false, tasterRows = [{ phone: '919810000777' }];
+  const byName = async (name, ids) => { if (readThrows) throw new Error('db down'); return logged.filter((e) => e.event === name && ids.includes(e.order_id)); };
   r.setDeps({
     now: () => NOW,
     db: {
       listDeliveredOrders: async () => store,
-      listFoundingTasters: async () => [{ phone: '919810000777' }],
-      listOrderEvents: async (id) => logged.filter((e) => e.order_id === id),
+      listFoundingTasters: async () => tasterRows,
+      listOrderEventsByName: byName,
+      claimOrderEvent: async (e) => { if (claimThrows) throw new Error('db down'); if (logged.some((x) => x.order_id === e.order_id && x.event === e.event)) return false; logged.push({ ...e, created_at: new Date(NOW).toISOString() }); return true; },
       logOrderEvent: async (e) => { logged.push({ ...e, created_at: new Date(NOW).toISOString() }); },
     },
     wa: { sendTemplateWithUrlButton: async (...a) => { if (waThrows) throw new Error('template not approved'); sent.push(a); } },
@@ -91,6 +103,10 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   let res = await r.sweepRequests();
   ok(res.disabled === true && sent.length === 0 && mails.length === 0, 'kill switch off: nothing sent');
   process.env.REVIEW_REQUESTS_ENABLED = '1';
+  tasterRows = [];
+  res = await r.sweepRequests();
+  ok(res.blocked && sent.length === 0, 'the founding tasters list is not saved yet: nothing is sent (founders would get the standard message)');
+  tasterRows = [{ phone: '919810000777' }];
   res = await r.sweepRequests();
   const f = sent.find((a) => a[0] === '919810000777'), s2 = sent.find((a) => a[0] === '919810000888');
   ok(f && f[1] === 'munchingo_review_founders' && f[2] === 'en' && f[3][0] === 'Tara' && f[3][1] === 'MNG-S-0001' && r.readToken(f[4]) === 'MNG-S-0001', 'founding taster gets the founders template, English, first name, order id, signed link');
@@ -98,16 +114,38 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   ok(sent.every((a) => a[2] === 'en'), 'never Hindi');
   ok(mails.length === 1 && mails[0].order.order_id === 'MNG-S-0001' && mails[0].founders === true && /review\?t=/.test(mails[0].url), 'email only where there is an address, with the founders flag and the link');
   ok(res.asked === 2 && res.failed === 0, 'two asks counted (' + JSON.stringify(res) + ')');
-  ok(logged.filter((e) => e.event === 'review_requested').length === 2 && logged.every((e) => e.actor_name === 'System' && e.meta && 'founders' in e.meta), 'each ask is on the order timeline, by System, with what went out');
+  ok(logged.filter((e) => e.event === 'review_requested').length === 2 && logged.filter((e) => e.event === 'review_requested').every((e) => e.actor_name === 'System' && e.meta && 'founders' in e.meta), 'each ask is claimed on the order timeline first, by System, with the founders flag');
   res = await r.sweepRequests();
   ok(sent.length === 2 && res.asked === 0, 'the next run sends nothing again');
   waThrows = true; sent.length = 0; mails.length = 0;
   store = [mk('MNG-S-0003', { customer_phone: '919810000999' })];
   res = await r.sweepRequests();
-  const e3 = logged.find((e) => e.order_id === 'MNG-S-0003');
+  const e3 = logged.find((e) => e.order_id === 'MNG-S-0003' && e.event === 'review_request_result');
   ok(mails.length === 1 && res.failed === 1 && e3 && e3.meta.wa === 'failed' && e3.meta.email === 'sent', 'WhatsApp fails: email still goes, failure counted and recorded');
   waThrows = false; res = await r.sweepRequests();
-  ok(sent.length === 0 && res.asked === 0, 'a failed WhatsApp is not retried the next day (the ask is recorded once)');
+  ok(sent.length === 0 && res.asked === 0, 'a failed WhatsApp is not retried the next day (the ask is claimed once)');
+  // (5) a buyer the owner removed from the tasters list is not treated as one; the saved list is not "empty"
+  tasterRows = [{ phone: '919810000555', removed: true }]; sent.length = 0;
+  store = [mk('MNG-S-0005', { customer_phone: '919810000555' })];
+  res = await r.sweepRequests();
+  ok(!res.blocked && sent.length === 1 && sent[0][1] === 'munchingo_review_request', 'a removed taster gets the standard ask, and a saved list with only removed people does not block the run');
+  tasterRows = [{ phone: '919810000777' }];
+  // (2) a database read that fails must not look like "never asked"
+  store = [mk('MNG-S-0004', { customer_phone: '919810000444' })]; sent.length = 0; readThrows = true;
+  let threw = false; try { await r.sweepRequests(); } catch (e) { threw = true; }
+  ok(threw && sent.length === 0, 'the timeline cannot be read: the run stops and sends nothing');
+  readThrows = false; claimThrows = true; threw = false;
+  try { await r.sweepRequests(); } catch (e) { threw = true; }
+  ok(threw && sent.length === 0, 'the ask cannot be recorded: the run stops before sending');
+  claimThrows = false;
+  logged.push({ order_id: 'MNG-S-0004', event: 'review_requested', created_at: new Date(NOW).toISOString(), meta: { founders: false } });
+  store = [mk('MNG-S-0004', { customer_phone: '919810000444' })];
+  const fake = logged.pop();   // another run claimed it between this run's read and its claim
+  const realClaim = r._deps().db.claimOrderEvent;
+  r._deps().db.claimOrderEvent = async (e) => { logged.push(fake); return false; };
+  res = await r.sweepRequests();
+  r._deps().db.claimOrderEvent = realClaim;
+  ok(sent.length === 0 && res.asked === 0, 'an overlapping run that already claimed the order: no second message');
 
   // ── Task 4: public form and submit ──
   process.env.GOOGLE_REVIEW_URL = 'https://g.page/r/CThPt_VWhjZkEAI/review';

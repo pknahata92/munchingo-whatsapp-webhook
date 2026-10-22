@@ -1126,10 +1126,11 @@ header small{color:var(--ink2);opacity:1}
       var rows = (j.rows || []).map(function (r) { var box = h('input', { type: 'checkbox' }); box.checked = r.ticked !== false; return { r: r, box: box }; });
       var lines = rows.map(function (x) { return h('label', { class: 'sw', style: 'display:flex;gap:10px;align-items:center;text-transform:none;letter-spacing:0;font-size:14px;font-weight:400' }, x.box, h('span', {}, (x.r.name || 'Buyer') + ' · ' + (x.r.first_order_id || ''))); });
       var save = h('button', { class: 'btn small', onclick: function (e) {
-        var keep = rows.filter(function (x) { return x.box.checked; }).map(function (x) { return x.r; });
+        var keep = rows.filter(function (x) { return x.box.checked; });
+        var all = rows.map(function (x) { return Object.assign({}, x.r, { ticked: x.box.checked }); });
         if (!confirm('Save ' + keep.length + ' founding taster' + (keep.length === 1 ? '' : 's') + '? Their first review request will be your personal message.')) return;
         e.target.disabled = true;
-        api('/admin/api/founding-tasters', { method: 'POST', body: { rows: keep } }).then(function (x) { toast(x.ok ? 'Saved ' + x.saved : (x.error || 'Failed'), 5000); openTasters(); });
+        api('/admin/api/founding-tasters', { method: 'POST', body: { rows: all } }).then(function (x) { toast(x.ok ? 'Saved ' + x.saved : (x.error || 'Failed'), 5000); openTasters(); });
       } }, 'Save list');
       ownerPanel('Founding tasters', [h('p', { class: 'muted' }, 'Buyers who ordered 11 to 17 Oct, before we had any reviews. Untick anyone who should not be on it. Their reviews will carry the label "Founding taster: gets new products free".'),
         lines.length ? h('div', { class: 'sec' }, lines) : h('p', { class: 'muted' }, 'No buyers found for 11 to 17 Oct.'), h('div', { class: 'acts' }, save)]);

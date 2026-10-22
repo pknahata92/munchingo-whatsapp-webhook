@@ -207,5 +207,14 @@ async function login(email) {
   const ft = await call('/founding-tasters', o.token);
   ok(ft.j.ok && ft.j.rows.some((r) => r.phone === '919810000777' && r.ticked), 'founding tasters: the 11-17 Oct buyers are listed, ticked');
   ok((await call('/orders/MNG-REVA-1001/known', o.token, { known: true })).j.ok, 'owner marks an order as known to us');
+  // labels follow the owner's later changes (a review arrives before the owner marks the order)
+  ok((await call('/reviews', o.token)).j.reviews.find((r) => r.id === 1).network === false, 'setup: review 1 not marked friend or family');
+  ok((await call('/orders/MNG-REVB-1002/known', o.token, { known: true })).j.ok, 'owner marks the order known to us after the review came in');
+  ok((await call('/reviews', o.token)).j.reviews.find((r) => r.id === 1).network === true, 'the review now carries the friend or family label');
+  // a taster the owner removed stays removed
+  ok((await call('/founding-tasters', o.token, { rows: [] })).j.ok, 'owner saves the list with nobody on it');
+  const ft2 = await call('/founding-tasters', o.token);
+  ok(ft2.j.rows.some((r) => r.phone === '919810000777' && r.ticked === false), 'after a save, a removed 11-17 Oct buyer is listed unticked, not re-added');
+  ok((await call('/reviews', o.token)).j.reviews.find((r) => r.id === 1).founding_taster === false, 'and their review loses the founding taster label');
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
