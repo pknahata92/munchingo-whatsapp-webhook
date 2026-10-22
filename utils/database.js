@@ -403,6 +403,48 @@ async function listOrderEvents(orderId) {
   if (error) { console.error('[DB] listOrderEvents error:', error.message); return []; }
   return data || [];
 }
+// ── Reviews (reviews_migration.sql) ─────────────────────────────────────────
+async function insertReview(row) {
+  const { data, error } = await db().from('reviews').insert(row).select('id').single();
+  if (error) { if (error.code === '23505') throw new Error('duplicate'); throw new Error(error.message); }
+  return { id: data.id };
+}
+async function getReviewByOrder(orderId) {
+  const { data, error } = await db().from('reviews').select('*').eq('order_id', orderId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+async function listReviews({ limit = 200 } = {}) {
+  const { data, error } = await db().from('reviews').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function updateReview(id, fields) {
+  const { error } = await db().from('reviews').update(fields).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+async function listFoundingTasters() {
+  const { data, error } = await db().from('founding_tasters').select('*').order('added_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+// Replaces the whole list in one call: whoever is not in `rows` is removed.
+async function setFoundingTasters(rows) {
+  const keep = rows.map((r) => r.phone);
+  const del = db().from('founding_tasters').delete();
+  const { error: delErr } = keep.length ? await del.not('phone', 'in', `(${keep.map((p) => `"${p}"`).join(',')})`) : await del.neq('phone', '');
+  if (delErr) throw new Error(delErr.message);
+  if (rows.length) { const { error } = await db().from('founding_tasters').upsert(rows, { onConflict: 'phone' }); if (error) throw new Error(error.message); }
+}
+async function listDeliveredOrders({ since }) {
+  const { data, error } = await db().from('orders').select('*').eq('status', 'paid').not('delivered_at', 'is', null).gte('delivered_at', since).order('delivered_at', { ascending: true }).limit(1000);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function setKnownToUs(orderId, known) {
+  const { error } = await db().from('orders').update({ known_to_us: !!known }).eq('order_id', orderId);
+  if (error) throw new Error(error.message);
+}
 // Which of these orders have an event with this name? One query per 200 orders (the admin list uses it for the courier pick-up marker).
 async function listOrderEventsByName(name, orderIds) {
   const out = [];
@@ -535,7 +577,7 @@ const client = () => db();
 module.exports = {
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

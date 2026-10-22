@@ -43,6 +43,9 @@ const orders = [
   // Two orders either side of Indian midnight on 20/21 Oct (UTC date is the same for both): they must land under different day headers.
   mk('MNG-ISTA-1000', 1, 'paid', { customer_name: 'Ist Alpha', created_at: '2026-10-20T17:00:00.000Z', updated_at: '2026-10-20T17:00:00.000Z' }),
   mk('MNG-ISTB-1000', 1, 'paid', { customer_name: 'Ist Beta', created_at: '2026-10-20T19:00:00.000Z', updated_at: '2026-10-20T19:00:00.000Z' }),
+  // Delivered practice orders for the review feature: one 6 days ago (due for an ask), one 15 days ago by a founding taster.
+  mk('MNG-REVA-1001', 9000, 'paid', { customer_name: 'Riya Kapoor', packed_at: new Date(now - 9000 * 60000).toISOString(), shipped_at: new Date(now - 8600 * 60000).toISOString(), delivered_at: new Date(now - 6 * 86400000).toISOString(), carrier: 'Delhivery', awb: '7788990011', items: [{ slug: 'trio-gift-set-kesari-lite-sugar-original', productName: 'Trio Gift Set', quantity: 1, item_price: 799, unit: '750g' }] }),
+  mk('MNG-REVB-1002', 25000, 'paid', { customer_name: 'Founding Taster', customer_phone: '919810000777', packed_at: new Date(now - 25000 * 60000).toISOString(), shipped_at: new Date(now - 24000 * 60000).toISOString(), delivered_at: new Date(now - 15 * 86400000).toISOString(), carrier: 'Delhivery', awb: '7788990022', items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 2, item_price: 300, unit: '250g' }, { slug: 'atta-ajwain', productName: 'Atta Ajwain', quantity: 1, item_price: 300, unit: '250g' }] }),
   mk('MNG-DDDD-1009', 1700, 'pending_payment', { payment_id: null, payment_link_id: 'plink_1', payment_link_url: 'https://rzp.io/rzp/OLD' }),
   mk('MNG-UUUU-1011', 20, 'pending_payment', { payment_id: null, payment_link_id: 'plink_2', payment_link_url: 'https://rzp.io/rzp/FRESH', total: 900, discount_amount: 0, coupon_code: null, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 3, item_price: 300, unit: '250g' }] }),
   mk('MNG-WAFA-1011', 25, 'pending_payment', { payment_id: null, payment_link_id: 'plink_4', payment_link_url: 'https://rzp.io/rzp/WAFA', customer_phone: '919999900000' }),
@@ -50,6 +53,8 @@ const orders = [
   mk('MNG-EEEE-1008', 3000, 'cancelled', {}),
 ];
 events.push({ order_id: 'MNG-WITH-1009', event: 'courier_picked_up', actor_name: 'System', created_at: new Date(now - 70000000).toISOString() });
+const reviews = []; let reviewSeq = 0;
+const tasters = [{ phone: '919810000777', name: 'Founding Taster', first_order_id: 'MNG-REVB-1002', note: 'practice', added_at: new Date(now - 20 * 86400000).toISOString() }];
 const invoices = {};
 orders.filter((o) => o.payment_id && o.order_id !== 'MNG-FFFF-1010').forEach((o, i) => { const inv = buildInvoice(o, { invoiceNo: `MUN/26-27/${String(i + 1).padStart(4, '0')}`, issuedAt: new Date(o.created_at) }); invoices[o.order_id] = { order_id: o.order_id, invoice_no: inv.invoiceNo, supply_type: inv.supplyType, total_paise: inv.totalPaise, data: inv }; });
 const cns = [{ order_id: 'MNG-EEEE-1008', credit_note_no: 'CN/26-27/0001', amount_paise: 66500, issued_at: new Date(now - 2900000).toISOString(), is_full: true, reason_code: 'out_of_stock', data: { reasonLabel: 'Out of stock' } }];
@@ -69,6 +74,14 @@ stub('utils/database.js', {
   logOrderEvent: async (ev) => events.push({ ...ev, created_at: new Date().toISOString() }),
   listOrderEvents: async (id) => events.filter((e) => e.order_id === id),
   listOrderEventsByName: async (name, ids) => events.filter((e) => e.event === name && ids.includes(e.order_id)),
+  insertReview: async (row) => { if (reviews.some((r) => r.order_id === row.order_id)) throw new Error('duplicate'); const r = { id: ++reviewSeq, status: 'new', hidden_reason: null, created_at: new Date().toISOString(), ...row }; reviews.push(r); return { id: r.id }; },
+  getReviewByOrder: async (id) => reviews.find((r) => r.order_id === id) || null,
+  listReviews: async ({ limit = 200 } = {}) => reviews.slice().reverse().slice(0, limit),
+  updateReview: async (id, f) => { Object.assign(reviews.find((r) => r.id === Number(id)) || {}, f); },
+  listFoundingTasters: async () => tasters.slice(),
+  setFoundingTasters: async (rows) => { tasters.length = 0; rows.forEach((r) => tasters.push({ added_at: new Date().toISOString(), ...r })); },
+  listDeliveredOrders: async ({ since }) => orders.filter((o) => o.status === 'paid' && o.delivered_at && o.delivered_at >= since),
+  setKnownToUs: async (id, known) => { const o = orders.find((x) => x.order_id === id); if (o) o.known_to_us = !!known; },
   updateOrderIf: async (id, where, fields) => { const o = orders.find((x) => x.order_id === id); if (Object.entries(where).some(([k, v]) => (v === null ? o[k] != null : o[k] !== v))) return false; Object.assign(o, fields); return true; },
   reserveInvoiceNumber: async () => 100 + Object.keys(invoices).length,
   saveInvoice: async ({ invoice, fy, seq }) => { const row = { order_id: invoice.orderId, invoice_no: invoice.invoiceNo, supply_type: invoice.supplyType, total_paise: invoice.totalPaise, data: invoice, fy, seq }; invoices[invoice.orderId] = row; return row; },
