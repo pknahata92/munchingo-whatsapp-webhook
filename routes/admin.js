@@ -74,8 +74,9 @@ router.post('/admin/api/labels', wrap(async (req) => actions.shippingLabels((req
 const stock = () => require('../utils/inventory');
 const sw = (fn) => wrap(async (req) => { try { return await fn(req, stock().instance()); } catch (e) { if (e instanceof stock().StockError) throw new actions.AdminError(e.message, e.status, e.extra); throw e; } });
 router.get('/admin/api/inventory', sw((req, inv) => inv.overview()));
-router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: req.query.slug, limit: Number(req.query.limit) || 40 })));
-router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin })));
+router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: req.query.slug, limit: Number(req.query.limit) || 40, types: req.query.types ? String(req.query.types).split(',') : null })));
+router.get('/admin/api/inventory/receipt', sw((req, inv) => inv.receipt({ id: Number(req.query.id) })));
+router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin, isOwner: req.admin.role === 'owner' })));   // isOwner after the spread: a client can never claim it
 router.post('/admin/api/inventory/take', sw((req, inv) => inv.take({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/event-return', sw((req, inv) => inv.eventReturn({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/pause', sw(async (req) => {

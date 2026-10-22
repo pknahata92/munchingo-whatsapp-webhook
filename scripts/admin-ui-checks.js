@@ -313,5 +313,48 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Stock history: filter chips (receipts were buried under packed-order lines), and Correct on a receipt
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText, set } = o;
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const apiGet = async (p) => (await (await fetch(BASE + p, { headers: { Authorization: 'Bearer ' + token } })).json());
+    click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock list');
+    click(byText('#viewStock button', /^History$/)); await until(() => /Stock history/.test(text(q('#viewStock'))), 4000, 'the history page');
+    const chips = qa('#viewStock .chip').map((c) => text(c));
+    ok(['All', 'Received', 'Taken out', 'Sales'].every((c) => chips.includes(c)), 'History has filter chips All, Received, Taken out, Sales (saw: ' + chips.join('|') + ')');
+    click(byText('#viewStock .chip', /^Received$/)); await until(() => qa('#viewStock .line').length >= 2 && qa('#viewStock .line').every((l) => /Received/.test(text(l))), 4000, 'only received lines');
+    let lines = qa('#viewStock .line');
+    ok(lines.length >= 2 && lines.every((l) => /Received/.test(text(l))), 'the Received chip lists only receipts (' + lines.length + ' lines)');
+    const btn = (l, re) => Array.from(l.querySelectorAll('button')).find((b) => re.test(text(b)));
+    ok(lines.every((l) => !!btn(l, /^Correct$/)), 'every receipt has a Correct button');
+    ok(!!byText('#viewStock .chip.on', /^Received$/), 'the chosen chip is shown as selected');
+
+    // Correct the Sugar-Lite receipt (33 received, 3 damaged) to 36 received, 0 damaged
+    const before = (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand;
+    click(btn(lines.find((l) => /atta-lite-sugar/.test(text(l))), /^Correct$/));
+    await until(() => /Correct receipt: Atta Sugar-Lite/.test(text(q('#viewStock'))), 4000, 'the correct form');
+    const inputs = qa('#viewStock input');
+    ok(inputs[0].value === '33' && inputs[1].value === '3' && inputs[2].value === '15OCT26', 'the form is filled with the old receipt: 33 received, 3 damaged, lot 15OCT26 (saw ' + inputs.slice(0, 3).map((i) => i.value).join('/') + ')');
+    ok(inputs.some((i) => i.value === '3 crushed'), 'the old note is carried over');
+    ok((await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand === before, 'opening Correct changes nothing yet');
+    set(inputs[0], '36'); set(inputs[1], '0');
+    click(byText('#viewStock button', /^Save receipt$/));
+    // the practice data has packed orders already taken off Sugar-Lite, so check the change, not an absolute number: +33 -3 becomes +36 -0, a net +6
+    await until(async () => (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand === before + 6, 5000, 'stock to update').catch(() => {});
+    ok((await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand === before + 6, 'saving the correction adds the difference, +6 (was ' + before + ')');
+    await until(() => qa('#viewStock .line').length >= 4, 4000, 'back at the stock list');
+
+    click(byText('#viewStock button', /^History$/)); await until(() => /Stock history/.test(text(q('#viewStock'))), 4000, 'history again');
+    click(byText('#viewStock .chip', /^Received$/)); await sleep(300);
+    lines = qa('#viewStock .line').filter((l) => /atta-lite-sugar/.test(text(l)));
+    const oldLine = lines.find((l) => /\+33/.test(text(l))), newLine = lines.find((l) => /\+36/.test(text(l)));
+    ok(!!oldLine && /Cancelled/.test(text(oldLine)) && !btn(oldLine, /^(Correct|Reverse)$/), 'the old receipt now says Cancelled and offers no Correct or Reverse (' + (oldLine ? text(oldLine).slice(0, 80) : 'missing') + ')');
+    ok(!!newLine && !!btn(newLine, /^Correct$/), 'the new receipt is there, and can itself be corrected');
+    click(byText('#viewStock .chip', /^All$/)); await sleep(300);
+    ok(qa('#viewStock .line').some((l) => /Reversed/.test(text(l))), 'the All view shows the reversing lines too');
+    ok(o.errors.length === 0, 'no page errors on stock history (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };

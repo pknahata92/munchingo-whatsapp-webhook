@@ -16,6 +16,8 @@ const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample
 const NEEDS_WHO = { GIFT: 'Enter who it is going to.', EXHIBITION: 'Enter the event name.', OFFLINE_SALE: 'Enter who bought it.' };
 const MAX_QTY = 100000;
 const DUP_WINDOW_MS = 15 * 60_000;
+const DAMAGED_ON_RECEIPT = 'Damaged or not okay on receipt';
+const HISTORY_TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']);
 const REVERSE_FREE_MS = 24 * 3_600_000;       // anyone can reverse their own slip within a day; later needs the owner
 const slugOfToken = (token) => `atta-${token}`;
 const int = (v) => (typeof v === 'number' ? v : Number(String(v == null ? '' : v).trim()));
@@ -112,7 +114,9 @@ function makeInventory(store) {
   const who = (actor) => ({ actor_email: actor && actor.email || null, actor_name: actor && (actor.name || actor.email) || null });
 
   // Stock arrived: boxes received, how many of them damaged or not okay, lot, best-before, supplier challan, optional billing.
-  async function receive({ slug, received, damaged = 0, lot, bestBefore, ref, note, billedKg, amountRupees, confirmDuplicate = false, actor }) {
+  // `replaces` = id of an earlier receipt this one corrects: the old line (and the damaged line saved with it) is cancelled
+  // and the new one written in the same save, so a refused correction changes nothing.
+  async function receive({ slug, received, damaged = 0, lot, bestBefore, ref, note, billedKg, amountRupees, confirmDuplicate = false, replaces = null, isOwner = false, actor }) {
     const item = await need(slug);
     const rec = int(received), dmg = int(damaged || 0);
     if (!Number.isInteger(rec) || rec < 1 || rec > MAX_QTY) throw new StockError('Enter how many were received (a whole number, 1 or more).');
@@ -126,13 +130,25 @@ function makeInventory(store) {
     const amt = amountRupees === '' || amountRupees == null ? null : Number(amountRupees);
     if (amt != null && (!(amt >= 0) || amt > 100_000_000)) throw new StockError('Amount must be a number of rupees.');
     if (rec >= 5000 && !confirmDuplicate) throw new StockError(`${rec} is a very large number. If it is right, confirm.`, 409, { needsConfirm: 'large' });
-    if (!confirmDuplicate) {
+    const replacing = replaces != null && replaces !== '';
+    let old = null, oldDamaged = [];
+    if (replacing) {
+      old = await store.movement(Number(replaces));
+      if (!old || old.type !== 'RECEIVE') throw new StockError('Only a receipt can be corrected.', 409);
+      if (old.item_slug !== slug) throw new StockError('A correction must be for the same product as the receipt it replaces.', 409);
+      if (old.reverses_id || await store.reversalOf(old.id)) throw new StockError('This line was already reversed.', 409);
+      if (!isOwner && Date.now() - Date.parse(old.created_at) > REVERSE_FREE_MS) throw new StockError('Only the owner can reverse a line older than a day.', 403);
+      oldDamaged = await damagedWith(old);
+    }
+    if (!confirmDuplicate && !replacing) {
       const recent = await store.recent({ item_slug: slug, type: 'RECEIVE', since: new Date(Date.now() - DUP_WINDOW_MS).toISOString() });
       if (recent.some((r) => r.qty === rec && (r.lot_code || '') === lotCode)) throw new StockError('The same receipt was saved a moment ago. Save again only if it is a second delivery.', 409, { needsConfirm: 'duplicate' });
     }
     const base = { item_slug: slug, lot_code: lotCode || null, best_before: bestBefore || null, ref: cleanText(ref, 60) || null, ...who(actor) };
-    const rows = [{ ...base, type: 'RECEIVE', qty: rec, note: cleanText(note, 300) || null, billed_kg: kg, amount_paise: amt == null ? null : Math.round(amt * 100) }];
-    if (dmg) rows.push({ ...base, type: 'DAMAGED', qty: -dmg, note: cleanText(note, 300) || 'Damaged or not okay on receipt' });
+    const rows = [];
+    if (old) [old, ...oldDamaged].forEach((m) => rows.push({ item_slug: m.item_slug, qty: -m.qty, type: 'REVERSAL', lot_code: m.lot_code, best_before: m.best_before, ref: m.ref, note: 'Corrected receipt', reverses_id: m.id, ...who(actor) }));
+    rows.push({ ...base, type: 'RECEIVE', qty: rec, note: cleanText(note, 300) || null, billed_kg: kg, amount_paise: amt == null ? null : Math.round(amt * 100) });
+    if (dmg) rows.push({ ...base, type: 'DAMAGED', qty: -dmg, note: cleanText(note, 300) || DAMAGED_ON_RECEIPT });
     await store.insert(rows);
     return { onHand: await onHand(slug), received: rec, damaged: dmg };
   }
@@ -268,7 +284,30 @@ function makeInventory(store) {
     return { ok: true };
   }
 
-  async function history({ slug, limit = 40 }) { return { movements: await store.recent({ item_slug: slug || null, limit: Math.min(200, Math.max(1, limit)) }) }; }
+  // The damaged boxes written in the same save as a receipt: same product and lot, same moment, the receipt's note (or the standard one), not yet cancelled.
+  async function damagedWith(m) {
+    const near = await store.recent({ item_slug: m.item_slug, type: 'DAMAGED', since: new Date(Date.parse(m.created_at) - 2000).toISOString(), limit: 200 });
+    const mine = near.filter((r) => !r.reverses_id && Math.abs(Date.parse(r.created_at) - Date.parse(m.created_at)) <= 2000 && (r.lot_code || '') === (m.lot_code || '') && r.note === (m.note || DAMAGED_ON_RECEIPT));
+    const done = new Set(await store.reversedAmong(mine.map((r) => r.id)));
+    return mine.filter((r) => !done.has(r.id));
+  }
+
+  // What the Correct form needs to refill itself from an earlier receipt.
+  async function receipt({ id }) {
+    const m = await store.movement(Number(id));
+    if (!m || m.type !== 'RECEIVE') throw new StockError('Only a receipt can be corrected.', 409);
+    const damaged = (await damagedWith(m)).reduce((n, r) => n - r.qty, 0);
+    const reversed = !!m.reverses_id || await store.reversalOf(m.id);
+    return { id: m.id, slug: m.item_slug, received: m.qty, damaged, lot: m.lot_code || '', bestBefore: m.best_before || '', ref: m.ref || '', note: m.note || '', billedKg: m.billed_kg == null ? '' : Number(m.billed_kg), amountRupees: m.amount_paise == null ? '' : m.amount_paise / 100, reversed };
+  }
+
+  // `types` narrows the list (Received only, Sales only...): receipts were being pushed out of the latest 60 lines by packed orders.
+  async function history({ slug, limit = 40, types }) {
+    const t = (Array.isArray(types) ? types : []).filter((x) => HISTORY_TYPES.has(x));
+    const movements = await store.recent({ item_slug: slug || null, types: t.length ? t : null, limit: Math.min(200, Math.max(1, limit)) });
+    const done = new Set(await store.reversedAmong(movements.map((m) => m.id)));
+    return { movements: movements.map((m) => ({ ...m, reversed: done.has(m.id) })) };
+  }
 
   // ── Orders ──────────────────────────────────────────────────────────────────
   // Called after an order is marked Packed. Deducts only from tracking_from onward; oldest lot first; a shortfall becomes a
@@ -302,7 +341,7 @@ function makeInventory(store) {
   // { slug: boxes still sellable } for the flavours that have stock recorded (used by utils/stock.js for the automatic sold-out).
   async function sellable() { const [items, rows, committed] = await Promise.all([store.items(), store.byLot(), store.committed()]); return computeSellable(items, rows, committed); }
 
-  return { overview, sellable, receive, take, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
+  return { overview, sellable, receive, receipt, take, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────
@@ -314,13 +353,14 @@ function supabaseStore() {
     item: async (slug) => ok(await c().from('stock_items').select('*').eq('slug', slug).maybeSingle()) || null,
     byLot: async () => ok(await c().from('stock_by_lot').select('*')) || [],
     insert: async (rows) => { ok(await c().from('stock_movements').insert(rows)); },
-    recent: async ({ item_slug, type, since, limit = 50 }) => {
+    recent: async ({ item_slug, type, types, since, limit = 50 }) => {
       let q = c().from('stock_movements').select('*').order('created_at', { ascending: false }).limit(limit);
-      if (item_slug) q = q.eq('item_slug', item_slug); if (type) q = q.eq('type', type); if (since) q = q.gte('created_at', since);
+      if (item_slug) q = q.eq('item_slug', item_slug); if (type) q = q.eq('type', type); if (types && types.length) q = q.in('type', types); if (since) q = q.gte('created_at', since);
       return ok(await q) || [];
     },
     movement: async (id) => ok(await c().from('stock_movements').select('*').eq('id', id).maybeSingle()) || null,
     reversalOf: async (id) => !!ok(await c().from('stock_movements').select('id').eq('reverses_id', id).maybeSingle()),
+    reversedAmong: async (ids) => (ids.length ? (ok(await c().from('stock_movements').select('reverses_id').in('reverses_id', ids)) || []).map((r) => r.reverses_id) : []),
     updateItem: async (slug, fields) => { ok(await c().from('stock_items').update(fields).eq('slug', slug)); },
     insertItem: async (row) => { ok(await c().from('stock_items').insert(row)); },
     setting: async (key) => { const r = ok(await c().from('stock_settings').select('value').eq('key', key).maybeSingle()); return r ? r.value : null; },

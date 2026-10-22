@@ -36,6 +36,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .dayhead:first-child{margin-top:6px}.dayhead b{font-weight:700}.dayhead span{opacity:.85;font-size:12px;white-space:nowrap}
 .sechead{margin:18px 2px 6px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .sechead:first-child{margin-top:4px}.sechead.await{color:var(--tx-amber)}.sechead.with{color:var(--tx-green)}
+.linebtns{display:flex;gap:6px;align-items:center;flex-shrink:0}
 .sechead small{display:block;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink2);font-size:12px;margin-top:1px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
 .b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
@@ -832,17 +833,19 @@ header small{color:var(--ink2);opacity:1}
       toast(okMsg(r), 5000); refreshLow(); openInventory();
     }).catch(function () { toast('Could not reach the server', 6000); done(); });
   }
-  function invReceive(it) {
+  // `pre` = an earlier receipt being corrected (from /inventory/receipt): the form refills from it, and saving cancels it and writes the new one in one step.
+  function invReceive(it, pre) {
     var isProd = it.kind === 'product';
     var rec = numIn('e.g. 160'), dmg = numIn('0'), lot = h('input', { placeholder: 'e.g. 15OCT26 (the date it was prepared)', value: (it.lots[0] && it.lots[0].lot_code) || '' }), bb = h('input', { type: 'date' }),
       ref = h('input', { placeholder: 'Challan or invoice number (optional)' }), kg = h('input', { type: 'number', step: '0.001', inputmode: 'decimal', placeholder: 'Billed kg (optional)' }), amt = h('input', { type: 'number', step: '0.01', inputmode: 'decimal', placeholder: 'Amount in rupees (optional)' }), note = h('input', { placeholder: 'Note (optional)' });
-    invForm('Receive', it, [h('label', {}, 'How many ' + it.unit + ' arrived'), rec, h('label', {}, 'How many of them are damaged or not okay'), dmg,
+    if (pre) { rec.value = pre.received; dmg.value = pre.damaged || ''; lot.value = pre.lot; bb.value = pre.bestBefore; ref.value = pre.ref; kg.value = pre.billedKg; amt.value = pre.amountRupees; note.value = pre.note; }
+    invForm(pre ? 'Correct receipt' : 'Receive', it, [pre ? h('p', { class: 'muted' }, 'Nothing changes until you save. Saving cancels the old line (+' + pre.received + (pre.damaged ? ', ' + pre.damaged + ' damaged' : '') + ') and adds this one. Nothing is deleted.') : null, h('label', {}, 'How many ' + it.unit + ' arrived'), rec, h('label', {}, 'How many of them are damaged or not okay'), dmg,
       isProd ? h('label', {}, 'Lot') : null, isProd ? lot : null, isProd ? h('label', {}, 'Best before (optional)') : null, isProd ? bb : null,
       h('label', {}, 'Challan / invoice'), ref, isProd ? h('label', {}, 'Billed weight and amount (optional)') : null, isProd ? kg : null, isProd ? amt : null, h('label', {}, 'Note'), note], function (done) {
       var r = Number(rec.value), d = Number(dmg.value || 0);
       if (!(r >= 1)) { toast('Enter how many arrived.'); return done(); }
-      if (!confirm('Receive ' + r + ' × ' + it.name + (isProd ? ', lot ' + (lot.value || '(none)') + (bb.value ? ', best before ' + bb.value : '') : '') + ', ' + d + ' damaged or not okay?\n\nGood stock added: ' + (r - d))) return done();
-      postInv('receive', { slug: it.slug, received: rec.value, damaged: dmg.value || 0, lot: lot.value, bestBefore: bb.value, ref: ref.value, billedKg: kg.value, amountRupees: amt.value, note: note.value }, done, function (x) { return 'Received ' + x.received + (x.damaged ? ' (' + x.damaged + ' damaged)' : '') + '. On hand: ' + x.onHand; });
+      if (!confirm((pre ? 'Correct the earlier receipt?\n\n' : '') + 'Receive ' + r + ' × ' + it.name + (isProd ? ', lot ' + (lot.value || '(none)') + (bb.value ? ', best before ' + bb.value : '') : '') + ', ' + d + ' damaged or not okay?\n\nGood stock added: ' + (r - d))) return done();
+      postInv('receive', { slug: it.slug, received: rec.value, damaged: dmg.value || 0, lot: lot.value, bestBefore: bb.value, ref: ref.value, billedKg: kg.value, amountRupees: amt.value, note: note.value, replaces: pre ? pre.id : undefined }, done, function (x) { return 'Received ' + x.received + (x.damaged ? ' (' + x.damaged + ' damaged)' : '') + '. On hand: ' + x.onHand; });
     }, 'Save receipt');
   }
   function invTake(it) {
@@ -891,17 +894,27 @@ header small{color:var(--ink2);opacity:1}
       invShow('Where did the stock go?', [h('p', { class: 'muted' }, 'For each flavour: what came in and where every box went. Received, minus everything that left, equals what is on the shelf. A box that is not in any line was never recorded: do a count.'), h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))].concat(rows));
     });
   }
+  // History filters: receipts used to be pushed out of the latest 60 lines by packed-order lines, so you could not find them.
+  var invHistFilter = 'all';
+  var HIST_TYPES = { all: '', received: 'RECEIVE', out: 'DAMAGED,USE,SAMPLE,GIFT,EXHIBITION,EXHIBITION_RETURN,OFFLINE_SALE,RETURN,COUNT_FIX', sales: 'SALE,SALE_UNDO' };
+  function correctReceipt(m) {
+    var it = ((state.inv && state.inv.items) || []).filter(function (x) { return x.slug === m.item_slug; })[0];
+    if (!it) return toast('Open the Stock tab first, then History.', 5000);
+    api('/admin/api/inventory/receipt?id=' + m.id).then(function (r) { if (!r.ok) return toast(r.error || 'Failed', 6000); invReceive(it, r); });
+  }
   function invHistory() {
-    api('/admin/api/inventory/history?limit=60').then(function (j) {
+    var types = HIST_TYPES[invHistFilter];
+    api('/admin/api/inventory/history?limit=60' + (types ? '&types=' + types : '')).then(function (j) {
       if (!j.ok) return toast(j.error || 'Failed');
-      var names = {}; j.movements.forEach(function (m) { names[m.item_slug] = m.item_slug; });
       var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', GIFT: 'Given away', EXHIBITION: 'Taken to event', EXHIBITION_RETURN: 'Back from event', OFFLINE_SALE: 'Sold offline', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
+      var chips = h('div', { class: 'chips' }, [['all', 'All'], ['received', 'Received'], ['out', 'Taken out'], ['sales', 'Sales']].map(function (c) { return h('button', { class: 'chip' + (invHistFilter === c[0] ? ' on' : ''), type: 'button', onclick: function () { invHistFilter = c[0]; invHistory(); } }, c[1]); }));
       var lines = j.movements.map(function (m) {
-        var can = ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
-        return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
-          can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
+        var can = !m.reversed && ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
+        return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.reversed ? ' · Cancelled' : '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
+          h('div', { class: 'linebtns' }, !m.reversed && m.type === 'RECEIVE' ? h('button', { class: 'btn small', onclick: function () { correctReceipt(m); } }, 'Correct') : null,
+          can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null));
       });
-      invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), section('Latest 60 lines', lines.length ? lines : h('p', { class: 'muted' }, 'Nothing recorded yet.'))]);
+      invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), chips, section('Latest 60 lines', lines.length ? lines : h('p', { class: 'muted' }, 'Nothing here.'))]);
     });
   }
   // ── Shipping labels from the orders: the server fetches each Delhivery label, this page lays them out on 13 x 19 in (see labelsheet.js) ──

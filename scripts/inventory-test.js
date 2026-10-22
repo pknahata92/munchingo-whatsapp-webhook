@@ -109,5 +109,49 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
   // items
   const nr = await inv.addItem({ name: 'Bubble wrap', kind: 'packaging', unit: 'rolls', lowLevel: 2 }); ok(nr.slug === 'bubble-wrap', 'owner can add an item');
   await rejects(inv.addItem({ name: 'Bubble wrap', kind: 'packaging' }), /already/, 'no duplicate item');
+  // ── History filter, and correcting a receipt in one step ──
+  {
+    const st2 = memStore('2026-10-16T00:00:00.000Z'); const iv = makeInventory(st2);
+    await iv.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15Oct26', bestBefore: '2027-01-13', ref: 'CH-9', note: '3 crushed', billedKg: 8.25, amountRupees: 1200, actor: A });
+    await iv.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', actor: A });
+    for (let i = 0; i < 70; i++) await iv.deductForOrder({ orderId: 'MNG-H' + i, items: [{ slug: 'atta-kesari', quantity: 1 }], at: '2026-10-20T05:00:00.000Z' });
+    const idOf = (slug) => st2.mv.find((m) => m.type === 'RECEIVE' && m.item_slug === slug).id;
+    // the Received lines were buried under 70 sales: a type filter brings them back
+    const plain = await iv.history({ limit: 60 }); ok(!plain.movements.some((m) => m.type === 'RECEIVE'), 'setup: 70 later sales push the receipts out of the latest 60 lines (the bug Prashant saw)');
+    const rec = await iv.history({ types: ['RECEIVE'], limit: 60 });
+    ok(rec.movements.length === 2 && rec.movements.every((m) => m.type === 'RECEIVE'), 'history filtered to RECEIVE shows the receipts however many sales came after');
+    ok((await iv.history({ types: ['SALE', 'SALE_UNDO'], limit: 60 })).movements.every((m) => m.type === 'SALE' || m.type === 'SALE_UNDO'), 'history can be filtered to sales');
+    ok((await iv.history({ types: ['RECEIVE'], slug: 'atta-kesari', limit: 60 })).movements.length === 1, 'the filter combines with one product');
+    ok(rec.movements.every((m) => m.reversed === false), 'each line says whether it was already reversed (not yet)');
+
+    // receipt details, including the damaged boxes written in the same save
+    const d = await iv.receipt({ id: idOf('atta-lite-sugar') });
+    ok(d.slug === 'atta-lite-sugar' && d.received === 33 && d.damaged === 3 && d.lot === '15Oct26' && d.bestBefore === '2027-01-13' && d.ref === 'CH-9' && d.note === '3 crushed' && d.billedKg === 8.25 && d.amountRupees === 1200, 'receipt details return everything needed to refill the form (' + JSON.stringify(d) + ')');
+    await rejects(iv.receipt({ id: st2.mv.find((m) => m.type === 'SALE').id }), /receipt/i, 'only a receipt can be corrected');
+
+    // correct it: 33 received / 3 damaged becomes 36 received / 0 damaged, in one save
+    const before = await onHand(iv, 'atta-lite-sugar'); ok(before === 30, 'setup: Lite on hand 30');
+    const out = await iv.receive({ slug: 'atta-lite-sugar', received: 36, damaged: 0, lot: '15Oct26', bestBefore: '2027-01-13', ref: 'CH-9', replaces: d.id, actor: A, isOwner: true });
+    ok(out.onHand === 36, 'correcting 33/3 to 36/0 leaves 36 on hand, not 66 or 30 (got ' + out.onHand + ')');
+    ok(st2.mv.filter((m) => m.type === 'REVERSAL' && m.reverses_id === d.id).length === 1, 'the old receipt is cancelled with a reversal line (nothing is edited or deleted)');
+    ok(st2.mv.filter((m) => m.type === 'REVERSAL' && /damaged/i.test(m.note || '') === false).length >= 1 && st2.mv.filter((m) => m.type === 'DAMAGED' && m.item_slug === 'atta-lite-sugar').every((m) => st2.mv.some((r) => r.reverses_id === m.id)), 'the damaged line written with the old receipt is cancelled too');
+    ok((await iv.history({ types: ['RECEIVE'], slug: 'atta-lite-sugar' })).movements.find((m) => m.id === d.id).reversed === true, 'the corrected line now shows as reversed');
+    await rejects(iv.receive({ slug: 'atta-lite-sugar', received: 40, lot: '15Oct26', replaces: d.id, actor: A, isOwner: true }), /already reversed/, 'a receipt can be corrected only once');
+    ok(await onHand(iv, 'atta-lite-sugar') === 36, 'the refused second correction changed nothing');
+
+    // all-or-nothing: bad new values must not cancel the old receipt
+    const k = idOf('atta-kesari');
+    await rejects(iv.receive({ slug: 'atta-kesari', received: 0, lot: '15OCT26', replaces: k, actor: A, isOwner: true }), /received/i, 'a correction with an invalid quantity is refused');
+    await rejects(iv.receive({ slug: 'atta-kesari', received: 160, damaged: 200, lot: '15OCT26', replaces: k, actor: A, isOwner: true }), /Damaged cannot/, 'a correction with damaged above received is refused');
+    ok(await onHand(iv, 'atta-kesari') === 90 && !st2.mv.some((m) => m.type === 'REVERSAL' && m.reverses_id === k), 'refused corrections leave the old receipt untouched (160 minus 70 sold = 90)');
+    await rejects(iv.receive({ slug: 'atta-original', received: 5, lot: 'Z', replaces: k, actor: A, isOwner: true }), /same product/i, 'a correction must be for the same product as the line it replaces');
+    await rejects(iv.receive({ slug: 'atta-kesari', received: 5, lot: 'Z', replaces: st2.mv.find((m) => m.type === 'SALE').id, actor: A, isOwner: true }), /receipt/i, 'a sale line cannot be "corrected"');
+
+    // who may correct: same rule as Reverse (anyone within a day, the owner after that)
+    st2.mv.find((m) => m.id === k).created_at = '2026-10-01T00:00:00.000Z';
+    await rejects(iv.receive({ slug: 'atta-kesari', received: 150, lot: '15OCT26', replaces: k, actor: A, isOwner: false }), /owner/, 'staff cannot correct a receipt older than a day');
+    const ow = await iv.receive({ slug: 'atta-kesari', received: 150, lot: '15OCT26', replaces: k, actor: A, isOwner: true });
+    ok(ow.onHand === 80, 'the owner can correct an old receipt (150 received minus 70 sold = 80, got ' + ow.onHand + ')');
+  }
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
