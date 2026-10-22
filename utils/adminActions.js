@@ -37,7 +37,10 @@ async function razorpayMoney(sinceMs) {
 }
 
 // What the screen needs for one order: status, money, items with gift-set contents, invoice/credit-note links.
-function shapeOrder(o, invoice, creditNotes = [], money = null) {
+// A Delhivery parcel we can track: the sweep (orderUpdates.js) and the label button use the same rule.
+const trackable = (o) => /delhivery/i.test(o.carrier || '') && /^[0-9]{8,20}$/.test(String(o.awb || '').trim());
+
+function shapeOrder(o, invoice, creditNotes = [], money = null, courierPickedUp = false) {
   const refundedPaise = creditNotes.reduce((n, c) => n + c.amount_paise, 0);
   const totalPaise = Math.round(Number(o.total) * 100);
   const items = (o.items || []).map((it) => ({ name: it.productName || it.product_retailer_id, qty: it.quantity, unit: it.unit || '', contents: contentsOf(it), price: it.item_price, boxes: boxesIn(it) * (it.quantity || 1) }));
@@ -69,6 +72,8 @@ function shapeOrder(o, invoice, creditNotes = [], money = null) {
     credit_notes: creditNotes.map((c) => ({ no: c.credit_note_no, amount: rupees(c.amount_paise), reason: (c.data && c.data.reasonLabel) || c.reason_code || '', at: c.issued_at, full: c.is_full })),
     packed_at: o.packed_at || null, packed_by: o.packed_by || '', delivered_at: o.delivered_at || null, delivered_by: o.delivered_by || '',
     shipped_at: o.shipped_at || null, carrier: o.carrier || '', awb: o.awb || '', admin_note: o.admin_note || '',
+    // Shipment booked (so the order is "shipped") but Delhivery has not collected the parcel yet. Manual hand-offs have no tracking, so never.
+    awaiting_pickup: state === 'shipped' && trackable(o) && !courierPickedUp,
   };
 }
 
@@ -99,7 +104,12 @@ async function loadOrders() {
         .catch((e) => console.error('[ADMIN] could not close refunded order', o.order_id, e.message));
     });
   }
-  const shaped = orders.map((o) => shapeOrder(o, invoices[o.order_id], byOrder[o.order_id] || [], money));
+  // One lookup: which shipped Delhivery parcels has the courier already collected (marker written by the tracking sweep)?
+  const inTransit = orders.filter((o) => o.status === 'paid' && o.shipped_at && !o.delivered_at && trackable(o)).map((o) => o.order_id);
+  let collected = new Set();
+  try { if (inTransit.length) collected = new Set((await db.listOrderEventsByName('courier_picked_up', inTransit)).map((e) => e.order_id)); }
+  catch (e) { console.error('[ADMIN] could not read courier pick-up markers:', e.message); collected = new Set(inTransit); }   // on failure show no "awaiting" warning rather than a false one
+  const shaped = orders.map((o) => shapeOrder(o, invoices[o.order_id], byOrder[o.order_id] || [], money, collected.has(o.order_id)));
   shaped.moneyLive = !!(money && money.live);
   return shaped;
 }

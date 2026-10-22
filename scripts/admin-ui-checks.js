@@ -248,5 +248,70 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Shipped tab is split: "Awaiting pickup" (booked, courier has not collected) above "With courier".
+  // Runs FIRST: later checks mark the practice parcels delivered, which would empty the Shipped step.
+  list.unshift(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, set } = o;
+    click(o.byText('#flow .step', /Shipped/)); await sleep(150);
+    const shippedCount = Number(text(o.byText('#flow .step', /Shipped/).querySelector('b')));
+    const heads = qa('#list .sechead').map((h) => text(h));
+    ok(heads.length === 2 && /^Awaiting pickup/.test(heads[0]) && /^With courier/.test(heads[1]), 'Shipped shows Awaiting pickup above With courier (saw: ' + heads.join(' | ') + ')');
+    const section = {}; let cur = '';
+    Array.from(q('#list').children).forEach((k) => { if (k.classList.contains('sechead')) cur = text(k); else if (k.classList.contains('card')) section[(text(k).match(/MNG-[A-Z0-9]+-\d+/) || [''])[0]] = cur; });
+    ok(/^Awaiting pickup/.test(section['MNG-CCCC-1009'] || ''), 'a booked Delhivery parcel sits under Awaiting pickup');
+    ok(/^With courier/.test(section['MNG-WITH-1009'] || ''), 'a parcel the courier has collected sits under With courier');
+    ok(qa('#list .card').length === shippedCount, 'section headers are not cards: the card count still equals the Shipped step count (' + qa('#list .card').length + ' vs ' + shippedCount + ')');
+    ok(/Awaiting pickup/.test(text(q('#list .sechead'))) && /\b1\b/.test(heads[0]), 'the header carries how many parcels wait (saw: ' + heads[0] + ')');
+    const cardOf = (id) => qa('#list .card').find((c) => text(c).includes(id));
+    ok(!/Mark delivered/.test(text(cardOf('MNG-CCCC-1009'))), 'a parcel awaiting pickup has no one-tap Mark delivered (it has not even been collected)');
+    ok(/Mark delivered/.test(text(cardOf('MNG-WITH-1009'))), 'a parcel with the courier keeps its one-tap Mark delivered');
+    set(q('#q'), 'WITH-1009'); await sleep(120);
+    ok(qa('#list .sechead').length === 1 && /^With courier/.test(text(q('#list .sechead'))), 'a section with nothing in it shows no header');
+    set(q('#q'), '');
+    click(o.byText('#flow .step', /Packed/)); await sleep(120);
+    ok(qa('#list .sechead').length === 0, 'other steps have no pick-up sections');
+    ok(o.errors.length === 0, 'no page errors on the Shipped split (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
+  // Day headers: orders from different days are visibly separated when the list is in date order
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, set } = o;
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const api = await (await fetch(BASE + '/admin/api/orders', { headers: { Authorization: 'Bearer ' + token } })).json();
+    const istDay = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const label = (iso) => new Date(iso).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
+    const dayOf = Object.fromEntries(api.orders.map((x) => [x.id, { day: istDay(x.paid_at || x.created_at), label: label(x.paid_at || x.created_at) }]));
+    click(o.byText('#chips .chip', /^All\b/)); await sleep(150);
+    for (const sort of ['new', 'old']) {
+      set(q('#sort'), sort); await sleep(150);
+      const kids = Array.from(q('#list').children);
+      let prev = null, headNow = null, good = true, why = '', heads = 0;
+      kids.forEach((k) => {
+        if (k.classList.contains('dayhead')) { heads++; headNow = k; return; }
+        if (!k.classList.contains('card')) return;
+        const id = (text(k).match(/MNG-[A-Z0-9]+-\d+/) || [''])[0]; const d = dayOf[id];
+        if (!d) return;
+        if (!prev || prev !== d.day) { if (!headNow || !text(headNow).includes(d.label)) { good = false; why = id + ' should follow a header with ' + d.label + ' (saw ' + (headNow ? text(headNow) : 'none') + ')'; } }
+        else if (headNow) { good = false; why = id + ' is the same day as the card above, so no header should sit between them'; }
+        prev = d.day; headNow = null;
+      });
+      const days = new Set(Array.from(q('#list').querySelectorAll('.card')).map((c) => (dayOf[(text(c).match(/MNG-[A-Z0-9]+-\d+/) || [''])[0]] || {}).day));
+      ok(good, 'sort ' + sort + ': exactly one header at the start of each new day (' + why + ')');
+      ok(heads === days.size && heads >= 3, 'sort ' + sort + ': one header per day (' + heads + ' headers, ' + days.size + ' days)');
+    }
+    set(q('#sort'), 'new'); await sleep(120);
+    const under = {}; let hd = '';
+    Array.from(q('#list').children).forEach((k) => { if (k.classList.contains('dayhead')) hd = text(k); else if (k.classList.contains('card')) under[(text(k).match(/MNG-[A-Z0-9]+-\d+/) || [''])[0]] = hd; });
+    ok(/20 Oct/.test(under['MNG-ISTA-1000'] || '') && /21 Oct/.test(under['MNG-ISTB-1000'] || ''), 'days are Indian days: 22:30 IST on 20 Oct and 00:30 IST on 21 Oct are different days (saw: ' + under['MNG-ISTA-1000'] + ' / ' + under['MNG-ISTB-1000'] + ')');
+    const first = text(q('#list .dayhead')); ok(/\b\d+ orders?\b/.test(first) && /\b\d+ boxes?\b/.test(first), 'a header says how many orders and boxes that day (saw: ' + first + ')');
+    for (const sort of ['valueAsc', 'boxesDesc', 'nameAZ']) { set(q('#sort'), sort); await sleep(120); ok(qa('#list .dayhead').length === 0, 'sort ' + sort + ': no day headers (they only make sense in date order)'); }
+    set(q('#sort'), 'new'); await sleep(120);
+    set(q('#q'), 'ISTB'); await sleep(120);
+    ok(qa('#list .dayhead').length === 1 && qa('#list .card').length === 1, 'a search that leaves one order shows one header');
+    ok(o.errors.length === 0, 'no page errors with day headers (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };

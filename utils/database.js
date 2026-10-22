@@ -403,6 +403,16 @@ async function listOrderEvents(orderId) {
   if (error) { console.error('[DB] listOrderEvents error:', error.message); return []; }
   return data || [];
 }
+// Which of these orders have an event with this name? One query per 200 orders (the admin list uses it for the courier pick-up marker).
+async function listOrderEventsByName(name, orderIds) {
+  const out = [];
+  for (let i = 0; i < orderIds.length; i += 200) {
+    const { data, error } = await db().from('order_events').select('order_id,event,created_at').eq('event', name).in('order_id', orderIds.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+    out.push(...(data || []));
+  }
+  return out;
+}
 // Conditional update: only touches the row if every key in `where` still matches (null means "is null").
 // Returns true if a row changed, so two people clicking the same button cannot both succeed.
 async function updateOrderIf(orderId, where, fields) {
@@ -525,7 +535,7 @@ const client = () => db();
 module.exports = {
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

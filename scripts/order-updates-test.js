@@ -98,6 +98,21 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   process.env.ORDER_UPDATES_POLL = '0'; ok(u.deferShipped('delhivery') === false, 'poll off: Delhivery not deferred');
   delete process.env.ORDER_UPDATES_POLL; ok(u.deferShipped('delhivery') === true && u.deferShipped('porter') === false && u.deferShipped('hand') === false, 'poll on: only Delhivery is deferred');
 
+  // Courier pick-up marker: the admin Shipped tab splits "Awaiting pickup" from "With courier" on this one event.
+  reset(); o = mk('MNG-L-10012'); orders.push(o); events.push({ order_id: o.order_id, event: 'shipped', meta: { notify: 'deferred' } });
+  await u.sweepOnce();
+  ok(!has('courier_picked_up', o.order_id), 'booked, not collected: no pick-up marker');
+  stage = 'unknown'; await u.sweepOnce();
+  ok(!has('courier_picked_up', o.order_id), 'unknown status: no pick-up marker (we cannot tell)');
+  stage = 'picked_up'; await u.sweepOnce(); await u.sweepOnce();
+  ok(events.filter((e) => e.order_id === o.order_id && e.event === 'courier_picked_up').length === 1, 'collected: the pick-up marker is written once and not repeated');
+  ok(events.filter((e) => e.event === 'courier_picked_up').every((e) => e.actor_name === 'System'), 'the pick-up marker names System as the actor');
+  for (const st of ['out_for_delivery', 'delivered', 'returning']) {
+    reset(); o = mk('MNG-M-10013'); orders.push(o); events.push({ order_id: o.order_id, event: 'shipped', meta: { notify: 'deferred' } });
+    stage = st; await u.sweepOnce();
+    ok(has('courier_picked_up', o.order_id), `stage ${st}: the courier has had it, so the marker is written (also fills in parcels collected before this feature)`);
+  }
+
   // owner button: a WhatsApp notice for the current step, even if one already went
   reset(); { const o = mk('MNG-BTN-0001'); orders.push(o); events.push({ order_id: o.order_id, event: 'packed_wa' });
     let r = await u.resendWhatsapp(o, 'packed');

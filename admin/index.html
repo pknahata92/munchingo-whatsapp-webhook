@@ -32,6 +32,11 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;cursor:pointer}
 .card:hover{border-color:var(--terra)}.card .top{display:flex;justify-content:space-between;gap:8px;font-weight:700}
 .card .meta{color:var(--ink2);font-size:13px;margin-top:2px}
+.dayhead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:22px 2px 10px;padding:8px 12px;background:var(--navy);color:#fff;border-radius:10px;font-size:13px}
+.dayhead:first-child{margin-top:6px}.dayhead b{font-weight:700}.dayhead span{opacity:.85;font-size:12px;white-space:nowrap}
+.sechead{margin:18px 2px 6px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.sechead:first-child{margin-top:4px}.sechead.await{color:var(--tx-amber)}.sechead.with{color:var(--tx-green)}
+.sechead small{display:block;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink2);font-size:12px;margin-top:1px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
 .b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
 .unpaidbar{background:#3A2B12;border:1px solid #8F6B25;color:#FBEFD5;border-radius:12px;padding:12px 14px;margin:10px 0;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.unpaidbar[hidden]{display:none}.unpaidbar b{color:#F5C970}.unpaidbar.hot{background:#4A211C;border-color:#B5584B}.unpaidbar.hot b{color:#FFB4A8}.badge.b-stale{background:#FBE4E0;color:var(--tx-red)}.paybox{background:#2B2118;border:1px solid #5A4630;border-radius:12px;padding:12px 14px;margin:6px 0}.paybox .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
@@ -197,6 +202,9 @@ header small{color:var(--ink2);opacity:1}
     return el;
   }
   var inr = function (n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 }); };
+  // Indian calendar day of an order (the same clock the cards show), used to cut the list into days.
+  var dayKey = function (iso) { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); };
+  var dayLabel = function (iso) { var k = dayKey(iso); return new Date(iso).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short' }) + (k === dayKey(new Date().toISOString()) ? ' · Today' : k === dayKey(new Date(Date.now() - 864e5).toISOString()) ? ' · Yesterday' : ''); };
   var when = function (iso) { return iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''; };
   function toast(msg, ms) { var t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = 'none'; }, ms || 3500); }
 
@@ -369,7 +377,21 @@ header small{color:var(--ink2);opacity:1}
     var fb = $('filterBtn'), active = state.sort !== 'new' || state.range !== 'all' || state.gift || state.coupon || state.set; fb.textContent = active ? 'Filter •' : 'Filter'; fb.classList.toggle('on', !!active);
     var list = $('list'); list.textContent = '';
     if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
-    rows.forEach(function (o) {
+    // Shipped is two lists in one: parcels Delhivery has not collected yet, then parcels it has. Every other step is a single list.
+    var groups = state.filter === 'shipped'
+      ? [['await', 'Awaiting pickup', 'Delhivery has not collected these yet: request the pickup, then print the labels.', rows.filter(function (o) { return o.awaiting_pickup; })],
+         ['with', 'With courier', 'Collected and on the way.', rows.filter(function (o) { return !o.awaiting_pickup; })]].filter(function (g) { return g[3].length; })
+      : [[null, null, null, rows]];
+    var byDate = state.sort === 'new' || state.sort === 'old';   // a day header only makes sense when the list runs in date order
+    groups.forEach(function (g) {
+    if (g[1]) list.appendChild(h('div', { class: 'sechead ' + g[0] }, g[1] + ' · ' + g[3].length, ' ', h('small', {}, g[2])));
+    var tally = {}, lastDay = null;
+    if (byDate) g[3].forEach(function (o) { var k = dayKey(o.paid_at || o.created_at); tally[k] = tally[k] || { n: 0, b: 0 }; tally[k].n++; tally[k].b += o.boxes; });
+    g[3].forEach(function (o) {
+      if (byDate) {
+        var dk = dayKey(o.paid_at || o.created_at);
+        if (dk !== lastDay) { lastDay = dk; var t = tally[dk]; list.appendChild(h('div', { class: 'dayhead' }, h('b', {}, dayLabel(o.paid_at || o.created_at)), ' ', h('span', {}, t.n + ' order' + (t.n === 1 ? '' : 's') + ' · ' + t.b + ' box' + (t.b === 1 ? '' : 'es')))); }
+      }
       var pickable = o.state === 'topack' || o.state === 'packed' || o.state === 'shipped';
       var box = pickable ? h('input', { type: 'checkbox', 'aria-label': 'Select ' + o.id, onclick: function (e) { e.stopPropagation(); if (e.target.checked) state.sel[o.id] = 1; else delete state.sel[o.id]; bulkBar(); } }) : null;
       if (box && state.sel[o.id]) box.checked = true;
@@ -380,6 +402,7 @@ header small{color:var(--ink2);opacity:1}
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));
     });
+    });
     bulkBar();
   }
 
@@ -389,6 +412,7 @@ header small{color:var(--ink2);opacity:1}
     if (o.state === 'unpaid') return h('div', { class: 'qa' }, h('button', { class: 'btn small', onclick: function (e) { e.stopPropagation(); openOrder(o.id); } }, 'Send payment link'));
     var map = { topack: ['Mark packed', 'packed'], packed: ['Create shipment', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
     if (!m) return null;
+    if (o.state === 'shipped' && o.awaiting_pickup) return null;   // not collected yet: one tap must not be able to call it delivered (the order sheet still can)
     return h('div', { class: 'qa' }, h('button', { class: 'btn small', onclick: function (e) {
       e.stopPropagation();
       if (!m[1]) return openOrder(o.id);

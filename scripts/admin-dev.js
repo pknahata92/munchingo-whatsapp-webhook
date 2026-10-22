@@ -39,12 +39,17 @@ const orders = [
   mk('MNG-OTHR-1012', 95002, 'paid', {}),
   mk('MNG-TEST-1001', 90000, 'paid', {}),
   mk('MNG-CCCC-1009', 1500, 'paid', { shipped_at: new Date(now - 1000000).toISOString(), carrier: 'Delhivery', awb: '1234567890' }),
+  mk('MNG-WITH-1009', 1400, 'paid', { customer_name: 'Collins Courier', packed_at: new Date(now - 90000000).toISOString(), shipped_at: new Date(now - 80000000).toISOString(), carrier: 'Delhivery', awb: '5566778899' }),   // shipped, courier has collected it (marker event seeded below)
+  // Two orders either side of Indian midnight on 20/21 Oct (UTC date is the same for both): they must land under different day headers.
+  mk('MNG-ISTA-1000', 1, 'paid', { customer_name: 'Ist Alpha', created_at: '2026-10-20T17:00:00.000Z', updated_at: '2026-10-20T17:00:00.000Z' }),
+  mk('MNG-ISTB-1000', 1, 'paid', { customer_name: 'Ist Beta', created_at: '2026-10-20T19:00:00.000Z', updated_at: '2026-10-20T19:00:00.000Z' }),
   mk('MNG-DDDD-1009', 1700, 'pending_payment', { payment_id: null, payment_link_id: 'plink_1', payment_link_url: 'https://rzp.io/rzp/OLD' }),
   mk('MNG-UUUU-1011', 20, 'pending_payment', { payment_id: null, payment_link_id: 'plink_2', payment_link_url: 'https://rzp.io/rzp/FRESH', total: 900, discount_amount: 0, coupon_code: null, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 3, item_price: 300, unit: '250g' }] }),
   mk('MNG-WAFA-1011', 25, 'pending_payment', { payment_id: null, payment_link_id: 'plink_4', payment_link_url: 'https://rzp.io/rzp/WAFA', customer_phone: '919999900000' }),
   mk('MNG-NOEM-1011', 30, 'pending_payment', { payment_id: null, payment_link_id: 'plink_3', payment_link_url: 'https://rzp.io/rzp/NOEM', customer_email: null }),
   mk('MNG-EEEE-1008', 3000, 'cancelled', {}),
 ];
+events.push({ order_id: 'MNG-WITH-1009', event: 'courier_picked_up', actor_name: 'System', created_at: new Date(now - 70000000).toISOString() });
 const invoices = {};
 orders.filter((o) => o.payment_id && o.order_id !== 'MNG-FFFF-1010').forEach((o, i) => { const inv = buildInvoice(o, { invoiceNo: `MUN/26-27/${String(i + 1).padStart(4, '0')}`, issuedAt: new Date(o.created_at) }); invoices[o.order_id] = { order_id: o.order_id, invoice_no: inv.invoiceNo, supply_type: inv.supplyType, total_paise: inv.totalPaise, data: inv }; });
 const cns = [{ order_id: 'MNG-EEEE-1008', credit_note_no: 'CN/26-27/0001', amount_paise: 66500, issued_at: new Date(now - 2900000).toISOString(), is_full: true, reason_code: 'out_of_stock', data: { reasonLabel: 'Out of stock' } }];
@@ -63,6 +68,7 @@ stub('utils/database.js', {
   upsertAdminUser: async (r) => { const i = team.findIndex((t) => t.email === r.email); if (i >= 0) Object.assign(team[i], r); else team.push({ ...r, created_at: new Date().toISOString() }); },
   logOrderEvent: async (ev) => events.push({ ...ev, created_at: new Date().toISOString() }),
   listOrderEvents: async (id) => events.filter((e) => e.order_id === id),
+  listOrderEventsByName: async (name, ids) => events.filter((e) => e.event === name && ids.includes(e.order_id)),
   updateOrderIf: async (id, where, fields) => { const o = orders.find((x) => x.order_id === id); if (Object.entries(where).some(([k, v]) => (v === null ? o[k] != null : o[k] !== v))) return false; Object.assign(o, fields); return true; },
   reserveInvoiceNumber: async () => 100 + Object.keys(invoices).length,
   saveInvoice: async ({ invoice, fy, seq }) => { const row = { order_id: invoice.orderId, invoice_no: invoice.invoiceNo, supply_type: invoice.supplyType, total_paise: invoice.totalPaise, data: invoice, fy, seq }; invoices[invoice.orderId] = row; return row; },

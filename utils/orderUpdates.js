@@ -83,6 +83,9 @@ async function sweepOnce() {
       const { stage } = await track.fetchStage(order.awb);
       if (stage === 'booked') { res.waiting++; continue; }
       if (stage === 'unknown') { res.unknown++; continue; }
+      // The courier has had this parcel at some point: record it once. The admin Shipped tab uses this to tell
+      // "Awaiting pickup" (booked, not collected) from "With courier". It also fills in parcels collected before this existed.
+      if (!has(events, 'courier_picked_up')) await db.logOrderEvent({ actor_name: 'System', order_id: order.order_id, event: 'courier_picked_up', meta: { stage } });
       if (stage === 'returning') {
         if (!has(events, 'delivery_exception')) { await db.logOrderEvent({ actor_name: 'System', order_id: order.order_id, event: 'delivery_exception', meta: { stage } }); console.error(`[UPDATES] ${order.order_id} is being returned to sender`); }
         res.exceptions++; continue;
