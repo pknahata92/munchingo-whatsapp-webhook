@@ -73,6 +73,7 @@ app.use((req, res, next) => {
 });
 
 app.use(checkoutRoutes);
+app.use(require('./routes/reviews'));
 
 const PORT         = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'munchingo_webhook_secret_2026';
@@ -434,6 +435,18 @@ app.post('/internal/cancel', express.json(), async (req, res) => {
 });
 
 // ── "Subscribe & Save" daily renewal (GET) ────────────────────────────────────
+// Review requests (utils/reviews.js): the daily 11:00 IST job asks delivered buyers to rate their box. Secret required;
+// sends nothing unless REVIEW_REQUESTS_ENABLED=1 on Render.
+app.get('/internal/review-requests', async (req, res) => {
+  const secret = process.env.DIGEST_SECRET;
+  if (!secret) return res.sendStatus(503);
+  const expectedBuf = Buffer.from(secret);
+  const providedBuf = Buffer.from(String(req.query.secret || ''));
+  if (!(expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf))) return res.sendStatus(403);
+  try { res.json(await require('./utils/reviews').sweepRequests()); }
+  catch (e) { console.error('[REVIEWS] sweep error:', e.message); res.status(500).json({ error: e.message }); }
+});
+
 // Same reasoning and protection pattern as /internal/daily-digest above:
 // triggered by a scheduled GitHub Actions workflow (not an in-process timer,
 // since Render's free tier can spin the service down), reuses DIGEST_SECRET

@@ -34,6 +34,7 @@ function readToken(token) {
   if (!token || typeof token !== 'string') return null;
   let buf;
   try { buf = Buffer.from(token, 'base64url'); } catch (e) { return null; }
+  if (buf.toString('base64url') !== token) return null;   // only the exact link: base64 quietly ignores stray trailing characters
   if (buf.length < 18 || buf[buf.length - 17] !== 0x2e) return null;   // at least one character of order id, '.', 16 bytes
   const orderId = buf.subarray(0, buf.length - 17).toString();
   const given = buf.subarray(buf.length - 16);
@@ -181,4 +182,42 @@ async function sweepRequests() {
   return res;
 }
 
-module.exports = { signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT, setDeps, normPhone, dueRequests, sweepRequests, TEMPLATE, REVIEW_URL };
+// ── The review page's two calls ──────────────────────────────────────────────
+const LOW_RATING = 2;   // any flavour at or below this emails the owner straight away
+
+/** What the page needs: first name, the flavours received, and whether this order was already reviewed. Nothing else. */
+async function getForm(token) {
+  const { db } = D();
+  const orderId = readToken(token);
+  const order = orderId ? await db.getOrder(orderId) : null;
+  if (!order) return { status: 404, body: { error: "This link doesn't work." } };
+  const reviewed = !!(await db.getReviewByOrder(order.order_id));
+  return { status: 200, body: { first: firstName(order), flavours: flavoursFor(order), reviewed } };
+}
+
+async function submit(token, body) {
+  const { db, mail } = D();
+  const orderId = readToken(token);
+  const order = orderId ? await db.getOrder(orderId) : null;
+  if (!order) return { status: 404, body: { error: "This link doesn't work." } };
+  if (await db.getReviewByOrder(order.order_id)) return { status: 409, body: { error: 'Thanks, we have your review.' } };
+  const v = validateSubmission(order, body);
+  if (!v.ok) return { status: v.status, body: { error: v.error } };
+  const phone = normPhone(order.customer_phone);
+  const tasters = await db.listFoundingTasters();
+  const src = order.delivery_address && order.delivery_address.source;
+  const row = { ...v.row, network: require('./orderSource').isNetwork(src) || order.known_to_us === true, founding_taster: tasters.some((t) => normPhone(t.phone) === phone), status: 'new' };
+  try { await db.insertReview(row); }
+  catch (e) { if (e.message === 'duplicate') return { status: 409, body: { error: 'Thanks, we have your review.' } }; throw e; }
+  await db.logOrderEvent({ actor_name: 'Customer', order_id: order.order_id, event: 'review_received', meta: { ratings: row.ratings } });
+  const low = Object.entries(row.ratings).filter(([, n]) => n <= LOW_RATING);
+  if (low.length) {
+    const names = Object.fromEntries(FLAVOURS);
+    const rating = Object.entries(row.ratings).map(([slug, n]) => `${names[slug]} ${n}/5`).join(', ');
+    try { await mail.sendFeedbackAlert({ customerPhone: phone, customerName: order.customer_name, rating, comments: `Review for order ${order.order_id}. ${row.comment || '(no comment)'}` }); }
+    catch (e) { console.error('[REVIEWS] low-rating alert failed:', e.message); }
+  }
+  return { status: 201, body: { ok: true, googleUrl: process.env.GOOGLE_REVIEW_URL || '' } };
+}
+
+module.exports = { getForm, submit, signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT, setDeps, normPhone, dueRequests, sweepRequests, TEMPLATE, REVIEW_URL };

@@ -109,6 +109,56 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   waThrows = false; res = await r.sweepRequests();
   ok(sent.length === 0 && res.asked === 0, 'a failed WhatsApp is not retried the next day (the ask is recorded once)');
 
+  // ── Task 4: public form and submit ──
+  process.env.GOOGLE_REVIEW_URL = 'https://g.page/r/CThPt_VWhjZkEAI/review';
+  const saved = [], alerts = [], tl = [];
+  const ordersById = {
+    'MNG-F-0001': { order_id: 'MNG-F-0001', status: 'paid', customer_name: 'Neha Jain', customer_phone: '919810000101', customer_email: 'neha@example.com', delivery_address: { raw: 'A-1, Civil Lines, Jaipur, Rajasthan - 302006', source: { how: 'friend_family' } }, items: [{ slug: 'trio-gift-set-kesari-lite-sugar-original', quantity: 1 }] },
+    'MNG-F-0002': { order_id: 'MNG-F-0002', status: 'paid', customer_name: 'Om Taster', customer_phone: '919810000777', delivery_address: { raw: 'B-2, Model Town, Delhi, Delhi - 110009' }, items: [{ slug: 'atta-kesari', quantity: 3 }] },
+    'MNG-F-0003': { order_id: 'MNG-F-0003', status: 'paid', customer_name: 'Old Friend', customer_phone: '919810000102', known_to_us: true, delivery_address: { raw: 'C-3, Sector 5, Noida, UP - 201301' }, items: [{ slug: 'atta-ajwain', quantity: 3 }] },
+  };
+  r.setDeps({
+    now: () => NOW,
+    db: {
+      getOrder: async (id) => ordersById[id] || null,
+      getReviewByOrder: async (id) => saved.find((x) => x.order_id === id) || null,
+      insertReview: async (row) => { if (saved.some((x) => x.order_id === row.order_id)) throw new Error('duplicate'); saved.push(row); return { id: saved.length }; },
+      listFoundingTasters: async () => [{ phone: '9810000777' }],
+      logOrderEvent: async (e) => { tl.push(e); },
+    },
+    mail: { sendFeedbackAlert: async (a) => { alerts.push(a); } },
+  });
+  let g = await r.getForm('not-a-real-token');
+  ok(g.status === 404, 'a bad link: 404');
+  g = await r.getForm(r.signToken('MNG-UNKNOWN-0000'));
+  ok(g.status === 404, 'a well-signed link to an order that does not exist: 404');
+  g = await r.getForm(r.signToken('MNG-F-0001'));
+  ok(g.status === 200 && g.body.first === 'Neha' && g.body.flavours.map((x) => x.slug).join(',') === 'atta-original,atta-kesari,atta-lite-sugar' && g.body.reviewed === false, 'the form gets first name and the flavours received');
+  const bodyText = JSON.stringify(g.body);
+  ok(!/919810000101|Civil Lines|neha@example|customer_phone|address|email/i.test(bodyText), 'the form never sees phone, address or email (' + bodyText + ')');
+  let sres = await r.submit(r.signToken('MNG-F-0001'), { ratings: { 'atta-original': 5, 'atta-kesari': 1, 'atta-lite-sugar': 4 }, comment: 'Kesari too sweet', showAs: 'name', consent: true });
+  ok(sres.status === 201 && sres.body.googleUrl === process.env.GOOGLE_REVIEW_URL, 'first submit: saved, and the Google link comes back for everyone (even with a 1-star rating)');
+  ok(saved[0].network === true && saved[0].founding_taster === false && saved[0].status === 'new', 'a "Friend or family" order is marked network; status starts new');
+  ok(alerts.length === 1 && /MNG-F-0001/.test(JSON.stringify(alerts[0])), 'a rating of 2 or below emails the owner once, with the order');
+  ok(tl.some((e) => e.event === 'review_received' && e.order_id === 'MNG-F-0001'), 'the review is on the order timeline');
+  sres = await r.submit(r.signToken('MNG-F-0001'), { ratings: { 'atta-original': 5, 'atta-kesari': 5, 'atta-lite-sugar': 5 }, showAs: 'name', consent: true });
+  ok(sres.status === 409 && /Thanks, we have your review/.test(sres.body.error) && saved.length === 1, 'a second submit is refused and changes nothing');
+  ok((await r.getForm(r.signToken('MNG-F-0001'))).body.reviewed === true, 'after a review the form says so');
+  sres = await r.submit(r.signToken('MNG-F-0002'), { ratings: { 'atta-kesari': 5 }, showAs: 'anonymous', consent: false });
+  ok(sres.status === 201 && saved[1].founding_taster === true && saved[1].network === false && alerts.length === 1, 'a founding taster is marked as one (phone saved without 91 still matches); 5 stars sends no alert');
+  sres = await r.submit(r.signToken('MNG-F-0003'), { ratings: { 'atta-ajwain': 4 }, showAs: 'name', consent: true });
+  ok(sres.status === 201 && saved[2].network === true, 'an order the owner marked "known to us" is marked network');
+  sres = await r.submit(r.signToken('MNG-F-0002') + 'x', { ratings: {} });
+  ok(sres.status === 404, 'submit with a broken link: 404');
+  sres = await r.submit(r.signToken('MNG-F-0001').replace(/.$/, ''), {});
+  ok(sres.status === 404, 'submit with a truncated link: 404');
+  const routeSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'routes', 'reviews.js'), 'utf8');
+  ok(/router\.get\('\/api\/review\/:token', rateLimit\(\{ windowMs: 60_000, max: 20 \}\)/.test(routeSrc) && /router\.post\('\/api\/review\/:token', rateLimit\(\{ windowMs: 60_000, max: 5 \}\)/.test(routeSrc), 'both review routes are rate limited (20 and 5 a minute)');
+  const serverSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
+  ok(/routes\/reviews/.test(serverSrc) && /\/internal\/review-requests/.test(serverSrc), 'server mounts the review routes and the daily job endpoint');
+  const wf = require('fs').readFileSync(require('path').join(__dirname, '..', '.github', 'workflows', 'review-requests.yml'), 'utf8');
+  ok(/cron: '30 5 \* \* \*'/.test(wf) && /internal\/review-requests\?secret=\$\{\{ secrets\.DIGEST_SECRET \}\}/.test(wf), 'the daily job runs at 11:00 IST with the secret');
+
   console.log(`reviews-test: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
