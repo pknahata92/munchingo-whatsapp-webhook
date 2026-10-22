@@ -36,7 +36,8 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .dayhead:first-child{margin-top:6px}.dayhead b{font-weight:700}.dayhead span{opacity:.85;font-size:12px;white-space:nowrap}
 .sechead{margin:18px 2px 6px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .sechead:first-child{margin-top:4px}.sechead.await{color:var(--tx-amber)}.sechead.with{color:var(--tx-green)}
-.linebtns{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.linebtns{display:flex;gap:6px;align-items:center;flex-shrink:0;margin-left:auto}
+.hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
 .sechead small{display:block;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink2);font-size:12px;margin-top:1px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
 .b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
@@ -833,14 +834,23 @@ header small{color:var(--ink2);opacity:1}
       toast(okMsg(r), 5000); refreshLow(); openInventory();
     }).catch(function () { toast('Could not reach the server', 6000); done(); });
   }
+  // The lot is the day a batch was prepared. Pick it on the calendar; the code (15OCT26) and best-before (90 days later) fill in.
+  var MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  function lotFromDate(v) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || ''); return m ? m[3] + MON[Number(m[2]) - 1] + m[1].slice(2) : ''; }
+  function dateFromLot(c) { var m = /^(\d{2})([A-Za-z]{3})(\d{2})$/.exec(String(c || '').trim()), mo = m ? MON.indexOf(m[2].toUpperCase()) : -1; return mo < 0 ? '' : '20' + m[3] + '-' + ('0' + (mo + 1)).slice(-2) + '-' + m[1]; }
+  function plusDays(v, n) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || ''); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n)).toISOString().slice(0, 10) : ''; }
   // `pre` = an earlier receipt being corrected (from /inventory/receipt): the form refills from it, and saving cancels it and writes the new one in one step.
   function invReceive(it, pre) {
     var isProd = it.kind === 'product';
-    var rec = numIn('e.g. 160'), dmg = numIn('0'), lot = h('input', { placeholder: 'e.g. 15OCT26 (the date it was prepared)', value: (it.lots[0] && it.lots[0].lot_code) || '' }), bb = h('input', { type: 'date' }),
+    var rec = numIn('e.g. 160'), dmg = numIn('0'), lot = h('input', { placeholder: 'Fills in from the date above', value: (it.lots[0] && it.lots[0].lot_code) || '' }), lotDate = h('input', { type: 'date', max: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) }), bb = h('input', { type: 'date' }),
       ref = h('input', { placeholder: 'Challan or invoice number (optional)' }), kg = h('input', { type: 'number', step: '0.001', inputmode: 'decimal', placeholder: 'Billed kg (optional)' }), amt = h('input', { type: 'number', step: '0.01', inputmode: 'decimal', placeholder: 'Amount in rupees (optional)' }), note = h('input', { placeholder: 'Note (optional)' });
-    if (pre) { rec.value = pre.received; dmg.value = pre.damaged || ''; lot.value = pre.lot; bb.value = pre.bestBefore; ref.value = pre.ref; kg.value = pre.billedKg; amt.value = pre.amountRupees; note.value = pre.note; }
+    // Picking a date sets the lot code and best-before; an old lot that is not a date (rare) is left exactly as it was.
+    var onLotDate = function () { if (!lotDate.value) return; lot.value = lotFromDate(lotDate.value); bb.value = plusDays(lotDate.value, 90); };
+    lotDate.addEventListener('change', onLotDate); lotDate.addEventListener('input', onLotDate);
+    lotDate.value = dateFromLot(lot.value);
+    if (pre) { rec.value = pre.received; dmg.value = pre.damaged || ''; lot.value = pre.lot; lotDate.value = dateFromLot(pre.lot); bb.value = pre.bestBefore; ref.value = pre.ref; kg.value = pre.billedKg; amt.value = pre.amountRupees; note.value = pre.note; }
     invForm(pre ? 'Correct receipt' : 'Receive', it, [pre ? h('p', { class: 'muted' }, 'Nothing changes until you save. Saving cancels the old line (+' + pre.received + (pre.damaged ? ', ' + pre.damaged + ' damaged' : '') + ') and adds this one. Nothing is deleted.') : null, h('label', {}, 'How many ' + it.unit + ' arrived'), rec, h('label', {}, 'How many of them are damaged or not okay'), dmg,
-      isProd ? h('label', {}, 'Lot') : null, isProd ? lot : null, isProd ? h('label', {}, 'Best before (optional)') : null, isProd ? bb : null,
+      isProd ? h('label', {}, 'Prepared on (the day this batch was baked)') : null, isProd ? lotDate : null, isProd ? h('label', {}, 'Lot code (fills in from the date)') : null, isProd ? lot : null, isProd ? h('label', {}, 'Best before (90 days after preparing; change it if the pack says otherwise)') : null, isProd ? bb : null,
       h('label', {}, 'Challan / invoice'), ref, isProd ? h('label', {}, 'Billed weight and amount (optional)') : null, isProd ? kg : null, isProd ? amt : null, h('label', {}, 'Note'), note], function (done) {
       var r = Number(rec.value), d = Number(dmg.value || 0);
       if (!(r >= 1)) { toast('Enter how many arrived.'); return done(); }
@@ -910,7 +920,7 @@ header small{color:var(--ink2);opacity:1}
       var chips = h('div', { class: 'chips' }, [['all', 'All'], ['received', 'Received'], ['out', 'Taken out'], ['sales', 'Sales']].map(function (c) { return h('button', { class: 'chip' + (invHistFilter === c[0] ? ' on' : ''), type: 'button', onclick: function () { invHistFilter = c[0]; invHistory(); } }, c[1]); }));
       var lines = j.movements.map(function (m) {
         var can = !m.reversed && ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
-        return h('div', { class: 'line' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.reversed ? ' · Cancelled' : '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
+        return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.reversed ? ' · Cancelled' : '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
           h('div', { class: 'linebtns' }, !m.reversed && m.type === 'RECEIVE' ? h('button', { class: 'btn small', onclick: function () { correctReceipt(m); } }, 'Correct') : null,
           can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null));
       });

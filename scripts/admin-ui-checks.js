@@ -313,6 +313,28 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Receive form: pick the date the batch was prepared on a calendar instead of typing a lot code
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText, set } = o;
+    click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock list');
+    click(byText('#viewStock button', /^Receive stock$/)); await until(() => /Which/i.test(text(q('#viewStock'))), 3000, 'the item picker');
+    click(byText('#viewStock button', /Atta Original/)); await until(() => /Receive: Atta Original/.test(text(q('#viewStock'))), 3000, 'the receive form');
+    const dates = qa('#viewStock input[type=date]');
+    ok(dates.length === 2, 'the receive form has two calendar pickers: prepared on, and best before (saw ' + dates.length + ')');
+    ok(/Prepared on/i.test(text(q('#viewStock'))), 'the first one is labelled Prepared on');
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    ok(dates[0].max === today, 'a batch cannot be prepared in the future: the calendar stops at today (' + dates[0].max + ')');
+    set(dates[0], '2026-10-15');
+    ok(qa('#viewStock input').some((i) => i.value === '15OCT26'), 'picking 15 Oct 2026 fills the lot code as 15OCT26 (capitals, same style every time)');
+    ok(dates[1].value === '2027-01-13', 'best before fills in 90 days later: 2027-01-13 (saw ' + dates[1].value + ')');
+    set(dates[0], '2027-03-05');
+    ok(qa('#viewStock input').some((i) => i.value === '05MAR27') && dates[1].value === '2027-06-03', 'another date: 05MAR27, best before 2027-06-03');
+    set(dates[1], '2027-06-10');
+    ok(dates[1].value === '2027-06-10', 'best before can still be changed by hand');
+    ok(o.errors.length === 0, 'no page errors on the receive form (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   // Stock history: filter chips (receipts were buried under packed-order lines), and Correct on a receipt
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click, byText, set } = o;
@@ -334,7 +356,10 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     click(btn(lines.find((l) => /atta-lite-sugar/.test(text(l))), /^Correct$/));
     await until(() => /Correct receipt: Atta Sugar-Lite/.test(text(q('#viewStock'))), 4000, 'the correct form');
     const inputs = qa('#viewStock input');
-    ok(inputs[0].value === '33' && inputs[1].value === '3' && inputs[2].value === '15OCT26', 'the form is filled with the old receipt: 33 received, 3 damaged, lot 15OCT26 (saw ' + inputs.slice(0, 3).map((i) => i.value).join('/') + ')');
+    ok(inputs[0].value === '33' && inputs[1].value === '3' && inputs.some((i) => i.value === '15OCT26'), 'the form is filled with the old receipt: 33 received, 3 damaged, lot 15OCT26 (saw ' + inputs.map((i) => i.value).join('/') + ')');
+    const dates = qa('#viewStock input[type=date]');
+    ok(dates.length === 2 && dates[0].value === '2026-10-15' && dates[1].value === '2027-01-13', 'the dates are calendar pickers, refilled from the old receipt: prepared 2026-10-15, best before 2027-01-13 (saw ' + dates.map((d) => d.value).join(' / ') + ')');
+    ok(inputs.some((i) => i.value === '15OCT26'), 'correcting without touching the date keeps the old lot code exactly');
     ok(inputs.some((i) => i.value === '3 crushed'), 'the old note is carried over');
     ok((await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand === before, 'opening Correct changes nothing yet');
     set(inputs[0], '36'); set(inputs[1], '0');
