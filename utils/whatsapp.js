@@ -47,6 +47,23 @@ async function sendTemplate(to, templateName, languageCode, bodyParams) {
   });
 }
 
+// ── Approved template with a "Visit website" button whose link ends in a per-message suffix (the review link token) ──
+async function sendTemplateWithUrlButton(to, templateName, languageCode, bodyParams, urlSuffix) {
+  return sendMessage({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      components: [
+        { type: 'body', parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })) },
+        { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(urlSuffix) }] },
+      ],
+    },
+  });
+}
 
 // ── Upload a file to WhatsApp media (returns the media id) ───────────────────
 async function uploadMedia(buffer, mimeType, filename) {
@@ -212,7 +229,7 @@ async function sendImage(to, imageUrl, caption) {
   });
 }
 
-module.exports = {
+module.exports = { sendTemplateWithUrlButton,
   sendTemplate,
   uploadMedia,
   sendDocumentTemplate,

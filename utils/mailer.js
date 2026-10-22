@@ -285,6 +285,17 @@ async function sendPackedEmail({ order }) {
   console.log(`[MAILER] Packed email sent for #${order.order_id}`);
 }
 
+async function sendReviewRequestEmail({ order, url, founders }) {
+  const t = require('./emailTemplates');
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [order.customer_email],
+    subject: `How was your Munchingo box? (order ${order.order_id})`,
+    html: t.reviewRequestHtml({ order, url, founders }),
+  });
+  if (error) throw new Error(error.message);
+}
+
 async function sendDeliveredEmail({ order }) {
   const t = require('./emailTemplates');
   const { error } = await resend.emails.send({
@@ -384,4 +395,4 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+module.exports = { sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };

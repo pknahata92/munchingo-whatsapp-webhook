@@ -93,4 +93,92 @@ function validateSubmission(order, body) {
   };
 }
 
-module.exports = { signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT };
+// ── Who is due, and sending ──────────────────────────────────────────────────
+const DAY = 86400000;
+const ASK_AFTER_DAYS = 4;          // days after delivery
+const REMIND_AFTER_DAYS = 6;       // days after the ask (day 10 for a normal order; measured from the ask so old deliveries are not asked and reminded on consecutive days)
+const PHONE_GAP_DAYS = 30;         // one ask per phone per 30 days, however many orders
+const REVIEW_URL = 'https://munchingo.com/review?t=';
+const TEMPLATE = { standard: 'munchingo_review_request', founders: 'munchingo_review_founders' };
+
+let deps = null;
+function setDeps(d) { deps = d; } // tests only
+function D() {
+  if (deps) return deps;
+  return { db: require('./database'), wa: require('./whatsapp'), mail: require('./mailer'), now: () => Date.now() };
+}
+const enabled = () => /^(1|true|yes)$/i.test(String(process.env.REVIEW_REQUESTS_ENABLED || ''));
+
+/** Digits with the 91 prefix, so 9810000001 and +91 98100 00001 are the same person. */
+function normPhone(p) {
+  const d = String(p || '').replace(/\D/g, '');
+  return d.length === 10 ? '91' + d : d;
+}
+const at = (e) => Date.parse(e.created_at);
+const last = (events, name) => (events || []).filter((e) => e.event === name).sort((a, b) => at(b) - at(a))[0] || null;
+
+/** Pure: which orders get an ask or a reminder now. */
+function dueRequests({ orders, eventsByOrder = {}, tasters = [], now }) {
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
+  const tasterPhones = new Set(tasters.map((t) => normPhone(t.phone)));
+  // The latest ask (or reminder) sent to each phone, across all its orders.
+  const lastAskByPhone = {};
+  for (const o of orders) {
+    const ph = normPhone(o.customer_phone);
+    for (const e of eventsByOrder[o.order_id] || []) {
+      if (e.event !== 'review_requested' && e.event !== 'review_reminded') continue;
+      if (!lastAskByPhone[ph] || at(e) > lastAskByPhone[ph]) lastAskByPhone[ph] = at(e);
+    }
+  }
+  const out = [];
+  const askedThisRun = new Set();
+  const eligible = orders
+    .filter((o) => o.status === 'paid' && o.delivered_at && !/^MNG-TEST/i.test(o.order_id) && normPhone(o.customer_phone))
+    .sort((a, b) => Date.parse(a.delivered_at) - Date.parse(b.delivered_at));
+  for (const o of eligible) {
+    const ev = eventsByOrder[o.order_id] || [];
+    const ph = normPhone(o.customer_phone);
+    if (last(ev, 'review_received')) continue;
+    const asked = last(ev, 'review_requested');
+    if (!asked) {
+      if (nowMs - Date.parse(o.delivered_at) < ASK_AFTER_DAYS * DAY) continue;
+      if (askedThisRun.has(ph)) continue;
+      if (lastAskByPhone[ph] && nowMs - lastAskByPhone[ph] < PHONE_GAP_DAYS * DAY) continue;
+      askedThisRun.add(ph);
+      out.push({ order: o, kind: 'ask', founders: tasterPhones.has(ph) });
+    } else if (!last(ev, 'review_reminded') && nowMs - at(asked) >= REMIND_AFTER_DAYS * DAY) {
+      out.push({ order: o, kind: 'reminder', founders: false });
+    }
+  }
+  return out;
+}
+
+/** The daily job: send what is due, record each send on the order timeline. Never throws for one order. */
+async function sweepRequests() {
+  if (!enabled()) return { disabled: true };
+  const { db, wa, mail, now } = D();
+  const nowMs = now();
+  const orders = await db.listDeliveredOrders({ since: new Date(nowMs - 120 * DAY).toISOString() });
+  const tasters = await db.listFoundingTasters();
+  const eventsByOrder = {};
+  for (const o of orders) eventsByOrder[o.order_id] = await db.listOrderEvents(o.order_id);
+  const list = dueRequests({ orders, eventsByOrder, tasters, now: nowMs });
+  const res = { checked: orders.length, asked: 0, reminded: 0, skipped: orders.length - list.length, failed: 0 };
+  for (const { order, kind, founders } of list) {
+    const token = signToken(order.order_id);
+    const url = REVIEW_URL + token;
+    let waResult = 'sent', emailResult = 'none';
+    try { await wa.sendTemplateWithUrlButton(normPhone(order.customer_phone), founders ? TEMPLATE.founders : TEMPLATE.standard, 'en', [firstName(order) || 'there', order.order_id], token); }
+    catch (e) { waResult = 'failed'; console.error(`[REVIEWS] WhatsApp ${kind} failed for ${order.order_id}:`, e.message); }
+    if (order.customer_email) {
+      try { await mail.sendReviewRequestEmail({ order, url, founders }); emailResult = 'sent'; }
+      catch (e) { emailResult = 'failed'; console.error(`[REVIEWS] email ${kind} failed for ${order.order_id}:`, e.message); }
+    }
+    if (waResult === 'failed' || emailResult === 'failed') res.failed++;
+    await db.logOrderEvent({ actor_name: 'System', order_id: order.order_id, event: kind === 'ask' ? 'review_requested' : 'review_reminded', meta: { founders, wa: waResult, email: emailResult } });
+    if (kind === 'ask') res.asked++; else res.reminded++;
+  }
+  return res;
+}
+
+module.exports = { signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT, setDeps, normPhone, dueRequests, sweepRequests, TEMPLATE, REVIEW_URL };

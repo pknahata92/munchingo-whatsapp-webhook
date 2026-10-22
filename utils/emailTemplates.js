@@ -314,6 +314,18 @@ function deliveredHtml({ order }) {
   });
 }
 
+// ── Customer: how was your box? (review request; the same words as the WhatsApp message) ──
+function reviewRequestHtml({ order, url, founders }) {
+  const first = String(order.customer_name || 'there').trim().split(/\s+/)[0];
+  const line = founders
+    ? `You bought Munchingo before it had a single review, a following or a track record. Just my word. That's trust, and I know it. So please be a terrible critic: what's off and what's amazing, no sugar coating. Tap below to rate each flavor from order ${esc(order.order_id)}. You're already our guinea pig for every future launch, free.<br><br>Love, Prashant`
+    : `Your Munchingo box (order ${esc(order.order_id)}) arrived a few days ago. How were the cookies? Tap below to rate each flavor. It takes about 20 seconds, and honest is more useful to us than nice.`;
+  const body = card(`
+    <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">${line}</div>
+    <div style="text-align:center;padding:22px 0 4px;">${button(url, 'Rate your box')}</div>`);
+  return shell({ preheader: 'How were the cookies? Rate each flavor in about 20 seconds.', title: `How was your box, ${esc(first)}?`, subtitle: 'Honest is more useful to us than nice.', body, promo: 'none', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean) });
+}
+
 // ── Owner: refund processed (with credit note) ───────────────────────────────
 function ownerRefundHtml({ order, refund, creditNote }) {
   const row = (k, v) => `<tr><td style="padding:5px 0;color:#8A7765;width:110px;vertical-align:top;font-family:${FONT};font-size:13px;">${k}</td><td style="padding:5px 0;font-family:${FONT};font-size:13px;color:${C.ink};">${v}</td></tr>`;
@@ -369,4 +381,4 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
   </table></td></tr></table></body></html>`;
 }
 
-module.exports = { paymentReminderHtml, shippedHtml, packedHtml, deliveredHtml, ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };
+module.exports = { reviewRequestHtml, paymentReminderHtml, shippedHtml, packedHtml, deliveredHtml, ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };
