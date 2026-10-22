@@ -45,7 +45,7 @@ const orders = [
   mk('MNG-ISTB-1000', 1, 'paid', { customer_name: 'Ist Beta', created_at: '2026-10-20T19:00:00.000Z', updated_at: '2026-10-20T19:00:00.000Z' }),
   // Delivered practice orders for the review feature: one 6 days ago (due for an ask), one 15 days ago by a founding taster.
   mk('MNG-REVA-1001', 9000, 'paid', { customer_name: 'Riya Kapoor', packed_at: new Date(now - 9000 * 60000).toISOString(), shipped_at: new Date(now - 8600 * 60000).toISOString(), delivered_at: new Date(now - 6 * 86400000).toISOString(), carrier: 'Delhivery', awb: '7788990011', items: [{ slug: 'trio-gift-set-kesari-lite-sugar-original', productName: 'Trio Gift Set', quantity: 1, item_price: 799, unit: '750g' }] }),
-  mk('MNG-REVB-1002', 25000, 'paid', { customer_name: 'Founding Taster', customer_phone: '919810000777', packed_at: new Date(now - 25000 * 60000).toISOString(), shipped_at: new Date(now - 24000 * 60000).toISOString(), delivered_at: new Date(now - 15 * 86400000).toISOString(), carrier: 'Delhivery', awb: '7788990022', items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 2, item_price: 300, unit: '250g' }, { slug: 'atta-ajwain', productName: 'Atta Ajwain', quantity: 1, item_price: 300, unit: '250g' }] }),
+  mk('MNG-REVB-1002', 25000, 'paid', { created_at: '2026-10-14T06:00:00.000Z', customer_name: 'Founding Taster', customer_phone: '919810000777', packed_at: new Date(now - 25000 * 60000).toISOString(), shipped_at: new Date(now - 24000 * 60000).toISOString(), delivered_at: new Date(now - 15 * 86400000).toISOString(), carrier: 'Delhivery', awb: '7788990022', items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 2, item_price: 300, unit: '250g' }, { slug: 'atta-ajwain', productName: 'Atta Ajwain', quantity: 1, item_price: 300, unit: '250g' }] }),
   mk('MNG-DDDD-1009', 1700, 'pending_payment', { payment_id: null, payment_link_id: 'plink_1', payment_link_url: 'https://rzp.io/rzp/OLD' }),
   mk('MNG-UUUU-1011', 20, 'pending_payment', { payment_id: null, payment_link_id: 'plink_2', payment_link_url: 'https://rzp.io/rzp/FRESH', total: 900, discount_amount: 0, coupon_code: null, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 3, item_price: 300, unit: '250g' }] }),
   mk('MNG-WAFA-1011', 25, 'pending_payment', { payment_id: null, payment_link_id: 'plink_4', payment_link_url: 'https://rzp.io/rzp/WAFA', customer_phone: '919999900000' }),
@@ -53,7 +53,10 @@ const orders = [
   mk('MNG-EEEE-1008', 3000, 'cancelled', {}),
 ];
 events.push({ order_id: 'MNG-WITH-1009', event: 'courier_picked_up', actor_name: 'System', created_at: new Date(now - 70000000).toISOString() });
-const reviews = []; let reviewSeq = 0;
+const reviews = [
+  { id: 1, order_id: 'MNG-REVB-1002', customer_phone: '919810000777', ratings: { 'atta-original': 1, 'atta-ajwain': 4 }, comment: '<img src=x onerror=alert(1)>', display_name: 'Founding', city: 'Delhi', consent_publish: false, network: false, founding_taster: true, status: 'new', hidden_reason: null, created_at: new Date(now - 2 * 86400000).toISOString() },
+  { id: 2, order_id: 'MNG-REVA-1001', customer_phone: '919810000101', ratings: { 'atta-original': 5, 'atta-kesari': 4, 'atta-lite-sugar': 5 }, comment: 'Kesari is the one', display_name: 'Riya', city: 'Mumbai', consent_publish: true, network: true, founding_taster: false, status: 'new', hidden_reason: null, created_at: new Date(now - 86400000).toISOString() },
+]; let reviewSeq = 2;
 const tasters = [{ phone: '919810000777', name: 'Founding Taster', first_order_id: 'MNG-REVB-1002', note: 'practice', added_at: new Date(now - 20 * 86400000).toISOString() }];
 const invoices = {};
 orders.filter((o) => o.payment_id && o.order_id !== 'MNG-FFFF-1010').forEach((o, i) => { const inv = buildInvoice(o, { invoiceNo: `MUN/26-27/${String(i + 1).padStart(4, '0')}`, issuedAt: new Date(o.created_at) }); invoices[o.order_id] = { order_id: o.order_id, invoice_no: inv.invoiceNo, supply_type: inv.supplyType, total_paise: inv.totalPaise, data: inv }; });

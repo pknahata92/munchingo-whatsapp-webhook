@@ -193,5 +193,19 @@ async function login(email) {
   ok((await call('/team', o.token, { email: 'owner@example.com', role: 'staff' })).s === 409, 'cannot demote env owner');
   ok((await call('/team', o.token, { email: 'staff@example.com', role: 'staff', active: true })).j.ok, 're-enable staff');
   ok((await call('/orders', s.token)).s === 200, 're-enabled staff back in');
+  // reviews and founding tasters (owner only)
+  for (const [p, body] of [['/reviews'], ['/reviews/1/publish', {}], ['/reviews/1/hide', { reason: 'abusive' }], ['/founding-tasters'], ['/founding-tasters', { rows: [] }], ['/orders/MNG-REVA-1001/known', { known: true }]]) {
+    ok((await call(p, s.token, body)).s === 403, 'staff cannot use ' + p);
+  }
+  const rv = await call('/reviews', o.token);
+  ok(rv.j.ok && rv.j.reviews.length >= 2 && rv.j.totals && 'asked' in rv.j.totals && 'received' in rv.j.totals && 'rate' in rv.j.totals, 'owner lists reviews with totals');
+  ok((await call('/reviews/2/hide', o.token, { reason: 'low_rating' })).s === 400, 'a low rating is not a reason to hide');
+  ok((await call('/reviews/2/hide', o.token, { reason: 'abusive' })).j.ok, 'hide with a fixed reason works');
+  ok((await call('/reviews', o.token)).j.reviews.find((r) => r.id === 2).hidden_reason === 'abusive', 'the reason is recorded');
+  ok((await call('/reviews/1/publish', o.token, {})).s === 409, 'a review without consent cannot be published');
+  ok((await call('/reviews/2/publish', o.token, {})).j.ok && (await call('/reviews', o.token)).j.reviews.find((r) => r.id === 2).status === 'published', 'a consented review can be published (even after a hide)');
+  const ft = await call('/founding-tasters', o.token);
+  ok(ft.j.ok && ft.j.rows.some((r) => r.phone === '919810000777' && r.ticked), 'founding tasters: the 11-17 Oct buyers are listed, ticked');
+  ok((await call('/orders/MNG-REVA-1001/known', o.token, { known: true })).j.ok, 'owner marks an order as known to us');
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

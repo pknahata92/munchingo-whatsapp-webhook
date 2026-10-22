@@ -90,6 +90,15 @@ router.post('/admin/api/inventory/hamper', sw((req, inv) => inv.offlineHamper({ 
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
 router.post('/admin/api/inventory/reverse', sw((req, inv) => inv.reverse({ id: Number((req.body || {}).id), reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));
+// Reviews and founding tasters (owner only). See utils/adminReviews.js.
+const rv = () => require('../utils/adminReviews');
+const rw = (fn) => wrap(async (req) => { try { return await fn(req); } catch (e) { if (e instanceof rv().ReviewError) throw new actions.AdminError(e.message, e.status); throw e; } });
+router.get('/admin/api/reviews', owner, rw(() => rv().list()));
+router.post('/admin/api/reviews/:id/publish', owner, rw((req) => rv().publish(req.params.id, req.admin)));
+router.post('/admin/api/reviews/:id/hide', owner, rw((req) => rv().hide(req.params.id, (req.body || {}).reason, req.admin)));
+router.get('/admin/api/founding-tasters', owner, rw(async () => ({ rows: await rv().tasterCandidates() })));
+router.post('/admin/api/founding-tasters', owner, rw((req) => rv().saveTasters((req.body || {}).rows, req.admin)));
+router.post('/admin/api/orders/:id/known', owner, rw((req) => rv().setKnown(req.params.id, (req.body || {}).known)));
 router.post('/admin/api/inventory/item', owner, sw((req, inv) => inv.addItem(req.body || {})));
 router.post('/admin/api/inventory/rename-lot', owner, sw((req, inv) => inv.renameLot({ ...(req.body || {}), actor: req.admin, isOwner: true })));
 router.post('/admin/api/inventory/level', owner, sw((req, inv) => inv.setLevel({ slug: (req.body || {}).slug, lowLevel: (req.body || {}).lowLevel })));

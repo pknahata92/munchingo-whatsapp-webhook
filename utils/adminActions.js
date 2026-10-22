@@ -74,6 +74,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null, courierPickedUp 
     shipped_at: o.shipped_at || null, carrier: o.carrier || '', awb: o.awb || '', admin_note: o.admin_note || '',
     // Shipment booked (so the order is "shipped") but Delhivery has not collected the parcel yet. Manual hand-offs have no tracking, so never.
     awaiting_pickup: state === 'shipped' && trackable(o) && !courierPickedUp,
+    known_to_us: !!o.known_to_us,
   };
 }
 

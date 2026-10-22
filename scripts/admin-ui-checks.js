@@ -405,5 +405,29 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     s.close();
   });
 
+  // Reviews and Founding tasters (owner, More)
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText } = o;
+    click(byText('#tabs .tab', /^More$/)); await sleep(200);
+    ok(!!byText('#viewMore button', /Reviews/) && !!byText('#viewMore button', /Founding tasters/), 'More has Reviews and Founding tasters for the owner');
+    click(byText('#viewMore button', /Reviews/)); await until(() => /Reviews/.test(text(q('#panel'))) && qa('#panel .rvcard').length >= 2, 4000, 'the reviews list');
+    const cards = qa('#panel .rvcard');
+    const bad = cards.find((c) => /REVB-1002/.test(text(c)));
+    ok(!!bad && !bad.querySelector('img') && /<img src=x onerror=alert\(1\)>/.test(text(bad)), 'a comment with HTML shows as plain text; nothing is injected');
+    ok(/Atta Original/.test(text(bad)) && /★/.test(text(bad)) && /NEW/i.test(text(bad)), 'a 1-star review shows its stars and is not hidden');
+    ok(/Founding taster: gets new products free/.test(text(bad)), 'the founding taster label');
+    ok(cards.some((c) => /Friend or family/.test(text(c))), 'the friend or family label');
+    ok(/asked/i.test(text(q('#panel'))) && /received/i.test(text(q('#panel'))), 'the totals line');
+    click(byText('#panel button', /^Close$/)); await sleep(100);
+    click(byText('#viewMore button', /Founding tasters/)); await until(() => /Founding tasters/.test(text(q('#panel'))) && qa('#panel input[type=checkbox]').length >= 1, 4000, 'the tasters list');
+    const boxes = qa('#panel input[type=checkbox]');
+    ok(boxes.length >= 1 && boxes.every((b) => b.checked), 'the candidates come pre-ticked (' + boxes.length + ')');
+    ok(o.errors.length === 0, 'no page errors on reviews and tasters (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+    const s2 = await openAdmin('staff');
+    ok(!s2.byText('#tabs .tab', /^More$/) || !s2.byText('#viewMore button', /Reviews/), 'staff do not see Reviews');
+    s2.close();
+  });
+
   return list;
 };

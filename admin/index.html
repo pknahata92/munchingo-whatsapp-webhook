@@ -267,6 +267,8 @@ header small{color:var(--ink2);opacity:1}
     v.appendChild(h('div', { class: 'moregrid' },
       moreBtn('Prices', 'Change what each box and gift set costs on the website.', openPrices),
       moreBtn('Coupons and offers', 'Create discount codes and the stock-up offer.', openCoupons),
+      moreBtn('Reviews', 'What buyers said. Publish, or hide for a fixed reason.', openReviews),
+      moreBtn('Founding tasters', 'The first buyers: every new launch reaches them first, free.', openTasters),
       moreBtn('Team', 'Who can sign in, and what they can do.', openTeam),
       moreBtn('Label sheet', 'Make a print sheet from a labels PDF you already have.', openLabelSheet),
       moreBtn('Help', 'The four steps, in plain words.', openHelp)));
@@ -685,6 +687,11 @@ header small{color:var(--ink2);opacity:1}
     if (o.state === 'packed') p.appendChild(shipForm(o));
     if (o.state === 'shipped' || o.state === 'delivered') p.appendChild(section(o.state === 'delivered' ? 'Delivered' : 'Shipped', kv([['Packed', o.packed_at ? when(o.packed_at) + (o.packed_by ? ' by ' + o.packed_by : '') : ''], ['Carrier', o.carrier], ['Tracking', o.awb], ['Shipped', when(o.shipped_at)], ['Delivered', o.delivered_at ? when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : '']]),
       o.state === 'shipped' ? h('div', { class: 'acts' }, labelable(o) ? h('button', { class: 'btn ghost small', onclick: function () { openOrderLabels([o.id]); } }, 'Shipping label') : null, h('button', { class: 'btn small', onclick: function (e) { if (confirm('Mark this order as delivered?')) act(adv, { to: 'delivered' }, 'Marked delivered', e.target); } }, 'Mark delivered')) : null));
+    if (state.role === 'owner' && o.state !== 'unpaid' && o.state !== 'test') {
+      var known = h('input', { type: 'checkbox', id: 'knownToUs' }); known.checked = !!o.known_to_us;
+      known.addEventListener('change', function () { api('/admin/api/orders/' + encodeURIComponent(o.id) + '/known', { method: 'POST', body: { known: known.checked } }).then(function (x) { toast(x.ok ? (known.checked ? 'Marked friend or family' : 'Unmarked') : (x.error || 'Failed'), 4000); }); });
+      p.appendChild(section('Review label', h('label', { style: 'display:flex;gap:10px;align-items:center;text-transform:none;letter-spacing:0;font-size:14px;font-weight:400' }, known, 'Known to us (friend or family): their review is labelled')));
+    }
     if (state.role === 'owner' && ['packed', 'shipped', 'delivered'].indexOf(o.state) >= 0) p.appendChild(section('Owner', h('p', { class: 'muted' }, 'Made a mistake? Step this order back one stage. The customer is not un-emailed.'),
       h('button', { class: 'btn ghost small', onclick: function (e) { if (confirm('Undo the last step (' + o.state + ')?')) act('/admin/api/orders/' + encodeURIComponent(o.id) + '/undo', {}, 'Stepped back', e.target); } }, 'Undo last step')));
     if (state.role === 'owner' && o.status === 'paid' && o.refundable > 0) p.appendChild(refundForm(o));
@@ -1083,6 +1090,49 @@ header small{color:var(--ink2);opacity:1}
             } }, 'Save')));
       });
       ownerPanel('Prices', [note, section('Selling price per unit, GST included'), h('div', { class: 'sec' }, rows)]);
+    });
+  }
+  // ── Reviews (owner): stars per flavour, comment as plain text, publish only with consent, hide only for a fixed reason ──
+  var RV_NAMES = { 'atta-original': 'Atta Original', 'atta-kesari': 'Atta Kesari', 'atta-lite-sugar': 'Atta Sugar-Lite', 'atta-ajwain': 'Atta Ajwain' };
+  var RV_REASONS = [['abusive', 'Abusive language'], ['personal_data', 'Personal data (phone, address)'], ['off_topic', 'Not about the product or service'], ['no_consent', 'No consent to publish']];
+  function openReviews() {
+    api('/admin/api/reviews').then(function (j) {
+      if (!j.ok) return toast(j.error || 'Could not load reviews');
+      var t = j.totals || {};
+      var head = h('p', { class: 'muted' }, (t.asked || 0) + ' asked · ' + (t.received || 0) + ' received · ' + (t.rate || 0) + '% review rate. Nothing shows on the website until you publish it. A low rating is never a reason to hide.');
+      var cards = (j.reviews || []).map(function (r) {
+        var stars = Object.keys(r.ratings || {}).map(function (slug) { var n = r.ratings[slug]; return h('div', {}, (RV_NAMES[slug] || slug) + ' ', h('span', { style: 'color:#C98A12' }, '★★★★★'.slice(0, n)), h('span', { style: 'color:#D9CBB0' }, '★★★★★'.slice(n)), ' ' + n + '/5'); });
+        var labels = [r.network ? 'Friend or family' : null, r.founding_taster ? 'Founding taster: gets new products free' : null, r.consent_publish ? null : 'No consent to publish'].filter(Boolean);
+        var reason = h('select', { 'aria-label': 'Reason to hide' }, RV_REASONS.map(function (x) { return h('option', { value: x[0] }, x[1]); }));
+        var acts = h('div', { class: 'acts' },
+          r.consent_publish && r.status !== 'published' ? h('button', { class: 'btn small', onclick: function (e) { e.target.disabled = true; api('/admin/api/reviews/' + r.id + '/publish', { method: 'POST', body: {} }).then(function (x) { toast(x.ok ? 'Published' : (x.error || 'Failed'), 5000); openReviews(); }); } }, 'Publish') : null,
+          r.status !== 'hidden' ? reason : null,
+          r.status !== 'hidden' ? h('button', { class: 'btn ghost small', onclick: function (e) { e.target.disabled = true; api('/admin/api/reviews/' + r.id + '/hide', { method: 'POST', body: { reason: reason.value } }).then(function (x) { toast(x.ok ? 'Hidden' : (x.error || 'Failed'), 5000); openReviews(); }); } }, 'Hide') : null);
+        return h('div', { class: 'card rvcard', style: 'cursor:default' },
+          h('div', { class: 'top' }, h('span', {}, r.order_id + ' · ' + (r.display_name || '') + (r.city ? ', ' + r.city : '')), h('span', { class: 'badge b-' + (r.status === 'published' ? 'delivered' : r.status === 'hidden' ? 'cancelled' : 'packed') }, (r.status || 'new').toUpperCase())),
+          h('div', { class: 'meta' }, stars),
+          r.comment ? h('p', { style: 'margin:8px 0 0;white-space:pre-wrap' }, r.comment) : null,
+          labels.length ? h('div', { class: 'meta' }, labels.join(' · ')) : null,
+          r.status === 'hidden' ? h('div', { class: 'meta' }, 'Hidden: ' + (r.hidden_reason || '') + (r.moderated_by ? ' (by ' + r.moderated_by + ')' : '')) : null,
+          acts);
+      });
+      ownerPanel('Reviews', [head, cards.length ? h('div', {}, cards) : h('p', { class: 'muted' }, 'No reviews yet.')]);
+    });
+  }
+  // ── Founding tasters (owner): the first buyers; every future launch reaches them first, free ──
+  function openTasters() {
+    api('/admin/api/founding-tasters').then(function (j) {
+      if (!j.ok) return toast(j.error || 'Could not load the list');
+      var rows = (j.rows || []).map(function (r) { var box = h('input', { type: 'checkbox' }); box.checked = r.ticked !== false; return { r: r, box: box }; });
+      var lines = rows.map(function (x) { return h('label', { class: 'sw', style: 'display:flex;gap:10px;align-items:center;text-transform:none;letter-spacing:0;font-size:14px;font-weight:400' }, x.box, h('span', {}, (x.r.name || 'Buyer') + ' · ' + (x.r.first_order_id || ''))); });
+      var save = h('button', { class: 'btn small', onclick: function (e) {
+        var keep = rows.filter(function (x) { return x.box.checked; }).map(function (x) { return x.r; });
+        if (!confirm('Save ' + keep.length + ' founding taster' + (keep.length === 1 ? '' : 's') + '? Their first review request will be your personal message.')) return;
+        e.target.disabled = true;
+        api('/admin/api/founding-tasters', { method: 'POST', body: { rows: keep } }).then(function (x) { toast(x.ok ? 'Saved ' + x.saved : (x.error || 'Failed'), 5000); openTasters(); });
+      } }, 'Save list');
+      ownerPanel('Founding tasters', [h('p', { class: 'muted' }, 'Buyers who ordered 11 to 17 Oct, before we had any reviews. Untick anyone who should not be on it. Their reviews will carry the label "Founding taster: gets new products free".'),
+        lines.length ? h('div', { class: 'sec' }, lines) : h('p', { class: 'muted' }, 'No buyers found for 11 to 17 Oct.'), h('div', { class: 'acts' }, save)]);
     });
   }
   // ── Coupons (owner): a short form for the common case, the rest under "More options" ──
