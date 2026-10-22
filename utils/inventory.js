@@ -301,6 +301,26 @@ function makeInventory(store) {
     return { id: m.id, slug: m.item_slug, received: m.qty, damaged, lot: m.lot_code || '', bestBefore: m.best_before || '', ref: m.ref || '', note: m.note || '', billedKg: m.billed_kg == null ? '' : Number(m.billed_kg), amountRupees: m.amount_paise == null ? '' : m.amount_paise / 100, reversed };
   }
 
+  // Fix a mistyped lot code (15Oct26 -> 15OCT26): what is left in the lot moves to the right code with two COUNT_FIX lines, out of the
+  // old lot and into the new one, best-before carried over. Rows are never edited, so past sales keep the lot they were typed under
+  // and the total on hand does not change. Owner only.
+  async function renameLot({ slug, from, to, actor, isOwner = false }) {
+    if (!isOwner) throw new StockError('Only the owner can rename a lot.', 403);
+    const item = await store.item(slug); if (!item) throw new StockError('No such item.', 404);
+    const oldCode = cleanText(from, 40), newCode = cleanText(to, 40);
+    if (!newCode || !validLot(newCode)) throw new StockError('The lot can use letters, numbers, space and . - / only.');
+    if (oldCode === newCode) throw new StockError('The new lot code must be different from the old one.');
+    const groups = (await store.byLot()).filter((r) => r.item_slug === slug && (r.lot_code || '') === oldCode && r.qty !== 0);
+    if (!groups.length) throw new StockError(`There is no stock in lot ${oldCode || '(none)'} to move.`, 409);
+    const note = `Lot renamed ${oldCode || '(none)'} to ${newCode}`;
+    const rows = [];
+    groups.forEach((g) => rows.push(
+      { item_slug: slug, type: 'COUNT_FIX', qty: -g.qty, lot_code: oldCode || null, best_before: g.best_before || null, note, ...who(actor) },
+      { item_slug: slug, type: 'COUNT_FIX', qty: g.qty, lot_code: newCode, best_before: g.best_before || null, note, ...who(actor) }));
+    await store.insert(rows);
+    return { moved: groups.reduce((n, g) => n + g.qty, 0), from: oldCode, to: newCode };
+  }
+
   // `types` narrows the list (Received only, Sales only...): receipts were being pushed out of the latest 60 lines by packed orders.
   async function history({ slug, limit = 40, types }) {
     const t = (Array.isArray(types) ? types : []).filter((x) => HISTORY_TYPES.has(x));
@@ -341,7 +361,7 @@ function makeInventory(store) {
   // { slug: boxes still sellable } for the flavours that have stock recorded (used by utils/stock.js for the automatic sold-out).
   async function sellable() { const [items, rows, committed] = await Promise.all([store.items(), store.byLot(), store.committed()]); return computeSellable(items, rows, committed); }
 
-  return { overview, sellable, receive, receipt, take, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
+  return { overview, sellable, receive, receipt, renameLot, take, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────

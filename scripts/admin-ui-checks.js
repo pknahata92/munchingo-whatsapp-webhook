@@ -381,5 +381,29 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Rename a lot (owner only): fixes a mistyped lot code without a phantom negative lot
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText, set } = o;
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const apiGet = async (p) => (await (await fetch(BASE + p, { headers: { Authorization: 'Bearer ' + token } })).json());
+    click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock list');
+    ok(!!byText('#viewStock button', /^Rename lot$/), 'the owner sees a Rename lot button');
+    const before = (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar');
+    click(byText('#viewStock button', /^Rename lot$/)); await until(() => /Which/i.test(text(q('#viewStock'))), 3000, 'the item picker');
+    click(byText('#viewStock button', /Atta Sugar-Lite/)); await until(() => /Rename lot: Atta Sugar-Lite/.test(text(q('#viewStock'))), 3000, 'the rename form');
+    const sel = q('#viewStock select');
+    ok(!!sel && Array.from(sel.options).some((x) => /15OCT26/.test(x.textContent)), 'the form lists the product\'s current lots (' + (sel ? Array.from(sel.options).map((x) => x.textContent).join(' | ') : 'no select') + ')');
+    set(qa('#viewStock input').find((i) => /15OCT26/.test(i.placeholder)), '16OCT26');
+    click(byText('#viewStock button', /^Rename lot$/)); await until(async () => (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').lots.some((l) => l.lot_code === '16OCT26'), 5000, 'the lot to be renamed').catch(() => {});
+    const after = (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar');
+    ok(after.lots.length === before.lots.length && after.lots.every((l) => l.lot_code !== '15OCT26') && after.lots.some((l) => l.lot_code === '16OCT26'), 'the lot now carries the new code and the old one is gone from the stock list (' + after.lots.map((l) => l.lot_code + ':' + l.qty).join(',') + ')');
+    ok(after.on_hand === before.on_hand, 'total on hand is unchanged (' + before.on_hand + ' -> ' + after.on_hand + ')');
+    ok(o.errors.length === 0, 'no page errors renaming a lot (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+    const s = await openAdmin('staff'); click(s.byText('#tabs .tab', /^Stock$/)); await until(() => s.qa('#viewStock .line').length >= 4, 4000, 'the stock page for staff');
+    ok(!s.byText('#viewStock button', /^Rename lot$/), 'staff do not see Rename lot');
+    s.close();
+  });
+
   return list;
 };

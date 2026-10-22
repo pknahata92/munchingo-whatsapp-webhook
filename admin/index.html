@@ -807,7 +807,8 @@ header small{color:var(--ink2);opacity:1}
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
       var body = [h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
-          state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null),
+          state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null,
+          state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { invPick('Rename lot', invRenameLot); } }, 'Rename lot') : null),
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
           return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
             ev.items.map(function (x) { return h('div', { style: 'display:flex;align-items:center;gap:10px;justify-content:space-between' }, h('span', {}, x.name + ': ' + x.out + ' still out (took ' + x.taken + ', back ' + x.returned + ')'),
@@ -857,6 +858,19 @@ header small{color:var(--ink2);opacity:1}
       if (!confirm((pre ? 'Correct the earlier receipt?\n\n' : '') + 'Receive ' + r + ' × ' + it.name + (isProd ? ', lot ' + (lot.value || '(none)') + (bb.value ? ', best before ' + bb.value : '') : '') + ', ' + d + ' damaged or not okay?\n\nGood stock added: ' + (r - d))) return done();
       postInv('receive', { slug: it.slug, received: rec.value, damaged: dmg.value || 0, lot: lot.value, bestBefore: bb.value, ref: ref.value, billedKg: kg.value, amountRupees: amt.value, note: note.value, replaces: pre ? pre.id : undefined }, done, function (x) { return 'Received ' + x.received + (x.damaged ? ' (' + x.damaged + ' damaged)' : '') + '. On hand: ' + x.onHand; });
     }, 'Save receipt');
+  }
+  // Owner: fix a mistyped lot code. What is left in the lot moves to the right code (same best-before); past lines keep what was typed.
+  function invRenameLot(it) {
+    var lots = (it.lots || []).filter(function (l) { return l.lot_code; });
+    if (!lots.length) return toast(it.name + ' has no lots to rename.', 5000);
+    var from = h('select', {}, lots.map(function (l) { return h('option', { value: l.lot_code }, l.lot_code + ': ' + l.qty + (l.best_before ? ' (best before ' + l.best_before + ')' : '')); }));
+    var to = h('input', { placeholder: 'e.g. 15OCT26' });
+    invForm('Rename lot', it, [h('p', { class: 'muted' }, 'Fixes a mistyped lot code. What is left in the lot moves to the new code with the same best-before. Past sales keep the code they were recorded under, and nothing is deleted.'), h('label', {}, 'Which lot'), from, h('label', {}, 'Correct lot code'), to], function (done) {
+      var code = to.value.trim().toUpperCase();
+      if (!code) { toast('Type the correct lot code.'); return done(); }
+      if (!confirm('Move the stock in lot ' + from.value + ' to lot ' + code + '?')) return done();
+      postInv('rename-lot', { slug: it.slug, from: from.value, to: code }, done, function (x) { return 'Moved ' + x.moved + ' to lot ' + x.to; });
+    }, 'Rename lot');
   }
   function invTake(it) {
     var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'OFFLINE_SALE' }, 'Sold offline (bulk order)'), h('option', { value: 'SAMPLE' }, 'Sample or tasting')),
