@@ -51,6 +51,12 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   const plus = (f) => click(w, q(d, `#st-mix button[data-plus="${f}"]`));
 
   ok(/noindex/.test((q(d, 'meta[name="robots"]') || {}).content || ''), 'the page is noindex');
+  { const src = (q(d, 'script[src*="stall.js"]') || {}).getAttribute ? q(d, 'script[src*="stall.js"]').getAttribute('src') : '';
+    const v = (src.match(/stall\.js\?v=(\d+)$/) || [])[1];
+    ok(!!v, 'the script is loaded with a version (?v=N) so the 4-hour browser cache cannot serve an old copy: ' + src);
+    ok(v && String(w.StallTally.version) === v, `page and script versions match (page v=${v}, script ${w.StallTally.version})`);
+    const sw = fs.readFileSync(path.join(SITE, 'stall-sw.js'), 'utf8');
+    ok(sw.includes('/js/stall.js?v=' + v) && new RegExp("CACHE = 'munchingo-stall-v" + v + "'").test(sw), 'the offline copy caches this version under its own name'); }
   ok(/25 Oct/.test(text(q(d, '#st-day'))), 'shows today (IST)');
   for (const [id, label, price] of [['original', 'Original', 200], ['ajwain', 'Ajwain', 200], ['kesari', 'Kesari', 250], ['lite', 'Sugar-Lite', 250], ['h3', 'Hamper of 3', 799], ['h4', 'Hamper of 4', 999]]) {
     const b = q(d, `button[data-item="${id}"]`);
