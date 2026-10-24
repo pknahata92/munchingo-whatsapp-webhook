@@ -14,6 +14,8 @@ const { validateCoupon } = require('../utils/coupons');
 const { priceCart } = require('../utils/offers');
 const { checkPincode } = require('../utils/delhivery');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
+const { MIN_BOXES, goodsOnly, shippingFor, shippingItem } = require('../utils/shipping');
+const { boxesIn } = require('../utils/orderText');
 
 // "Subscribe & Save" — flat discount on every renewal (see
 // subscriptions_migration.sql for why this is a "generate a fresh payment
@@ -23,11 +25,10 @@ const { createSubscription, attachSubscriptionToOrder } = require('../utils/subs
 const SUBSCRIPTION_DISCOUNT_PCT = 8;
 const SUBSCRIPTION_FREQUENCY_DAYS = 30;
 
-// Minimum order for the automated (nationwide courier) checkout, in RUPEES of items before any discount.
-// 12 Oct 2026: replaced the 3-box minimum. Prices are Rs 300/350 per box, a Trio is Rs 739 and the Full Range Rs 999, so this lets
-// through every 3-box order, both gift sets and a pair of Rs 350 boxes. Smaller orders are handled on WhatsApp (hyperlocal/manual).
-// Keep equal to MIN_ORDER_VALUE in the website's js/cart.js.
-const MIN_ORDER_VALUE = 700;
+// Minimum order for the automated (nationwide courier) checkout: 2 boxes (a Pack of 2, any two Flavors; gift sets count as 3 and 4).
+// 25 Oct 2026: replaced the Rs 700 minimum. Orders under Rs 777 of items pay a Rs 49 shipping line (utils/shipping.js).
+// Keep equal to MIN_BOXES in the website's js/cart.js.
+const minBoxesError = (boxes) => `Online orders start at ${MIN_BOXES} boxes (a Pack of 2, any two Flavors). Please add ${MIN_BOXES - boxes} more box${MIN_BOXES - boxes === 1 ? '' : 'es'}, or message us on WhatsApp for a single box.`;
 
 // Helpers
 function generateOrderId() {
@@ -138,13 +139,10 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       // the client's submitted total (see normaliseItems for why).
       const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
 
-      // Minimum order for the automated (nationwide courier) checkout, in rupees of items before any discount.
-      if (realTotal < MIN_ORDER_VALUE) {
-        const shortBy = MIN_ORDER_VALUE - realTotal;
-        return res.status(400).json({
-          ok: false,
-          error: `Online orders start at \u20B9${MIN_ORDER_VALUE}. Please add \u20B9${shortBy} more, or message us on WhatsApp directly for a smaller order.`,
-        });
+      // Minimum order for the automated (nationwide courier) checkout: 2 boxes.
+      const orderBoxes = enrichedItems.reduce((n, i) => n + boxesIn(i) * i.quantity, 0);
+      if (orderBoxes < MIN_BOXES) {
+        return res.status(400).json({ ok: false, error: minBoxesError(orderBoxes) });
       }
 
       // Delivery check: refuse only when Delhivery explicitly says it cannot deliver prepaid parcels to this pincode.
@@ -184,7 +182,11 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       if (priced.couponError) {
         return res.status(400).json({ ok: false, error: priced.couponError });
       }
-      const finalTotal = priced.finalTotal;
+      // Shipping: Rs 49 under Rs 777 of items (before any discount), free from there. Saved as an ordinary line so every downstream
+      // total (Razorpay, invoice, Zoho, refunds, emails) carries it; goods-only lists skip it (utils/shipping.js).
+      const shippingFee = shippingFor(realTotal);
+      const finalTotal = priced.finalTotal + shippingFee;
+      const orderItems = shippingFee ? [...enrichedItems, shippingItem(shippingFee)] : enrichedItems;
       const discountAmount = priced.discount ? priced.discount.amount : 0;
       // Only a code that actually won is recorded as used (redemption is written in the payment webhook).
       const appliedCouponCode = priced.discount && priced.discount.kind === 'coupon' ? priced.discount.code : null;
@@ -199,7 +201,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
               customerPhone,
               customerName: name,
               customerEmail: trimmedEmail || null,
-              items: enrichedItems,
+              items: orderItems,
               total: finalTotal,
               currency: 'INR',
               timestamp,
@@ -327,8 +329,9 @@ router.post('/api/quote', rateLimit({ windowMs: 60_000, max: 30 }), async (req, 
     if (error) return res.status(400).json({ ok: false, error });
     const p = await priceCart({ items: enriched, couponCode: code || null, customerPhone: phone ? normalisePhone(phone) : null, subscribe: !!subscribe, subscriptionPct: SUBSCRIPTION_DISCOUNT_PCT });
     const d = p.discount;
+    const shipping = shippingFor(p.realTotal), boxes = enriched.reduce((n, i) => n + boxesIn(i) * i.quantity, 0);
     res.json({
-      ok: true, total: p.realTotal, singles: p.singles, finalTotal: p.finalTotal, next: p.next, tiers: p.tiers, couponError: p.couponError,
+      ok: true, total: p.realTotal, singles: p.singles, finalTotal: p.finalTotal + shipping, goodsTotal: p.realTotal, shipping, boxes, minBoxes: MIN_BOXES, freeFrom: require('../utils/shipping').FREE_FROM, next: p.next, tiers: p.tiers, couponError: p.couponError,
       discount: d ? { kind: d.kind, amount: d.amount, label: d.label, code: d.code } : null,
       couponBeaten: !!(d && d.kind === 'tier' && d.beat && d.beat.kind === 'coupon'),
     });

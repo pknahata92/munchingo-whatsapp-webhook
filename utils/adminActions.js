@@ -4,6 +4,7 @@ const { labelSource, isNetwork } = require('./orderSource');
 /** Everything the admin page can do. Pure functions of (inputs) so the HTTP layer stays thin. */
 const db = require('./database');
 const { contentsOf, boxesIn } = require('./orderText');
+const { isShippingItem, goodsOnly } = require('./shipping');
 const { reasonOf, REASONS } = require('./refundReasons');
 
 class AdminError extends Error { constructor(msg, status = 400, extra = {}) { super(msg); this.status = status; this.extra = extra; } }
@@ -43,7 +44,9 @@ const trackable = (o) => /delhivery/i.test(o.carrier || '') && /^[0-9]{8,20}$/.t
 function shapeOrder(o, invoice, creditNotes = [], money = null, courierPickedUp = false) {
   const refundedPaise = creditNotes.reduce((n, c) => n + c.amount_paise, 0);
   const totalPaise = Math.round(Number(o.total) * 100);
-  const items = (o.items || []).map((it) => ({ name: it.productName || it.product_retailer_id, qty: it.quantity, unit: it.unit || '', contents: contentsOf(it), price: it.item_price, boxes: boxesIn(it) * (it.quantity || 1) }));
+  // Goods only: the shipping fee is a line on the order (utils/shipping.js) but is never packed, counted or declared to the courier.
+  const shippingPaid = (o.items || []).filter(isShippingItem).reduce((n, it) => n + Number(it.item_price || 0) * (it.quantity || 1), 0);
+  const items = goodsOnly(o.items).map((it) => ({ name: it.productName || it.product_retailer_id, qty: it.quantity, unit: it.unit || '', contents: contentsOf(it), price: it.item_price, boxes: boxesIn(it) * (it.quantity || 1) }));
   let state = 'topack';
   if (/^pending/.test(o.status)) state = 'unpaid';
   else if (o.status === 'cancelled' && !o.payment_id && !(refundedPaise > 0)) state = 'cancelled';
@@ -59,7 +62,7 @@ function shapeOrder(o, invoice, creditNotes = [], money = null, courierPickedUp 
     name: o.customer_name, phone: o.customer_phone, email: o.customer_email || '', pay_url: state === 'unpaid' ? (o.payment_link_url || '') : '',
     address: (o.delivery_address && o.delivery_address.raw) || '', gift_note: o.gift_note || '',
     ship_name: (o.delivery_address && o.delivery_address.recipientName) || o.customer_name, ship_phone: (o.delivery_address && o.delivery_address.recipientPhone) || o.customer_phone, gift_for: !!(o.delivery_address && o.delivery_address.recipientName),
-    coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), total: Number(o.total),
+    coupon: o.coupon_code || '', discount: Number(o.discount_amount || 0), shipping: shippingPaid, total: Number(o.total),
     source: labelSource(o.delivery_address && o.delivery_address.source), source_network: isNetwork(o.delivery_address && o.delivery_address.source),
     payment_id: o.payment_id || '', boxes: items.reduce((n, i) => n + i.boxes, 0), items,
     sent: invoice ? { email: !!invoice.email_sent_at, whatsapp: !!invoice.wa_sent_at, zoho: !!invoice.zoho_synced_at && creditNotes.every((c) => !!c.zoho_credit_note_id) } : null,
@@ -498,7 +501,7 @@ async function pickList(ids) {
   for (const id of Array.from(new Set(ids || [])).slice(0, 100)) {
     const { order, shaped } = await getOrderDetail(id);
     if (order.status !== 'paid') continue;
-    (order.items || []).forEach((it) => allItems.push(it));
+    goodsOnly(order.items).forEach((it) => allItems.push(it));
     out.push({ id: shaped.id, name: shaped.name, phone: shaped.phone, address: shaped.address, gift_note: shaped.gift_note, boxes: shaped.boxes, items: shaped.items.map((i) => ({ name: i.name, qty: i.qty, contents: i.contents })) });
   }
   return { flavours: require('./orderText').flavourTotals(allItems), orders: out };

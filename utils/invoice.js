@@ -147,13 +147,17 @@ function buildInvoice(order, { invoiceNo, issuedAt }) {
     unit: i.unit || null,
     contents: contentsOf(i),   // gift sets: which flavours are inside
   }));
+  // The shipping fee (a line with no flavours, see utils/shipping.js) is never discounted: the discount is spread over the goods only.
+  items.forEach((it, idx) => { it.isShipping = require('./shipping').isShippingItem((order.items || [])[idx]); });
   const grossTotal = items.reduce((s, i) => s + i.grossPaise, 0);
-  const discount = Math.min(paise(order.discount_amount || 0), grossTotal);
+  const goodsGross = items.filter((i) => !i.isShipping).reduce((s, i) => s + i.grossPaise, 0);
+  const discount = Math.min(paise(order.discount_amount || 0), goodsGross);
 
-  // Spread the discount pro-rata; the last line absorbs rounding so the sum is exact.
+  // Spread the discount pro-rata over the goods; the last goods line absorbs rounding so the sum is exact.
   let allocated = 0;
+  const lastGoods = items.map((i) => i.isShipping).lastIndexOf(false);
   items.forEach((it, idx) => {
-    const d = idx === items.length - 1 ? discount - allocated : Math.round((discount * it.grossPaise) / (grossTotal || 1));
+    const d = it.isShipping ? 0 : (idx === lastGoods ? discount - allocated : Math.round((discount * it.grossPaise) / (goodsGross || 1)));
     allocated += d;
     it.discountPaise = d;
     it.netPaise = it.grossPaise - d;

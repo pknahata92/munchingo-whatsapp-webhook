@@ -24,7 +24,14 @@ const PACKAGING_G = { 1: 350, 2: 420, 3: 470, 4: 600 };
 const SIZE_CM = { 1: [20.3, 20.3, 20.3], 2: [20.3, 20.3, 20.3], 3: [20.3, 20.3, 20.3], 4: [20.3, 20.3, 20.3] };   // every parcel currently ships in the same 8 x 8 x 8 in (20.3 cm) box, per Prashant 18 Oct
 const MAX_BOXES = 4;   // 5+ boxes ship as two parcels (decided 12 Oct): book those in Delhivery One
 
-const estimateWeight = (boxes) => 250 * boxes + (PACKAGING_G[boxes] || 0);
+// The Pack of 2 (25 Oct 2026): a snug 2-box mailer, about 20 x 15 x 10 cm and 660 g packed, bills in the 1 kg slab instead of the 2 kg cube slab
+// (about Rs 40 to Rs 90 less per parcel). It is OFF until DELHIVERY_2BOX_MAILER=1 is set on Render, because the declared size must match
+// the real parcel: a smaller declared size than the real one makes Delhivery re-weigh and bill the difference. Set it only once the mailers are in use.
+const mailer2 = (boxes) => boxes === 2 && /^(1|true|yes)$/i.test(String(process.env.DELHIVERY_2BOX_MAILER || ''));
+const MAILER_2BOX_CM = [20, 15, 10];
+const MAILER_2BOX_PACKAGING_G = 160;
+const sizeFor = (boxes) => (mailer2(boxes) ? MAILER_2BOX_CM : SIZE_CM[boxes]);
+const estimateWeight = (boxes) => 250 * boxes + (mailer2(boxes) ? MAILER_2BOX_PACKAGING_G : (PACKAGING_G[boxes] || 0));
 
 const clean = (s, n) => String(s || '').replace(/[&#%;\\\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const tenDigits = (p) => String(p || '').replace(/\D/g, '').slice(-10);
@@ -44,7 +51,7 @@ function buildPayload({ order, shaped, weightGrams, pickupLocation }) {
   if (phone.length !== 10) throw new ShipmentError('The delivery phone number is not a valid 10-digit number.');
   const weight = Math.round(Number(weightGrams) || estimateWeight(boxes));
   if (!(weight >= 100 && weight <= 5000)) throw new ShipmentError('Weight must be between 100 and 5000 grams.');
-  const [length, width, height] = SIZE_CM[boxes];
+  const [length, width, height] = sizeFor(boxes);
   return {
     shipments: [{
       name: clean(shaped.ship_name, 80), add: raw, pin, city: clean(addr.city, 60), state: clean(addr.state, 60), country: 'India', phone,

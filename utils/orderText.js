@@ -39,6 +39,7 @@ function contentsOf(item) {
 }
 
 function boxesIn(item) {
+  if (item.slug === 'shipping') return 0;   // the shipping fee is a line on the order, not a box
   if (item.slug === 'full-range-set') return 4;
   if (String(item.slug || '').startsWith('trio-gift-set')) return 3;
   return 1;

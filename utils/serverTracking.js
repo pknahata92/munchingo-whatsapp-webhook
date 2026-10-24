@@ -77,7 +77,7 @@ function cleanTrack(t, req) {
 
 /** Pure: the Meta Conversions API request body for one paid order. */
 function buildMetaBody(order, { testCode } = {}) {
-  const items = order.items || [];
+  const items = require('./shipping').goodsOnly(order.items);   // the shipping fee is revenue (it is in value) but not a product
   const ids = items.map((i) => META_IDS[norm(itemName(i)).replace(/^munchingo\s+/, '').replace(/\s*\(.*$/, '')]).filter(Boolean);
   const name = norm(order.customer_name).split(/\s+/).filter(Boolean);
   const ap = addressParts(order);
@@ -125,7 +125,7 @@ function buildGa4Body(order) {
       name: 'purchase',
       params: {
         transaction_id: String(order.order_id), value: Number(order.total), currency: 'INR', engagement_time_msec: 1,
-        items: (order.items || []).map((i) => ({ item_name: itemName(i), quantity: itemQty(i), price: itemPrice(i) })),
+        items: require('./shipping').goodsOnly(order.items).map((i) => ({ item_name: itemName(i), quantity: itemQty(i), price: itemPrice(i) })),
       },
     }],
   };

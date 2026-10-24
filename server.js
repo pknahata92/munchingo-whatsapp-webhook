@@ -530,7 +530,9 @@ app.get('/internal/subscription-renewals', async (req, res) => {
       }));
       const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
       const discountAmount = Math.round(realTotal * (sub.discount_pct / 100));
-      const finalTotal = realTotal - discountAmount;
+      // Same shipping rule as the website checkout (utils/shipping.js): a fee under Rs 777 of items, never discounted.
+      const renewalShipping = require('./utils/shipping').shippingFor(realTotal);
+      const finalTotal = realTotal - discountAmount + renewalShipping;
 
       const orderId = generateRenewalOrderId();
       const timestamp = new Date().toISOString();
@@ -540,7 +542,7 @@ app.get('/internal/subscription-renewals', async (req, res) => {
         customerPhone: sub.customer_phone,
         customerName: sub.customer_name,
         customerEmail: sub.customer_email,
-        items: enrichedItems,
+        items: renewalShipping ? [...enrichedItems, require('./utils/shipping').shippingItem(renewalShipping)] : enrichedItems,
         total: finalTotal,
         currency: 'INR',
         timestamp,

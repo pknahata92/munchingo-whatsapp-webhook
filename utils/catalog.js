@@ -3,18 +3,20 @@
 // Server-side source of truth for website checkout pricing, keyed by the
 // slug the website's Add-to-Bag buttons use (js/cart.js). Never trust a
 // price/total submitted by the client — always look it up here.
+// Printed MRP on the packs (display only, never used to charge): the web price is the online floor below it.
+const MRPS = { 'atta-original': 300, 'atta-ajwain': 300, 'atta-kesari': 350, 'atta-lite-sugar': 350 };
 const PRICES = {
-  'atta-original':   300,
-  'atta-kesari':      350,
-  'atta-lite-sugar':  350,
-  'atta-ajwain':      300,
+  'atta-original':   259,
+  'atta-kesari':      299,
+  'atta-lite-sugar':  299,
+  'atta-ajwain':      259,
   'full-range-set':   999,
 };
 
 // The Trio gift set's slug is built dynamically from the 3 chosen flavours
 // (e.g. "trio-gift-set-ajwain-kesari-original") but the price is flat.
 const TRIO_PREFIX = 'trio-gift-set';
-const TRIO_PRICE = 739;
+const TRIO_PRICE = 799;
 const TRIO_TOKENS = ['ajwain', 'kesari', 'lite-sugar', 'original'];
 
 // A gift set never holds two boxes of the same flavour: a Trio is exactly 3 DIFFERENT flavours (the website builder and
@@ -69,7 +71,7 @@ const TRIO_NAME = 'Trio Gift Set';
 
 /**
  * How many physical boxes one unit of this slug is: singles 1, Trio gift set 3,
- * Full Range gift set 4. The minimum order is a rupee value (see MIN_ORDER_VALUE in routes/checkout.js); box counts are only used for packing.
+ * Full Range gift set 4. The minimum order is a box count (MIN_BOXES in utils/shipping.js, boxes counted with this function).
  */
 function boxesForSlug(slug) {
   if (slug === 'full-range-set') return 4;
@@ -102,7 +104,7 @@ function priceBook() {
   const live = require('./prices').current();
   if (live) return live;
   const book = {};
-  Object.keys(PRICES).forEach((k) => { book[k] = { price: PRICES[k], mrp: null }; });
+  Object.keys(PRICES).forEach((k) => { book[k] = { price: PRICES[k], mrp: MRPS[k] || null }; });
   book['trio-gift-set'] = { price: TRIO_PRICE, mrp: null };
   return book;
 }
