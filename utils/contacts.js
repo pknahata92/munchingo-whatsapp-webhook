@@ -13,7 +13,7 @@ const REPLY = {
   stop: "Done, we won't send you offers. You can still message us here any time.",
 };
 // Keyword typed in the QR's pre-filled message -> where the contact came from. Add a keyword per place (parcel card, carton...).
-const KEYWORDS = { fair: 'fair' };
+const KEYWORDS = { fair: 'fair', join: 'join' };   // fair: stall counter card; join: lnk.bio button (poster + coupon-card QR)
 
 let deps = null;
 function setDeps(d) { deps = d; } // tests only

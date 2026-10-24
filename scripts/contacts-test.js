@@ -31,6 +31,8 @@ function fakes(startMs) {
   // ── which messages are a sign-up or a stop ──
   ok(c.signupSource('FAIR') === 'fair' && c.signupSource('fair') === 'fair' && c.signupSource('  Fair  ') === 'fair', 'FAIR in any case is a fair sign-up');
   ok(c.signupSource('FAIR - I bought Munchingo at the Diwali fair') === 'fair', 'the pre-typed QR message is a fair sign-up');
+  ok(c.signupSource('JOIN') === 'join' && c.signupSource('JOIN - Send me Munchingo launches and offers') === 'join', 'JOIN (poster and coupon-card QR) is its own sign-up source');
+  ok(c.signupSource('join us?') === null && c.signupSource('joined') === null, 'other messages starting with join are not sign-ups');
   ok(c.signupSource('fairly good cookies') === null && c.signupSource('hi') === null && c.signupSource('') === null && c.signupSource(null) === null, 'other messages are not sign-ups');
   ok(c.isStop('STOP') && c.isStop('stop') && c.isStop(' Stop. ') && c.isStop('unsubscribe'), 'STOP and unsubscribe withdraw consent');
   ok(!c.isStop('stop subscription') && !c.isStop("don't stop") && !c.isStop('stopped'), 'longer messages with "stop" in them are not STOP');
@@ -42,6 +44,8 @@ function fakes(startMs) {
   let row = f.rows['919810000001'];
   ok(row && row.name === 'Riya Kapoor' && row.first_source === 'fair:2026-10-25' && row.last_source === 'fair:2026-10-25', 'the contact is saved with name and the event day in IST (' + JSON.stringify(row) + ')');
   ok(row.consent_marketing === undefined || row.consent_marketing === null, 'no consent is assumed from the scan');
+  { const g = fakes(START); c.setDeps(g.deps); await c.handleSignup('919810000003', 'Asha', 'join');
+    ok(g.rows['919810000003'].first_source === 'join:2026-10-25' && g.sent[0].kind === 'buttons', 'a JOIN sign-up is saved as join:<IST day> and asked the same question'); c.setDeps(f.deps); }
   let m = f.sent[0];
   ok(f.sent.length === 1 && m.kind === 'buttons' && m.to === '919810000001', 'one button message is sent back');
   ok(m.body === c.CONSENT_QUESTION && /Reply STOP any time/.test(m.body) && /Flavors/.test(m.body), 'the consent question is the agreed wording');
