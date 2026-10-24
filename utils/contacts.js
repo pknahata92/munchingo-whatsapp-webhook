@@ -7,12 +7,14 @@
 const CONSENT_QUESTION = 'Thanks for stopping by Munchingo! 🍪\n\nCan we send you new Flavors, launches and offers on WhatsApp? A few messages a month at most. Reply STOP any time to stop.';
 const BUTTONS = [{ id: 'optin_yes', title: 'Yes, keep me posted' }, { id: 'optin_no', title: 'No thanks' }];
 const REPLY = {
-  yes: "Done, you're on the list. 🙏 Whenever you want more, order at munchingo.com or just message us here.",
+  yes: "Done, you're on the list. 🙏 Want more now? Tap below to order on WhatsApp, or visit munchingo.com.",
   no: "No problem, we won't send offers. Enjoy the cookies! 🍪",
-  already: "You're already on the list, thank you! 🙏 Order any time at munchingo.com or message us here.",
+  already: "You're already on the list, thank you! 🙏 Tap below to order on WhatsApp, or visit munchingo.com.",
   stop: "Done, we won't send you offers. You can still message us here any time.",
   failed: "Sorry, that didn't go through on our side. Please try again in a minute.",
 };
+// After Yes / No / already-joined the chat leads straight into ordering (routeInteractive: btn_products -> product list).
+const SHOP_BUTTON = [{ id: 'btn_products', title: '🛒 Browse Products' }];
 // Keyword typed in the QR's pre-filled message -> where the contact came from. Add a keyword per place (parcel card, carton...).
 const KEYWORDS = { fair: 'fair', join: 'join' };   // fair: stall counter card; join: lnk.bio button (poster + coupon-card QR)
 
@@ -54,7 +56,7 @@ async function handleSignup(phone, name, keyword) {
   const { wa, now } = D();
   const source = (KEYWORDS[String(keyword || '').trim().toLowerCase()] || 'fair') + ':' + istDay(now());
   const { old } = await save(phone, { name: name || null, last_source: source }, source);
-  if (old && old.consent_marketing === true) return wa.sendText(phone, REPLY.already);
+  if (old && old.consent_marketing === true) return wa.sendButtons(phone, REPLY.already, SHOP_BUTTON);
   return wa.sendButtons(phone, CONSENT_QUESTION, BUTTONS);
 }
 
@@ -62,7 +64,7 @@ async function handleOptIn(phone, yes) {
   const { wa, now } = D();
   const r = await save(phone, { consent_marketing: !!yes, consent_at: new Date(now()).toISOString(), consent_text: CONSENT_QUESTION }, 'button');
   if (!r.ok) return wa.sendText(phone, REPLY.failed);   // never confirm an answer we did not record
-  return wa.sendText(phone, yes ? REPLY.yes : REPLY.no);
+  return wa.sendButtons(phone, yes ? REPLY.yes : REPLY.no, SHOP_BUTTON);
 }
 
 async function handleStop(phone) {
@@ -72,4 +74,4 @@ async function handleStop(phone) {
   return wa.sendText(phone, REPLY.stop);
 }
 
-module.exports = { signupSource, isStop, handleSignup, handleOptIn, handleStop, setDeps, CONSENT_QUESTION, BUTTONS, KEYWORDS };
+module.exports = { SHOP_BUTTON, signupSource, isStop, handleSignup, handleOptIn, handleStop, setDeps, CONSENT_QUESTION, BUTTONS, KEYWORDS };

@@ -59,11 +59,11 @@ function fakes(startMs) {
   await c.handleOptIn('919810000001', true);
   row = f.rows['919810000001'];
   ok(row.consent_marketing === true && row.consent_at === new Date(START + 60000).toISOString() && row.consent_text === c.CONSENT_QUESTION, 'yes records consent, the time and the exact question asked');
-  ok(f.sent[1].kind === 'text' && /on the list/.test(f.sent[1].text), 'yes gets a thank-you');
+  ok(f.sent[1].kind === 'buttons' && /on the list/.test(f.sent[1].body) && JSON.stringify(f.sent[1].buttons) === JSON.stringify([{ id: 'btn_products', title: '🛒 Browse Products' }]), 'yes gets a thank-you with a Browse Products button');
   await c.handleOptIn('919810000001', false);
   row = f.rows['919810000001'];
   ok(row.consent_marketing === false && row.consent_text === c.CONSENT_QUESTION, 'no records a refusal');
-  ok(/won't send offers/.test(f.sent[2].text), 'no gets a polite reply');
+  ok(f.sent[2].kind === 'buttons' && /won't send offers/.test(f.sent[2].body) && JSON.stringify(f.sent[2].buttons) === JSON.stringify([{ id: 'btn_products', title: '🛒 Browse Products' }]), 'no gets a polite reply with a Browse Products button');
 
   // ── coming back on another day keeps the first source and the earlier answer ──
   await c.handleOptIn('919810000001', true);
@@ -72,7 +72,7 @@ function fakes(startMs) {
   row = f.rows['919810000001'];
   ok(row.first_source === 'fair:2026-10-25' && row.last_source === 'fair:2026-10-26' && row.name === 'Riya K', 'a second scan updates last source and name, keeps first source');
   ok(row.consent_marketing === true, 'a second scan does not wipe the earlier yes');
-  ok(f.sent[f.sent.length - 1].kind === 'text' && /already on the list/.test(f.sent[f.sent.length - 1].text), 'someone already opted in is not asked again');
+  { const L = f.sent[f.sent.length - 1]; ok(L.kind === 'buttons' && /already on the list/.test(L.body) && JSON.stringify(L.buttons) === JSON.stringify([{ id: 'btn_products', title: '🛒 Browse Products' }]), 'someone already opted in is not asked again, and can go straight to products'); }
 
   // ── STOP ──
   await c.handleStop('919810000001');
@@ -93,12 +93,14 @@ function fakes(startMs) {
   await c.handleStop('919810000002');
   ok(/didn't go through/.test(f.sent[2].text) && !/won't send/.test(f.sent[2].text), 'a STOP that could not be saved is NOT confirmed');
 
+  ok(c.BUTTONS.every((b) => b.title.length <= 20) && '🛒 Browse Products'.length <= 20, 'the shop button title fits 20 characters');
   // ── wiring: the bot checks STOP and sign-ups before anything else, and routes the two buttons ──
   const h = fs.readFileSync(path.join(__dirname, '..', 'handlers', 'messageHandler.js'), 'utf8');
   const body = h.slice(h.indexOf('async function routeText('));
   const iStop = body.indexOf('contacts.isStop('), iSign = body.indexOf('contacts.signupSource('), iLang = body.indexOf('HINDI_ENABLED()'), iHi = body.indexOf('/^(hi|hello');
   ok(iStop > 0 && iSign > 0 && iStop < iLang && iSign < iLang && iSign < iHi, 'routeText checks STOP and sign-ups first');
   ok(/case 'optin_yes':/.test(h) && /case 'optin_no':/.test(h), 'routeInteractive handles both buttons');
+  ok(/case 'btn_products':\s*return sendProductList\(to\)/.test(h), 'the Browse Products button opens the product list');
 
   // ── the table ──
   const sql = fs.readFileSync(path.join(__dirname, '..', 'contacts_migration.sql'), 'utf8').replace(/\s+/g, ' ').toLowerCase();
