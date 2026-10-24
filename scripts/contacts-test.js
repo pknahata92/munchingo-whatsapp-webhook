@@ -48,7 +48,7 @@ function fakes(startMs) {
     ok(g.rows['919810000003'].first_source === 'join:2026-10-25' && g.sent[0].kind === 'buttons', 'a JOIN sign-up is saved as join:<IST day> and asked the same question'); c.setDeps(f.deps); }
   let m = f.sent[0];
   ok(f.sent.length === 1 && m.kind === 'buttons' && m.to === '919810000001', 'one button message is sent back');
-  ok(m.body === c.CONSENT_QUESTION && /Reply STOP any time/.test(m.body) && /Flavors/.test(m.body), 'the consent question is the agreed wording');
+  ok(m.body === c.CONSENT_QUESTION && /^Thanks for stopping by Munchingo! 🍪/.test(m.body) && !/picking/.test(m.body) && /Reply STOP any time/.test(m.body) && /Flavors/.test(m.body), 'the consent question is the agreed wording (fits buyers and browsers)');
   ok(JSON.stringify(m.buttons) === JSON.stringify([{ id: 'optin_yes', title: 'Yes, keep me posted' }, { id: 'optin_no', title: 'No thanks' }]), 'two buttons: yes and no');
   ok(m.buttons.every((b) => b.title.length <= 20), 'button titles fit WhatsApp\'s 20-character limit');
 

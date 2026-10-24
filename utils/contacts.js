@@ -4,7 +4,7 @@
 // and store the answer with its time and the exact question. Nothing is assumed from the scan itself. STOP always
 // withdraws consent. Marketing sends must only go to consent_marketing = true (table: contacts_migration.sql).
 
-const CONSENT_QUESTION = 'Thank you for picking Munchingo! 🍪\n\nCan we send you new Flavors, launches and offers on WhatsApp? A few messages a month at most. Reply STOP any time to stop.';
+const CONSENT_QUESTION = 'Thanks for stopping by Munchingo! 🍪\n\nCan we send you new Flavors, launches and offers on WhatsApp? A few messages a month at most. Reply STOP any time to stop.';
 const BUTTONS = [{ id: 'optin_yes', title: 'Yes, keep me posted' }, { id: 'optin_no', title: 'No thanks' }];
 const REPLY = {
   yes: "Done, you're on the list. 🙏 Whenever you want more, order at munchingo.com or just message us here.",
