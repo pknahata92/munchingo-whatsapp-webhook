@@ -423,6 +423,17 @@ async function updateReview(id, fields) {
   const { error } = await db().from('reviews').update(fields).eq('id', id);
   if (error) throw new Error(error.message);
 }
+// Contacts from sign-up keywords (utils/contacts.js). saveContact merges: only the fields given are changed.
+async function getContact(phone) {
+  const { data, error } = await db().from('contacts').select('*').eq('phone', phone).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+async function saveContact(row) {
+  const { data, error } = await db().from('contacts').upsert(row, { onConflict: 'phone' }).select().maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
 async function listFoundingTasters() {
   const { data, error } = await db().from('founding_tasters').select('*').order('added_at', { ascending: true });
   if (error) throw new Error(error.message);
@@ -585,7 +596,7 @@ const client = () => db();
 module.exports = {
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, saveContact, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

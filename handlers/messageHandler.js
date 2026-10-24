@@ -1,6 +1,7 @@
 'use strict';
 
 const wa = require('../utils/whatsapp');
+const contacts = require('../utils/contacts');
 const { getStoredLang, setLang, HINDI_ENABLED } = require('../utils/langPrefs');
 const { sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
 const { ordersOpen, CLOSED_MESSAGE } = require('../utils/launch');
@@ -697,6 +698,11 @@ async function completeAddressCollection(to, pendingOrder, address, email) {
 async function routeText(to, text, name) {
   const t = text.toLowerCase().trim();
 
+  // ── 00. Marketing opt-out and sign-up keywords (e.g. FAIR from the stall QR) — before everything else ──
+  if (contacts.isStop(text)) return contacts.handleStop(to);
+  const signup = contacts.signupSource(text);
+  if (signup) return contacts.handleSignup(to, name, signup);
+
   // ── 0. Language change — before greetings, since "hindi" starts with "hi" ──
   // Whole-message matches only, so an address or note that merely contains one of these words is untouched.
   if (HINDI_ENABLED()) {
@@ -918,6 +924,8 @@ async function routeInteractive(to, interactive, name) {
       if (!HINDI_ENABLED()) return sendWelcome(to, name); // stale picker button: stay English
       return changeLanguage(to, name, buttonId === 'lang_hi' ? 'hi' : 'en');
     }
+    case 'optin_yes':       return contacts.handleOptIn(to, true);
+    case 'optin_no':        return contacts.handleOptIn(to, false);
     case 'btn_products':    return sendProductList(to);
     case 'btn_order':       return sendOrderInstructions(to);
     case 'btn_faq':         return sendFAQ(to);
