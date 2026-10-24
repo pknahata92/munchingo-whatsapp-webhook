@@ -14,10 +14,10 @@ const C = { navy: '#0B2D50', gold: '#CEAD5E', terra: '#A35A34', terraDeep: '#864
 const FONT = "'Poppins','Helvetica Neue',Helvetica,Arial,sans-serif";
 
 const FLAVOURS = [
-  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', price: 300, img: 'email-original.jpg' },
-  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', price: 350, img: 'email-kesari.jpg' },
-  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', price: 300, img: 'email-ajwain.jpg' },
-  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 350, img: 'email-lite.jpg' },
+  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', price: 259, img: 'email-original.jpg' },
+  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', price: 299, img: 'email-kesari.jpg' },
+  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', price: 259, img: 'email-ajwain.jpg' },
+  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 299, img: 'email-lite.jpg' },
 ];
 
 function esc(str) {

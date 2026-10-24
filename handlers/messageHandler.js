@@ -29,7 +29,7 @@ const BULK_GIFTING_FLOW_ID = '1066239432999546';
 // an order is only fulfilled hyperlocally/manually by Prashant directly, not
 // through the bot. Referenced in the pre-catalog nudge (sendProductList) and
 // enforced for real in handleOrderMessage.
-const MIN_BOXES = 3; // every catalog item is one box; keep equal to MIN_BOXES in routes/checkout.js
+const { MIN_BOXES, FREE_FROM, SHIPPING_FEE, shippingFor, shippingItem } = require('../utils/shipping'); // every catalog item is one box; the same minimum and shipping rule as the website (25 Oct 2026)
 
 // ── Product catalogue ─────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -182,7 +182,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
-      `Minimum order: ${MIN_BOXES} boxes for delivery\n` +
+      `Minimum order: ${MIN_BOXES} boxes for delivery. Free shipping from ₹${FREE_FROM} (3 boxes), ₹${SHIPPING_FEE} below that.\n` +
       `Delivery across India 🇮🇳`,
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
@@ -242,7 +242,7 @@ async function sendShippingInfo(to) {
         ? `🗓️ Orders placed now are *pre-orders*: dispatched from ${require('./../utils/launch').dispatchLabel()}\n`
         : `⏱️ We dispatch within 48 hours of payment\n`) +
       `⏱️ Delivery time depends on your location — we'll share an estimate when you order\n` +
-      `✅ No separate delivery charge — price is all-inclusive (${MIN_BOXES}-box minimum order)\n` +
+      `✅ Free shipping from ₹${FREE_FROM} (3 boxes); ₹${SHIPPING_FEE} shipping below that (${MIN_BOXES}-box minimum order)\n` +
       `📦 Orders are packed & sealed securely\n\n` +
       `Questions about your area? Just ask!`,
     [
@@ -264,7 +264,7 @@ async function sendPriceList(to) {
 
   await wa.sendButtons(
     to,
-    `💰 *Munchingo Pricing:*\n\n${lines}\n\n✅ No separate delivery charge — price is all-inclusive (${MIN_BOXES}-box minimum order)\n_Prices inclusive of 5% GST (GSTIN 06AIIPN5005C2ZP)_`,
+    `💰 *Munchingo Pricing:*\n\n${lines}\n\n✅ Free shipping from ₹${FREE_FROM} (3 boxes); ₹${SHIPPING_FEE} shipping below that (${MIN_BOXES}-box minimum order)\n_Prices inclusive of 5% GST (GSTIN 06AIIPN5005C2ZP)_`,
     [
       { id: 'btn_products', title: '🛒 Shop Now' },
       { id: 'btn_order',    title: '📦 How to Order' },
@@ -567,9 +567,13 @@ async function handleOrderMessage(to, order, contactName) {
 
   const lines = enrichedItems
     .map((item) => `• ${item.productName} × ${item.quantity} — ₹${item.item_price * item.quantity}`)
+    .concat(shippingFee ? [`• Shipping — ₹${shippingFee} (free from ₹${FREE_FROM})`] : [])
     .join('\n');
 
-  const total = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+  const goodsTotal = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+  // Same rule as the website: Rs 49 shipping under Rs 777 of boxes, kept as its own line on the order (utils/shipping.js).
+  const shippingFee = shippingFor(goodsTotal);
+  const total = goodsTotal + shippingFee;
 
   const totalBoxes = items.reduce((n, i) => n + i.quantity, 0); // every catalog item is one box
   if (totalBoxes < MIN_BOXES) {
@@ -594,7 +598,7 @@ async function handleOrderMessage(to, order, contactName) {
       orderId,
       customerPhone: to,
       customerName:  name,
-      items:         enrichedItems,
+      items:         shippingFee ? [...enrichedItems, shippingItem(shippingFee)] : enrichedItems,
       total,
       currency:      order.currency,
       timestamp,
