@@ -1,0 +1,26 @@
+// The website cart for the Pack of 2 flow (25 Oct 2026): 2-box minimum, Rs 49 shipping under Rs 777, free from there.
+const path = require('path'), fs = require('fs');
+const { JSDOM } = require('jsdom');
+const SITE = process.env.SITE_DIR || path.resolve(__dirname, '../../../munchingo-website');
+let pass = 0, fail = 0;
+const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL', m); } };
+const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://munchingo.com/', runScripts: 'outside-only' });
+dom.window.eval(fs.readFileSync(path.join(SITE, 'js/cart.js'), 'utf8'));
+const C = dom.window.MunchingoCart;
+const add = (slug, price, n = 1) => { for (let i = 0; i < n; i++) C.addToCart({ slug, name: slug, price, unit: '250g' }); };
+ok(C.MIN_BOXES === 2 && C.FREE_FROM === 777 && C.SHIPPING_FEE === 49, 'constants');
+ok(C.boxesShort() === 2 && C.cartShipping() === 0, 'empty bag: short 2, no shipping');
+add('atta-original', 259);
+ok(C.boxesShort() === 1 && C.cartShipping() === 0 && C.cartPayable() === 259, 'one box is short, no fee yet');
+add('atta-kesari', 299);
+ok(C.boxesShort() === 0 && C.cartTotal() === 558 && C.cartShipping() === 49 && C.cartPayable() === 607, 'pack of 2: 558 + 49');
+add('atta-ajwain', 259);
+ok(C.cartTotal() === 817 && C.cartShipping() === 0 && C.cartPayable() === 817, 'three boxes over 777 ships free');
+ok(/Free shipping/.test(C.renderAovProgressHtml(C.getCart())), 'progress bar says free shipping');
+dom.window.localStorage.clear();
+add('atta-original', 259, 2);
+ok(C.cartTotal() === 518 && C.cartShipping() === 49, 'two Originals: 518 + 49');
+ok(/one more box/.test(C.renderAovProgressHtml(C.getCart())), 'progress bar nudges one more box');
+ok(C.suggestion() === null, 'no set suggestions');
+console.log(`website-pack-of-2-test: ${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
