@@ -11,6 +11,7 @@ const REPLY = {
   no: "No problem, we won't send offers. Enjoy the cookies! 🍪",
   already: "You're already on the list, thank you! 🙏 Order any time at munchingo.com or message us here.",
   stop: "Done, we won't send you offers. You can still message us here any time.",
+  failed: "Sorry, that didn't go through on our side. Please try again in a minute.",
 };
 // Keyword typed in the QR's pre-filled message -> where the contact came from. Add a keyword per place (parcel card, carton...).
 const KEYWORDS = { fair: 'fair', join: 'join' };   // fair: stall counter card; join: lnk.bio button (poster + coupon-card QR)
@@ -33,38 +34,41 @@ function signupSource(text) {
 const isStop = (text) => /^\s*(stop|unsubscribe)\s*[.!]?\s*$/i.test(String(text || ''));
 const istDay = (ms) => new Date(ms + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
 
+// New contact: insert with first_source. Existing contact: plain update of the given fields only (an upsert without
+// first_source fails Postgres' NOT NULL check before the conflict is resolved). Returns { ok, old }.
 async function save(phone, fields, firstSource) {
   const { db, now } = D();
   const at = new Date(now()).toISOString();
   try {
     const old = await db.getContact(phone);
-    const row = { phone, ...fields, updated_at: at };
-    if (!old) row.first_source = firstSource;
-    await db.saveContact(row);
-    return old;
+    if (old) await db.updateContact(phone, { ...fields, updated_at: at });
+    else await db.insertContact({ phone, ...fields, first_source: firstSource, updated_at: at });
+    return { ok: true, old };
   } catch (e) {
     console.error('[CONTACTS] save failed for', phone, e.message);
-    return undefined;
+    return { ok: false, old: undefined };
   }
 }
 
 async function handleSignup(phone, name, keyword) {
   const { wa, now } = D();
   const source = (KEYWORDS[String(keyword || '').trim().toLowerCase()] || 'fair') + ':' + istDay(now());
-  const old = await save(phone, { name: name || null, last_source: source }, source);
+  const { old } = await save(phone, { name: name || null, last_source: source }, source);
   if (old && old.consent_marketing === true) return wa.sendText(phone, REPLY.already);
   return wa.sendButtons(phone, CONSENT_QUESTION, BUTTONS);
 }
 
 async function handleOptIn(phone, yes) {
   const { wa, now } = D();
-  await save(phone, { consent_marketing: !!yes, consent_at: new Date(now()).toISOString(), consent_text: CONSENT_QUESTION }, 'button');
+  const r = await save(phone, { consent_marketing: !!yes, consent_at: new Date(now()).toISOString(), consent_text: CONSENT_QUESTION }, 'button');
+  if (!r.ok) return wa.sendText(phone, REPLY.failed);   // never confirm an answer we did not record
   return wa.sendText(phone, yes ? REPLY.yes : REPLY.no);
 }
 
 async function handleStop(phone) {
   const { wa, now } = D();
-  await save(phone, { consent_marketing: false, consent_at: new Date(now()).toISOString(), consent_text: 'STOP' }, 'stop');
+  const r = await save(phone, { consent_marketing: false, consent_at: new Date(now()).toISOString(), consent_text: 'STOP' }, 'stop');
+  if (!r.ok) return wa.sendText(phone, REPLY.failed);
   return wa.sendText(phone, REPLY.stop);
 }
 

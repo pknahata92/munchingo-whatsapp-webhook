@@ -15,7 +15,9 @@ function fakes(startMs) {
       now: () => t,
       db: {
         getContact: async (phone) => (rows[phone] ? { ...rows[phone] } : null),
-        saveContact: async (row) => { rows[row.phone] = { ...(rows[row.phone] || {}), ...row }; return rows[row.phone]; },
+        // Strict like Postgres: a new row must carry first_source (NOT NULL); an existing row is changed with an update only.
+        insertContact: async (row) => { if (rows[row.phone]) throw new Error('duplicate key'); if (!row.first_source) throw new Error('null value in column "first_source"'); rows[row.phone] = { ...row }; return rows[row.phone]; },
+        updateContact: async (phone, fields) => { if (!rows[phone]) throw new Error('no such contact'); if ('first_source' in fields && !fields.first_source) throw new Error('null first_source'); rows[phone] = { ...rows[phone], ...fields }; return rows[phone]; },
       },
       wa: {
         sendButtons: async (to, body, buttons) => { sent.push({ to, kind: 'buttons', body, buttons }); },
@@ -83,9 +85,13 @@ function fakes(startMs) {
   ok(f.rows['919877777777'] && f.rows['919877777777'].consent_marketing === true && f.rows['919877777777'].first_source === 'button', 'a yes from a number we never saved (stale button) is still recorded');
 
   // ── a database failure never leaves the buyer without a reply ──
-  f = fakes(START); f.deps.db.saveContact = async () => { throw new Error('db down'); }; c.setDeps(f.deps);
+  f = fakes(START); f.deps.db.insertContact = f.deps.db.updateContact = async () => { throw new Error('db down'); }; c.setDeps(f.deps);
   let threw = false; try { await c.handleSignup('919810000002', 'Om', 'fair'); } catch (e) { threw = true; }
   ok(!threw && f.sent.length === 1 && f.sent[0].kind === 'buttons', 'a failed save still asks the question and does not throw');
+  await c.handleOptIn('919810000002', true);
+  ok(/didn't go through/.test(f.sent[1].text) && !/on the list/.test(f.sent[1].text), 'a yes that could not be saved is NOT confirmed; the buyer is asked to tap again');
+  await c.handleStop('919810000002');
+  ok(/didn't go through/.test(f.sent[2].text) && !/won't send/.test(f.sent[2].text), 'a STOP that could not be saved is NOT confirmed');
 
   // ── wiring: the bot checks STOP and sign-ups before anything else, and routes the two buttons ──
   const h = fs.readFileSync(path.join(__dirname, '..', 'handlers', 'messageHandler.js'), 'utf8');
@@ -100,7 +106,9 @@ function fakes(startMs) {
   ok(/alter table contacts enable row level security/.test(sql), 'row level security on contacts');
   const dbSrc = fs.readFileSync(path.join(__dirname, '..', 'utils', 'database.js'), 'utf8');
   const ex = (dbSrc.match(/module\.exports\s*=\s*\{([\s\S]*?)\};/) || ['', ''])[1];
-  ok(/\bgetContact\b/.test(ex) && /\bsaveContact\b/.test(ex) && /async function getContact\(/.test(dbSrc) && /async function saveContact\(/.test(dbSrc), 'database.js defines and exports getContact and saveContact');
+  ok(['getContact', 'insertContact', 'updateContact'].every((n) => new RegExp('\\b' + n + '\\b').test(ex) && new RegExp('async function ' + n + '\\(').test(dbSrc)), 'database.js defines and exports getContact, insertContact, updateContact');
+  const upd = dbSrc.slice(dbSrc.indexOf('async function updateContact('), dbSrc.indexOf('async function updateContact(') + 400);
+  ok(/\.update\(/.test(upd) && !/upsert/.test(upd), 'updateContact uses a plain update, never an upsert (an upsert row without first_source breaks NOT NULL)');
 
   console.log(`contacts-test: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
