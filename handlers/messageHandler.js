@@ -49,7 +49,7 @@ const PRODUCTS = [
     mrp: 350,
     price: 299,
     emoji: '🌸',
-    description: 'Real saffron, hand-mixed into every batch. What you serve when someone visits and you want to impress them.',
+    description: 'Real saffron in every batch. What you serve when someone visits and you want to impress them.',
   },
   {
     id: 'lite-sugar-atta-cookie',
