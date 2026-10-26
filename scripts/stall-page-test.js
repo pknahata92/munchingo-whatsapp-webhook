@@ -130,8 +130,8 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
 
   // CSV: one row per pack line, with the customer number so a basket matches one UPI payment
   const lines = w.StallTally.csv().trim().split('\n');
-  ok(lines[0] === 'date,time,customer,item,original,ajwain,kesari,sugar_lite,price,payment,customer_total', 'CSV header: ' + lines[0]);
-  ok(lines.length === 5 && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Hamper of 3,0,1,2,0,799,cash,1049$/.test(l)) && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Kesari,0,0,1,0,250,cash,1049$/.test(l)), 'CSV rows: ' + lines.slice(1).join(' / '));
+  ok(lines[0] === 'date,time,customer,item,original,ajwain,kesari,sugar_lite,price,payment,customer_total,buyer_name,buyer_phone,marketing_ok', 'CSV header: ' + lines[0]);
+  ok(lines.length === 5 && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Hamper of 3,0,1,2,0,799,cash,1049,,,$/.test(l)) && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Kesari,0,0,1,0,250,cash,1049,,,$/.test(l)), 'CSV rows: ' + lines.slice(1).join(' / '));
 
   // a basket in progress survives a reload
   tap('ajwain');
@@ -154,6 +154,83 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   ok(!q(d, '#st-warn').hidden && /not being saved/i.test(text(q(d, '#st-warn'))), 'warns when the device cannot save');
   p.close();
 
+
+  // ── buyer details (only with the marketing tick) and saving to the server ──
+  {
+    const calls = [];
+    const st = memStorage({ 'munchingo-stall-key': 'k1' });
+    const file = path.join(SITE, 'stall.html');
+    const dom = new JSDOM(fs.readFileSync(file, 'utf8'), {
+      url: 'http://localhost/stall.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+      beforeParse(w2) {
+        Object.defineProperty(w2, 'localStorage', { value: st, configurable: true });
+        const RealDate = w2.Date; const fixed = RealDate.parse('2026-10-27T06:00:00Z');
+        w2.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(fixed); } static now() { return fixed; } };
+        w2.confirm = () => true; w2.navigator.serviceWorker = undefined;
+        w2.fetch = (url, opt) => { calls.push({ url, opt }); return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }); };
+      },
+    });
+    await wait(600);
+    const w2 = dom.window, d2 = w2.document;
+    const tap2 = (item) => click(w2, q(d2, `button[data-item="${item}"]`));
+    const set = (id, v) => { const el = q(d2, '#' + id); el.value = v; el.dispatchEvent(new w2.Event('input', { bubbles: true })); };
+    const tick = (on) => { const c = q(d2, '#st-b-ok'); c.checked = on; };
+    const lastBody = () => JSON.parse(calls[calls.length - 1].opt.body);
+    ok(/Server backup|Saved to server|Saving/.test(text(q(d2, '#st-sync'))), 'a sync status line is shown');
+
+    // no buyer: the sale still saves, no buyer stored
+    tap2('original'); click(w2, q(d2, '#st-paid-upi')); await wait(1700);
+    ok(calls.length >= 1 && calls[0].url.endsWith('/api/stall/sync') && calls[0].opt.headers['X-Stall-Key'] === 'k1', 'the day is sent to the server with the stall key');
+    ok(lastBody().orders.length === 1 && !lastBody().orders[0].buyer, 'a sale without buyer details sends no buyer');
+    // phone typed, box NOT ticked: not stored
+    tap2('kesari'); set('st-b-name', 'Asha'); set('st-b-phone', '98765 43210'); tick(false); click(w2, q(d2, '#st-paid-cash')); await wait(1700);
+    ok(lastBody().orders.length === 2 && !lastBody().orders[1].buyer, 'number typed but box not ticked: nothing about the buyer is kept');
+    ok(!JSON.stringify(JSON.parse(st.getItem('munchingo-stall-v1'))).includes('9876543210'), 'and the number is not in the device copy either');
+    ok(q(d2, '#st-b-phone').value === '' && q(d2, '#st-b-name').value === '', 'the fields are cleared for the next customer');
+    // ticked with a good number: stored with the exact wording
+    tap2('ajwain'); set('st-b-name', 'Ravi Kumar'); set('st-b-phone', '9811122233'); tick(true); click(w2, q(d2, '#st-paid-upi')); await wait(1700);
+    const b = lastBody().orders[2].buyer;
+    ok(b && b.phone === '9811122233' && b.name === 'Ravi Kumar' && b.consent === true && /OK to send me new Flavors and offers on WhatsApp/.test(b.consentText), 'ticked + valid number: buyer kept with the consent wording');
+    ok(q(d2, '#st-b-text').textContent.trim() === b.consentText, 'the wording sent is exactly the wording shown on the page');
+    // ticked but a bad number: refused
+    tap2('lite'); set('st-b-phone', '12345'); tick(true); click(w2, q(d2, '#st-paid-upi')); await wait(1700);
+    ok(!lastBody().orders[3].buyer, 'ticked but a bad number: not kept');
+    // CSV carries the buyer only when kept
+    const csv2 = w2.StallTally.csv().trim().split('\n');
+    ok(csv2.some((l) => /,Ravi Kumar|"Ravi Kumar",9811122233,yes$/.test(l)) && csv2.filter((l) => /,yes$/.test(l)).length === 1, 'CSV: only the ticked buyer, with the marketing_ok flag');
+    ok(/Saved to server/.test(text(q(d2, '#st-sync'))), 'status shows saved once the server accepts');
+    dom.window.close();
+
+    // offline: the sale is kept on the device and sent when the server is back; a wrong key is reported
+    let mode = 'down'; const calls2 = [];
+    const st2 = memStorage({ 'munchingo-stall-key': 'k1' });
+    const dom2 = new JSDOM(fs.readFileSync(file, 'utf8'), {
+      url: 'http://localhost/stall.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+      beforeParse(w3) {
+        Object.defineProperty(w3, 'localStorage', { value: st2, configurable: true });
+        const RealDate = w3.Date; const fixed = RealDate.parse('2026-10-27T06:00:00Z');
+        w3.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(fixed); } static now() { return fixed; } };
+        w3.confirm = () => true; w3.navigator.serviceWorker = undefined;
+        w3.fetch = (url, opt) => { calls2.push(mode); if (mode === 'down') return Promise.reject(new Error('offline')); if (mode === 'wrong') return Promise.resolve({ ok: false, status: 403 }); return Promise.resolve({ ok: true, status: 200 }); };
+      },
+    });
+    await wait(600);
+    const w3 = dom2.window, d3 = w3.document;
+    click(w3, q(d3, 'button[data-item="original"]')); click(w3, q(d3, '#st-paid-upi')); await wait(1700);
+    ok(/Not yet saved/.test(text(q(d3, '#st-sync'))) && JSON.parse(st2.getItem('munchingo-stall-v1')).days['2026-10-27'].orders.length === 1, 'offline: the sale is kept on the device and the page says it is not yet saved');
+    mode = 'wrong'; w3.dispatchEvent(new w3.Event('online')); await wait(300);
+    ok(/Wrong stall key/.test(text(q(d3, '#st-sync'))), 'a wrong key is reported');
+    mode = 'up'; w3.localStorage.setItem('munchingo-stall-key', 'k1'); w3.dispatchEvent(new w3.Event('online')); await wait(300);
+    ok(/Saved to server/.test(text(q(d3, '#st-sync'))), 'back online: it catches up and says saved');
+    dom2.window.close();
+
+    // no key yet: says so
+    const dom3 = new JSDOM(fs.readFileSync(file, 'utf8'), { url: 'http://localhost/stall.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+      beforeParse(w4) { Object.defineProperty(w4, 'localStorage', { value: memStorage(), configurable: true }); w4.navigator.serviceWorker = undefined; w4.fetch = () => Promise.reject(new Error('no')); } });
+    await wait(500);
+    ok(/OFF/.test(text(dom3.window.document.querySelector('#st-sync'))), 'no key entered yet: the page says server backup is off');
+    dom3.window.close();
+  }
   ok(!/stall/.test(fs.readFileSync(path.join(SITE, 'sitemap.xml'), 'utf8')), 'stall page is not in the sitemap');
   console.log(`stall-page-test: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
