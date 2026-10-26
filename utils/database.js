@@ -599,6 +599,7 @@ async function listCouponOrderTotals() {
 const client = () => db();
 
 module.exports = {
+  upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
   listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
@@ -633,3 +634,25 @@ module.exports = {
   markOrderRefunded,
   getOrdersPaidSince,
 };
+
+// Stall tally (utils/stall.js, stall_migration.sql). The page sends its whole day; rows are upserted by the id the iPad made.
+async function upsertStallDay(day, opening) {
+  const { error } = await db().from('stall_days').upsert({ day, opening, updated_at: new Date().toISOString() }, { onConflict: 'day' });
+  if (error) throw new Error(error.message);
+}
+async function upsertStallOrders(rows) {
+  if (!rows.length) return;
+  const { error } = await db().from('stall_orders').upsert(rows, { onConflict: 'id' });
+  if (error) throw new Error(error.message);
+}
+async function listStallOrderIds(day) {
+  const { data, error } = await db().from('stall_orders').select('id, deleted_at').eq('day', day);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function markStallOrdersDeleted(ids) {
+  if (!ids.length) return;
+  const at = new Date().toISOString();
+  const { error } = await db().from('stall_orders').update({ deleted_at: at, updated_at: at }).in('id', ids);
+  if (error) throw new Error(error.message);
+}

@@ -41,7 +41,7 @@ function verifyMetaSignature(rawBody, signatureHeader) {
 
 const app = express();
 app.set('trust proxy', 3);   // hops in front of us on Render: loopback + Render proxy + Cloudflare edge; the next address is the real client: req.ip is the real client, used by the rate limiter
-app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));   // 1 MB: a stall day snapshot can pass the 100 kb default
 
 // Private admin page (login by emailed code; see utils/adminAuth.js and routes/admin.js)
 app.use(require('./routes/admin'));
@@ -67,13 +67,14 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
   }
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Stall-Key');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
 app.use(checkoutRoutes);
 app.use(require('./routes/reviews'));
+app.use(require('./routes/stall'));
 
 const PORT         = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'munchingo_webhook_secret_2026';
