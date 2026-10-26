@@ -64,17 +64,19 @@ async function validateCoupon(code, { cartSlugs, realTotal, singlesTotal, custom
     return { ok: false, error: 'That code has reached its usage limit.' };
   }
   // scope 'singles-only' = "do not apply to gift sets": the discount (and the minimum order) are worked out on single boxes only.
-  const singlesOnly = coupon.scope_slug === 'singles-only';
-  const base = singlesOnly ? Math.max(0, Number(singlesTotal) || 0) : realTotal;
-  if (singlesOnly && base <= 0) {
-    return { ok: false, error: 'This code does not apply to gift sets. Add single boxes to use it.' };
+  // Since 25 Oct 2026 EVERY code works on single boxes only: a gift box or hamper is never discounted, whatever the code says.
+  const singlesOnly = true;
+  const base = Math.max(0, Number(singlesTotal) || 0);
+  if (/^(trio-gift-set|full-range-set)/.test(String(coupon.scope_slug || ''))) {
+    return { ok: false, error: 'This code does not apply to gift boxes or hampers.' };
+  }
+  if (base <= 0) {
+    return { ok: false, error: 'Offers do not apply to gift boxes or hampers. Add single boxes to use this code.' };
   }
   if (base < (coupon.min_order_value || 0)) {
-    return { ok: false, error: singlesOnly
-      ? `This code needs at least ₹${coupon.min_order_value} of single boxes (gift sets are not included).`
-      : `This code needs a minimum order of ₹${coupon.min_order_value}.` };
+    return { ok: false, error: `This code needs at least ₹${coupon.min_order_value} of single boxes (gift boxes and hampers are not included).` };
   }
-  if (coupon.scope_slug && !singlesOnly) {
+  if (coupon.scope_slug && coupon.scope_slug !== 'singles-only') {
     // Exact match, OR prefix match for dynamic slugs like the Trio set
     // ("trio-gift-set-ajwain-kesari-original") — a plain .includes() check
     // would never match a scope_slug of 'trio-gift-set' since no real cart

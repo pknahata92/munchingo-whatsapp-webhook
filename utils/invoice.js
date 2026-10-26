@@ -146,6 +146,7 @@ function buildInvoice(order, { invoiceNo, issuedAt }) {
     grossPaise: paise(i.item_price) * (Number(i.quantity) || 1),
     unit: i.unit || null,
     contents: contentsOf(i),   // gift sets: which flavours are inside
+    slug: i.slug || null,
   }));
   // The shipping fee (a line with no flavours, see utils/shipping.js) is never discounted: the discount is spread over the goods only.
   items.forEach((it, idx) => { it.isShipping = require('./shipping').isShippingItem((order.items || [])[idx]); });
@@ -153,11 +154,17 @@ function buildInvoice(order, { invoiceNo, issuedAt }) {
   const goodsGross = items.filter((i) => !i.isShipping).reduce((s, i) => s + i.grossPaise, 0);
   const discount = Math.min(paise(order.discount_amount || 0), goodsGross);
 
-  // Spread the discount pro-rata over the goods; the last goods line absorbs rounding so the sum is exact.
+  // Spread the discount pro-rata over the lines it was earned on: single boxes only (gift boxes and hampers are never discounted).
+  // An older order whose discount exceeds its single boxes (before this rule) spreads over all goods as before.
+  const BASE = require('./catalog').BASE_SLUGS;
+  const singlesGross = items.filter((i) => !i.isShipping && BASE.includes(i.slug)).reduce((s, i) => s + i.grossPaise, 0);
+  const onSinglesOnly = singlesGross > 0 && discount <= singlesGross;
+  const eligible = (i) => !i.isShipping && (!onSinglesOnly || BASE.includes(i.slug));
+  const eligibleGross = onSinglesOnly ? singlesGross : goodsGross;
   let allocated = 0;
-  const lastGoods = items.map((i) => i.isShipping).lastIndexOf(false);
+  const lastGoods = items.map((i) => eligible(i)).lastIndexOf(true);
   items.forEach((it, idx) => {
-    const d = it.isShipping ? 0 : (idx === lastGoods ? discount - allocated : Math.round((discount * it.grossPaise) / (goodsGross || 1)));
+    const d = !eligible(it) ? 0 : (idx === lastGoods ? discount - allocated : Math.round((discount * it.grossPaise) / (eligibleGross || 1)));
     allocated += d;
     it.discountPaise = d;
     it.netPaise = it.grossPaise - d;

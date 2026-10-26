@@ -6,7 +6,7 @@
  * so the two can never disagree.
  *
  * Rules: Subscribe & Save stands alone. Otherwise the larger of (best tier, code) wins; a tie goes to the tier so no code use
- * is burned. Gift sets never count towards a tier and a tier never discounts them: they are already priced as a deal.
+ * is burned. Gift sets never count towards a tier and NO discount of any kind (tier, code, Subscribe & Save) ever touches a gift box or hamper: they are already priced as a deal.
  * Tiers live in spend_tiers (offers_migration.sql), cached 30 s. If the table cannot be read there are simply no tiers.
  */
 const db = require('./database');
@@ -67,8 +67,9 @@ async function priceCart({ items, couponCode, customerPhone, subscribe, subscrip
   const realTotal = items.reduce((n, i) => n + i.item_price * i.quantity, 0);
   const singles = items.filter((i) => BASE_SLUGS.includes(i.slug)).reduce((n, i) => n + i.item_price * i.quantity, 0);
   if (subscribe) {
-    const amount = Math.round(realTotal * (subscriptionPct / 100));
-    return { realTotal, singles, discount: { kind: 'subscription', amount, label: `Subscribe & Save (${subscriptionPct}%)`, code: null }, finalTotal: realTotal - amount, next: null, tiers: [], couponError: null };
+    // Gift boxes and hampers are never discounted (25 Oct 2026): Subscribe & Save is worked out on single boxes only.
+    const amount = Math.round(singles * (subscriptionPct / 100));
+    return { realTotal, singles, discount: amount > 0 ? { kind: 'subscription', amount, label: `Subscribe & Save (${subscriptionPct}%)`, code: null } : null, finalTotal: realTotal - amount, next: null, tiers: [], couponError: null };
   }
   const tiers = liveTiers(await tierRows());
   const hit = bestTier(tiers, singles);

@@ -529,7 +529,9 @@ app.get('/internal/subscription-renewals', async (req, res) => {
         slug: i.slug,
       }));
       const realTotal = enrichedItems.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
-      const discountAmount = Math.round(realTotal * (sub.discount_pct / 100));
+      // Gift boxes and hampers are never discounted: the subscriber discount is on single boxes only.
+      const singlesTotal = enrichedItems.filter((i) => require('./utils/catalog').BASE_SLUGS.includes(i.slug)).reduce((sum, i) => sum + i.item_price * i.quantity, 0);
+      const discountAmount = Math.round(singlesTotal * (sub.discount_pct / 100));
       // Same shipping rule as the website checkout (utils/shipping.js): a fee under Rs 777 of items, never discounted.
       const renewalShipping = require('./utils/shipping').shippingFor(realTotal);
       const finalTotal = realTotal - discountAmount + renewalShipping;
