@@ -2,6 +2,7 @@
 
 const wa = require('../utils/whatsapp');
 const contacts = require('../utils/contacts');
+const { wantsHuman } = require('../utils/handoff');
 const { getStoredLang, setLang, HINDI_ENABLED } = require('../utils/langPrefs');
 const { sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
 const { ordersOpen, CLOSED_MESSAGE } = require('../utils/launch');
@@ -327,6 +328,13 @@ async function sendHumanHandoff(to, name, message) {
   );
   console.log(`[HANDOFF] Customer ${to} requested human agent`);
 
+  // The person's latest order, so the owner knows who they are talking to. Never blocks the alert.
+  let orderLine = '';
+  try {
+    const [o] = await getRecentOrders(to, 1);
+    if (o) orderLine = `${o.order_id} (${STATUS_TEXT[o.status] || o.status}, ₹${o.total}, ${new Date(o.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})`;
+  } catch (err) { console.error('[HANDOFF] could not look up the latest order:', err.message); }
+
   const ownerPhone = process.env.OWNER_PHONE;
   if (ownerPhone) {
     try {
@@ -335,6 +343,7 @@ async function sendHumanHandoff(to, name, message) {
         `👋 *Human handoff requested*\n\n` +
           `Customer: ${name || 'Unknown'}\n` +
           `WhatsApp: +${to}\n` +
+          (orderLine ? `Latest order: ${orderLine}\n` : 'No orders yet\n') +
           (message ? `Message: "${message}"\n\n` : '\n') +
           `Reply directly on WhatsApp: https://wa.me/${to}`
       );
@@ -347,7 +356,7 @@ async function sendHumanHandoff(to, name, message) {
 
   try {
     const { sendHumanHandoffAlert } = require('../utils/mailer');
-    await sendHumanHandoffAlert({ customerPhone: to, customerName: name, message });
+    await sendHumanHandoffAlert({ customerPhone: to, customerName: name, message, orderLine });
   } catch (err) {
     console.error('[MAILER] Failed to send human handoff alert:', err.message);
   }
@@ -707,6 +716,9 @@ async function routeText(to, text, name) {
   const signup = contacts.signupSource(text);
   if (signup) return contacts.handleSignup(to, name, signup);
 
+  // ── 0a. Anyone asking for a person (owner, agent, "call me", Hindi too): alert the owner with their details ──
+  if (wantsHuman(text)) return sendHumanHandoff(to, name, text);
+
   // ── 0. Language change — before greetings, since "hindi" starts with "hi" ──
   // Whole-message matches only, so an address or note that merely contains one of these words is untouched.
   if (HINDI_ENABLED()) {
@@ -756,10 +768,6 @@ async function routeText(to, text, name) {
   // Resend payment link
   if (/resend|send.*link|payment.*link|link.*again|new.*link|get.*link/.test(t)) {
     return resendPaymentLink(to, name);
-  }
-  // Human handoff
-  if (/\bhuman\b|real person|talk.*person|speak.*someone|live.*agent|\bsupport\b/.test(t)) {
-    return sendHumanHandoff(to, name, text);
   }
   // Return / refund
   if (/return|refund|damage|broken|wrong.*item/.test(t)) {

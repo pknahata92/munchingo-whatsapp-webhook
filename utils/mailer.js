@@ -88,7 +88,7 @@ async function sendOrderEmail({ orderId, customerPhone, customerName, items, tot
   console.log(`[MAILER] Order notification sent for #${orderId}`);
 }
 
-async function sendHumanHandoffAlert({ customerPhone, customerName, message }) {
+async function sendHumanHandoffAlert({ customerPhone, customerName, message, orderLine }) {
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
       <div style="background:#B0413E;padding:22px 26px;">
@@ -98,6 +98,7 @@ async function sendHumanHandoffAlert({ customerPhone, customerName, message }) {
         <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
           <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(customerName) || 'Unknown'}</td></tr>
           <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${customerPhone}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;vertical-align:top;">Latest order</td><td style="padding:4px 0;">${escapeHtml(orderLine) || 'No orders yet'}</td></tr>
           ${message ? `<tr><td style="padding:4px 0;color:#888;vertical-align:top;">Message</td><td style="padding:4px 0;">${escapeHtml(message)}</td></tr>` : ''}
         </table>
         <p style="margin:0;font-size:13px;color:#999;">
