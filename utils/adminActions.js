@@ -41,6 +41,21 @@ async function razorpayMoney(sinceMs) {
 // A Delhivery parcel we can track: the sweep (orderUpdates.js) and the label button use the same rule.
 const trackable = (o) => /delhivery/i.test(o.carrier || '') && /^[0-9]{8,20}$/.test(String(o.awb || '').trim());
 
+// LATE: a shipped order not delivered by Delhivery's promised date or, when the courier gave no date, more than 7 days after
+// the courier collected it (hand or Porter deliveries with no tracking: 7 days after they were sent). A parcel Delhivery has not
+// collected yet is never LATE: it already shows Awaiting pickup. days = whole days late, rounded up.
+const LATE_AFTER_DAYS = 7;
+function lateInfo({ state, expected, pickedUpAt, shippedAt, trackable: canTrack, now = Date.now() }) {
+  const no = { late: false, days: 0, basis: expected ? 'courier' : 'seven_days' };
+  if (state !== 'shipped') return no;
+  const DAY = 86400000;
+  if (expected) { const due = Date.parse(expected); return Number.isFinite(due) && now > due ? { late: true, days: Math.ceil((now - due) / DAY), basis: 'courier' } : no; }
+  const from = pickedUpAt || (canTrack ? null : shippedAt);
+  if (!from) return no;
+  const over = now - Date.parse(from) - LATE_AFTER_DAYS * DAY;
+  return over > 0 ? { late: true, days: Math.ceil(over / DAY), basis: 'seven_days' } : no;
+}
+
 function shapeOrder(o, invoice, creditNotes = [], money = null, courierPickedUp = false) {
   const refundedPaise = creditNotes.reduce((n, c) => n + c.amount_paise, 0);
   const totalPaise = Math.round(Number(o.total) * 100);
@@ -77,6 +92,9 @@ function shapeOrder(o, invoice, creditNotes = [], money = null, courierPickedUp 
     shipped_at: o.shipped_at || null, carrier: o.carrier || '', awb: o.awb || '', admin_note: o.admin_note || '',
     // Shipment booked (so the order is "shipped") but Delhivery has not collected the parcel yet. Manual hand-offs have no tracking, so never.
     awaiting_pickup: state === 'shipped' && trackable(o) && !courierPickedUp,
+    // Delivery date (Delhivery's promised date, saved by the tracking sweep) and the LATE flag. courierPickedUp may be the pick-up time.
+    expected_by: o.expected_delivery_at || null,
+    late: lateInfo({ state, expected: o.expected_delivery_at || null, pickedUpAt: typeof courierPickedUp === 'string' ? courierPickedUp : null, shippedAt: o.shipped_at, trackable: trackable(o) }),
     known_to_us: !!o.known_to_us,
   };
 }
@@ -110,10 +128,10 @@ async function loadOrders() {
   }
   // One lookup: which shipped Delhivery parcels has the courier already collected (marker written by the tracking sweep)?
   const inTransit = orders.filter((o) => o.status === 'paid' && o.shipped_at && !o.delivered_at && trackable(o)).map((o) => o.order_id);
-  let collected = new Set();
-  try { if (inTransit.length) collected = new Set((await db.listOrderEventsByName('courier_picked_up', inTransit)).map((e) => e.order_id)); }
-  catch (e) { console.error('[ADMIN] could not read courier pick-up markers:', e.message); collected = new Set(inTransit); }   // on failure show no "awaiting" warning rather than a false one
-  const shaped = orders.map((o) => shapeOrder(o, invoices[o.order_id], byOrder[o.order_id] || [], money, collected.has(o.order_id)));
+  let collected = new Map();   // order id -> when the courier collected it (the marker's time)
+  try { if (inTransit.length) (await db.listOrderEventsByName('courier_picked_up', inTransit)).forEach((e) => { if (!collected.has(e.order_id)) collected.set(e.order_id, e.created_at || true); }); }
+  catch (e) { console.error('[ADMIN] could not read courier pick-up markers:', e.message); collected = new Map(inTransit.map((id) => [id, true])); }   // on failure show no "awaiting" warning rather than a false one
+  const shaped = orders.map((o) => shapeOrder(o, invoices[o.order_id], byOrder[o.order_id] || [], money, collected.has(o.order_id) ? collected.get(o.order_id) : false));
   shaped.moneyLive = !!(money && money.live);
   return shaped;
 }
@@ -125,6 +143,8 @@ async function getOrderDetail(orderId) {
   const cns = await db.getCreditNotesByOrder(orderId).catch(() => []);
   const shaped = shapeOrder(o, invoice, cns);
   shaped.events = (await db.listOrderEvents(orderId)).map((e) => ({ event: e.event, from: e.from_state, to: e.to_state, by: e.actor_name || e.actor_email || '', at: e.created_at, meta: e.meta || null }));
+  const pick = shaped.events.find((e) => e.event === 'courier_picked_up');
+  shaped.late = lateInfo({ state: shaped.state, expected: o.expected_delivery_at || null, pickedUpAt: pick ? pick.at : null, shippedAt: o.shipped_at, trackable: trackable(o) });
   if (shaped.state === 'unpaid') {
     // When the payable link stops working: 24 h after the order, or after the last fresh link made from the admin.
     const lastFresh = shaped.events.filter((e) => e.event === 'payment_link_regenerated').pop();
@@ -614,4 +634,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { sendWhatsappUpdate, setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { lateInfo, sendWhatsappUpdate, setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

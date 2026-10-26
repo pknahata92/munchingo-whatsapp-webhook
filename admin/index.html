@@ -40,7 +40,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
 .sechead small{display:block;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink2);font-size:12px;margin-top:1px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
-.b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
+.b-late{background:#B3261E;color:#fff}.card.late{border-left:5px solid #B3261E}.meta.late{color:var(--tx-red);font-weight:600}.b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
 .unpaidbar{background:#3A2B12;border:1px solid #8F6B25;color:#FBEFD5;border-radius:12px;padding:12px 14px;margin:10px 0;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.unpaidbar[hidden]{display:none}.unpaidbar b{color:#F5C970}.unpaidbar.hot{background:#4A211C;border-color:#B5584B}.unpaidbar.hot b{color:#FFB4A8}.badge.b-stale{background:#FBE4E0;color:var(--tx-red)}.paybox{background:#2B2118;border:1px solid #5A4630;border-radius:12px;padding:12px 14px;margin:6px 0}.paybox .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:30;overflow:auto}
 .sheet.on{display:block}.panel{background:var(--cream);max-width:640px;margin:0 auto;min-height:100%;padding:16px 16px 40px}
@@ -242,7 +242,7 @@ header small{color:var(--ink2);opacity:1}
 
   // ── main list ──
   var STEPS = [['topack', '1', 'To pack', 'Tick the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Tap Create shipment on each order. You get a tracking number and the customer is emailed. For Porter or hand delivery, open the order.'], ['shipped', '3', 'Shipped', 'On the way. Tick orders and tap Shipping labels to print the courier labels together, then Request pickup so Delhivery collects them. When it reaches the customer, tap Mark delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
-  var FILTERS = [['attention', 'Needs attention'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
+  var FILTERS = [['attention', 'Needs attention'], ['late', 'Late'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'REFUNDED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
@@ -321,6 +321,8 @@ header small{color:var(--ink2);opacity:1}
     else if (packed) add(packed, 'packed order: tap to create its shipment', 'packed orders: tap to create their shipments', go('packed'));
     else if (onway) add(onway, 'shipped order: tap for its label or delivery', 'shipped orders: tap for their labels or delivery', go('shipped'));
     add(unp.length, 'order waiting for payment' + (old1h ? ' (' + old1h + ' over an hour old)' : ''), 'orders waiting for payment' + (old1h ? ' (' + old1h + ' over an hour old)' : ''), go('unpaid'), old1h > 0);
+    var lateN = state.orders.filter(isLate).length;
+    add(lateN, 'late order: past its delivery date, check with Delhivery', 'late orders: past their delivery date, check with Delhivery', go('late'), true);
     var low = state.low || [];
     add(low.length, 'running low: ' + low.map(function (x) { return x.name; }).join(', '), 'running low: ' + low.map(function (x) { return x.name; }).join(', '), function () { showTab('stock'); }, low.some(function (x) { return x.status === 'out'; }));
     if (state.role === 'owner') { var att = state.orders.filter(function (o) { return o.needs_attention && o.state !== 'test'; }).length; add(att, 'order needs attention (invoice or accounting)', 'orders need attention (invoice or accounting)', go('attention'), true); }
@@ -338,7 +340,16 @@ header small{color:var(--ink2);opacity:1}
     return true;
   }
   // Cancelled = an unpaid order that was cancelled. Refunded = money went back to the customer (full or partial; a part-refunded order also stays in its step).
-  function inFilter(o, f) { return f === 'refunded' ? (o.state === 'refunded' || o.refunded > 0) : o.state === f; }
+  function inFilter(o, f) { return f === 'refunded' ? (o.state === 'refunded' || o.refunded > 0) : f === 'late' ? isLate(o) : o.state === f; }
+  function isLate(o) { return !!(o.late && o.late.late); }
+  function shortDate(iso) { try { return new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }); } catch (e) { return ''; } }
+  // 'Expected by Tue, 28 Oct' and, when late, how late and on what basis (the courier's date, or 7 days after pickup).
+  function deliveryText(o) {
+    if (o.state !== 'shipped') return '';
+    var t = o.expected_by ? 'Expected by ' + shortDate(o.expected_by) : (o.awaiting_pickup ? '' : 'No courier date');
+    if (isLate(o)) t += (t ? ' · ' : '') + o.late.days + ' day' + (o.late.days === 1 ? '' : 's') + ' late' + (o.late.basis === 'seven_days' ? ' (7 days since pickup)' : '');
+    return t;
+  }
   function visible() {
     var q = $('q').value.trim().toLowerCase();
     var rows = state.orders.filter(function (o) {
@@ -366,7 +377,8 @@ header small{color:var(--ink2);opacity:1}
     FILTERS.forEach(function (f) {
       if (f[0] === 'attention' && (state.role !== 'owner' || !state.orders.some(function (o) { return o.needs_attention && o.state !== 'test'; }))) return;
       if (f[0] === 'test' && !cnt('test') && state.filter !== 'test') return;
-      if (state.role !== 'owner' && f[0] !== 'all' && f[0] !== 'unpaid') return;   // staff only need the four steps and the unpaid follow-up
+      if (f[0] === 'late' && !cnt('late') && state.filter !== 'late') return;
+      if (state.role !== 'owner' && f[0] !== 'all' && f[0] !== 'unpaid' && f[0] !== 'late') return;   // staff only need the four steps and the unpaid follow-up
       var n = f[0] === 'all' ? state.orders.length : f[0] === 'attention' ? state.orders.filter(function (o) { return o.needs_attention && o.state !== 'test'; }).length : cnt(f[0]);
       c.appendChild(h('button', { class: 'chip' + (state.filter === f[0] ? ' on' : ''), onclick: function () { state.filter = f[0]; saveView(); render(); } }, f[1] + ' ' + n));
     });
@@ -399,10 +411,12 @@ header small{color:var(--ink2);opacity:1}
       var pickable = o.state === 'topack' || o.state === 'packed' || o.state === 'shipped';
       var box = pickable ? h('input', { type: 'checkbox', 'aria-label': 'Select ' + o.id, onclick: function (e) { e.stopPropagation(); if (e.target.checked) state.sel[o.id] = 1; else delete state.sel[o.id]; bulkBar(); } }) : null;
       if (box && state.sel[o.id]) box.checked = true;
-      list.appendChild(h('div', { class: 'card', onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
+      var dtext = deliveryText(o);
+      list.appendChild(h('div', { class: 'card' + (isLate(o) ? ' late' : ''), onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
         h('div', {},
-          h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), o.gift_note ? h('span', { class: 'badge b-gift' }, 'GIFT') : null, o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, 'NO INVOICE') : null), h('span', {}, inr(o.total))),
+          h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), isLate(o) ? h('span', { class: 'badge b-late' }, 'LATE') : null, o.gift_note ? h('span', { class: 'badge b-gift' }, 'GIFT') : null, o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, 'NO INVOICE') : null), h('span', {}, inr(o.total))),
           h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.source ? ' · from ' + o.source : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '') + (o.refunded > 0 ? ' · refunded ' + inr(o.refunded) + (o.state === 'refunded' ? '' : ' (part)') : '')),
+          dtext ? h('div', { class: 'meta' + (isLate(o) ? ' late' : '') }, dtext) : null,
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));
     });
@@ -685,7 +699,7 @@ header small{color:var(--ink2);opacity:1}
       h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { act(adv, { to: 'packed' }, 'Marked packed', e.target); } }, 'Mark packed'),
         h('button', { class: 'btn ghost small', onclick: function () { printOne(o.id, 'slips'); } }, 'Print slip'))));
     if (o.state === 'packed') p.appendChild(shipForm(o));
-    if (o.state === 'shipped' || o.state === 'delivered') p.appendChild(section(o.state === 'delivered' ? 'Delivered' : 'Shipped', kv([['Packed', o.packed_at ? when(o.packed_at) + (o.packed_by ? ' by ' + o.packed_by : '') : ''], ['Carrier', o.carrier], ['Tracking', o.awb], ['Shipped', when(o.shipped_at)], ['Delivered', o.delivered_at ? when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : '']]),
+    if (o.state === 'shipped' || o.state === 'delivered') p.appendChild(section(o.state === 'delivered' ? 'Delivered' : 'Shipped', kv([['Packed', o.packed_at ? when(o.packed_at) + (o.packed_by ? ' by ' + o.packed_by : '') : ''], ['Carrier', o.carrier], ['Tracking', o.awb], ['Shipped', when(o.shipped_at)], ['Expected delivery', o.state === 'shipped' ? (o.expected_by ? shortDate(o.expected_by) : 'No date from the courier yet') + (isLate(o) ? ' · LATE, ' + o.late.days + ' day' + (o.late.days === 1 ? '' : 's') : '') : ''], ['Delivered', o.delivered_at ? when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : '']]),
       o.state === 'shipped' ? h('div', { class: 'acts' }, labelable(o) ? h('button', { class: 'btn ghost small', onclick: function () { openOrderLabels([o.id]); } }, 'Shipping label') : null, h('button', { class: 'btn small', onclick: function (e) { if (confirm('Mark this order as delivered?')) act(adv, { to: 'delivered' }, 'Marked delivered', e.target); } }, 'Mark delivered')) : null));
     if (state.role === 'owner' && o.state !== 'unpaid' && o.state !== 'test') {
       var known = h('input', { type: 'checkbox', id: 'knownToUs' }); known.checked = !!o.known_to_us;
@@ -805,7 +819,7 @@ header small{color:var(--ink2);opacity:1}
           it.at_events ? h('small', { class: 'muted', style: 'color:var(--tx-amber)' }, it.at_events + ' ' + it.unit + ' are out at events (not on the shelf)') : null,
           h('div', { class: 'acts' },
             h('button', { class: 'btn small', onclick: function () { invReceive(it); } }, 'Receive'),
-            h('button', { class: 'btn ghost small', onclick: function () { invTake(it); } }, 'Take out'),
+            it.kind === 'product' ? null : h('button', { class: 'btn ghost small', onclick: function () { invTake(it); } }, 'Take out'),   // flavours use Take out: several flavours
             h('button', { class: 'btn ghost small', onclick: function () { invCount(it); } }, 'Count'),
             it.kind === 'product' ? h('button', { class: 'btn ghost small' + (it.paused ? '' : ' red'), onclick: function (e) { if (!it.paused && !confirm('Pause ' + it.name + ' on the website? Customers will not be able to order it (or any gift set that contains it) until you resume.')) return; e.target.disabled = true; api('/admin/api/inventory/pause', { method: 'POST', body: { slug: it.slug, paused: !it.paused } }).then(function (r) { toast(r.ok ? (it.paused ? it.name + ' is on sale again' : it.name + ' paused on the website') : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); }); } }, it.paused ? 'Resume selling' : 'Pause selling') : null,
             h('button', { class: 'btn ghost small' + (it.manual_low ? ' red' : ''), onclick: function (e) { e.target.disabled = true; api('/admin/api/inventory/low', { method: 'POST', body: { slug: it.slug, low: !it.manual_low } }).then(function (r) { toast(r.ok ? (it.manual_low ? 'Low flag cleared' : 'Marked as running low') : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, it.manual_low ? 'Clear low flag' : 'Mark low'),
@@ -919,7 +933,7 @@ header small{color:var(--ink2);opacity:1}
       h('label', {}, 'What happened'), type, whoWrap, invWrap, h('label', {}, 'Boxes per flavour')]
       .concat(prods.map(function (p) { return h('div', { class: 'line', style: 'align-items:center' }, h('span', {}, p.name + ' (on hand ' + p.on_hand + ')'), h('span', { style: 'width:90px' }, boxIn[p.slug])); }))
       .concat([h('label', {}, 'Note'), note]);
-    invForm('Take out several', { name: 'flavours', on_hand: prods.reduce(function (a, p) { return a + p.on_hand; }, 0), unit: 'boxes in all' }, fields, function (done) {
+    invForm('Take out', { name: 'several flavours', on_hand: prods.reduce(function (a, p) { return a + p.on_hand; }, 0), unit: 'boxes in all' }, fields, function (done) {
       var boxes = {}; prods.forEach(function (p) { if (boxIn[p.slug].value) boxes[p.slug] = boxIn[p.slug].value; });
       postInv('take-many', { type: type.value, boxes: boxes, who: whoIn.value, invoice: invIn.value, note: note.value }, done, function (x) { return 'Done: ' + x.lines.map(function (l) { return l.qty + ' ' + l.name + ' (left ' + l.onHand + ')'; }).join(', '); });
     }, 'Save take-out');

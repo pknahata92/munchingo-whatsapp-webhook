@@ -39,7 +39,7 @@ const orders = [
   mk('MNG-OTHR-1012', 95002, 'paid', {}),
   mk('MNG-TEST-1001', 90000, 'paid', {}),
   mk('MNG-CCCC-1009', 1500, 'paid', { shipped_at: new Date(now - 1000000).toISOString(), carrier: 'Delhivery', awb: '1234567890' }),
-  mk('MNG-WITH-1009', 1400, 'paid', { customer_name: 'Collins Courier', packed_at: new Date(now - 90000000).toISOString(), shipped_at: new Date(now - 80000000).toISOString(), carrier: 'Delhivery', awb: '5566778899' }),   // shipped, courier has collected it (marker event seeded below)
+  mk('MNG-WITH-1009', 1400, 'paid', { customer_name: 'Collins Courier', packed_at: new Date(now - 90000000).toISOString(), shipped_at: new Date(now - 80000000).toISOString(), carrier: 'Delhivery', awb: '5566778899', expected_delivery_at: new Date(now - 2 * 86400000 + 3600000).toISOString() }),   // promised ~2 days ago: LATE   // shipped, courier has collected it (marker event seeded below)
   // Two orders either side of Indian midnight on 20/21 Oct (UTC date is the same for both): they must land under different day headers.
   mk('MNG-ISTA-1000', 1, 'paid', { customer_name: 'Ist Alpha', created_at: '2026-10-20T17:00:00.000Z', updated_at: '2026-10-20T17:00:00.000Z' }),
   mk('MNG-ISTB-1000', 1, 'paid', { customer_name: 'Ist Beta', created_at: '2026-10-20T19:00:00.000Z', updated_at: '2026-10-20T19:00:00.000Z' }),
@@ -111,6 +111,7 @@ stub('utils/database.js', {
   countCouponRedemptions: async (c) => couponReds.filter((r) => r.coupon_code === c).length,
   deleteCouponRow: async (c) => { coupons.splice(coupons.findIndex((x) => x.code === c), 1); },
   getOrdersInTransit: async () => orders.filter((o) => o.status === 'paid' && o.shipped_at && !o.delivered_at),
+  setExpectedDelivery: async (id, at) => { const o = orders.find((x) => x.order_id === id); if (o) o.expected_delivery_at = at; },
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });

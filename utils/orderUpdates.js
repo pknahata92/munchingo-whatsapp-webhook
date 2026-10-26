@@ -80,7 +80,11 @@ async function sweepOnce() {
     res.checked++;
     try {
       const events = await db.listOrderEvents(order.order_id);
-      const { stage } = await track.fetchStage(order.awb);
+      const { stage, edd } = await track.fetchStage(order.awb);
+      // Delhivery's promised delivery date: saved when it is new or has moved (the admin shows it and flags LATE orders).
+      if (edd && edd !== order.expected_delivery_at && db.setExpectedDelivery) {
+        try { await db.setExpectedDelivery(order.order_id, edd); } catch (e) { console.error(`[UPDATES] ${order.order_id} could not save the delivery date:`, e.message); }
+      }
       if (stage === 'booked') { res.waiting++; continue; }
       if (stage === 'unknown') { res.unknown++; continue; }
       // The courier has had this parcel at some point: record it once. The admin Shipped tab uses this to tell

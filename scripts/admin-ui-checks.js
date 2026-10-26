@@ -118,7 +118,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const onHand = async (slug) => (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === slug).on_hand;
     click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock page');
     ok(!!byText('#viewStock button', /Take out: several/), 'the stock page has a Take out: several flavours button');
-    click(byText('#viewStock button', /Take out: several/)); await until(() => /Take out several/.test(text(q('#viewStock'))), 4000, 'the multi take-out form');
+    click(byText('#viewStock button', /Take out: several/)); await until(() => /Take out: several flavours/.test(text(q('#viewStock'))), 4000, 'the multi take-out form');
     const sel = q('#viewStock select');
     ok(sel && Array.from(sel.options).some((op) => op.value === 'EVENT_SALE' && /Sold at an exhibition or event/.test(op.textContent)) && sel.value === 'EVENT_SALE', 'reasons include Sold at an exhibition or event, chosen first');
     const boxes = qa('#viewStock input[data-slug]');
@@ -144,6 +144,39 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(qa('#viewStock .line').some((l) => /Sold at event/.test(text(l)) && /Diwali Fair, Sector 15/.test(text(l))), 'history labels the lines Sold at event, with the event');
     ok(o.errors.length === 0, 'no page errors on the multi take-out (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
+  });
+
+  // Delivery dates and LATE orders; per-flavour Take out removed from the stock page (27 Oct 2026)
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText } = o;
+    const card = (id) => qa('#list .card').find((c) => text(c).includes(id));
+    click(byText('#flow .step', /Shipped/)); await until(() => !!card('MNG-WITH-1009'), 4000, 'the shipped list');
+    const late = card('MNG-WITH-1009'), waiting = card('MNG-CCCC-1009');
+    ok(late && /LATE/.test(text(late)) && /2 days late/.test(text(late)), 'an order past Delhivery\'s promised date shows LATE and how many days (' + (late ? text(late).slice(0, 160) : 'no card') + ')');
+    ok(late && /Expected by/.test(text(late)), 'the card shows the expected delivery date');
+    ok(late && late.classList.contains('late'), 'the late card is marked out (red edge)');
+    ok(waiting && !/LATE/.test(text(waiting)), 'a parcel Delhivery has not collected yet is not LATE');
+    ok(qa('#needs .need').some((b) => /1\s*late order/i.test(text(b)) && b.classList.contains('hot')), 'the top bar says 1 late order, in red');
+    const chip = qa('#chips .chip').find((c) => /^Late \d+/.test(text(c)));
+    ok(chip && /^Late 1$/.test(text(chip)), 'a Late filter tab with the count (' + qa('#chips .chip').map((c) => text(c)).join(' | ') + ')');
+    click(chip); await sleep(150);
+    ok(qa('#list .card').length === 1 && !!card('MNG-WITH-1009'), 'the Late tab lists only late orders');
+    click(late || card('MNG-WITH-1009')); await until(() => /Expected delivery/.test(text(q('#sheet'))), 4000, 'the order sheet').catch(() => {});
+    ok(/Expected delivery/.test(text(q('#sheet'))) && /LATE/.test(text(q('#sheet'))), 'the order sheet shows the expected delivery date and LATE');
+    o.close();
+
+    // stock page: no per-flavour Take out; packaging keeps its own; the several-flavours form title reads right
+    const s = await openAdmin('owner');
+    click(s.byText('#tabs .tab', /^Stock$/)); await until(() => s.qa('#viewStock .line').length >= 4, 4000, 'the stock page');
+    const rows = s.qa('#viewStock .line');
+    const btns = (re) => rows.filter((l) => re.test(s.text(l))).map((l) => Array.from(l.querySelectorAll('button')).map((b) => s.text(b)));
+    const kes = btns(/Atta Kesari/)[0] || [], tape = btns(/Packing tape/)[0] || [];
+    ok(kes.length && !kes.includes('Take out') && kes.includes('Count') && kes.includes('Receive'), 'a flavour has no Take out of its own any more (' + kes.join(',') + ')');
+    ok(tape.includes('Take out'), 'packaging (tape) keeps its Take out (' + tape.join(',') + ')');
+    s.click(s.byText('#viewStock button', /Take out: several/)); await until(() => /Take out/.test(s.text(s.q('#viewStock'))), 4000, 'the form');
+    ok(/Take out: several flavours/.test(s.text(s.q('#viewStock'))) && !/Take out several: flavours/.test(s.text(s.q('#viewStock'))), 'the form title reads Take out: several flavours');
+    ok(o.errors.length === 0 && s.errors.length === 0, 'no page errors (' + o.errors.concat(s.errors).join(' | ').slice(0, 200) + ')');
+    s.close();
   });
 
   // Refunded is its own tab, apart from Cancelled

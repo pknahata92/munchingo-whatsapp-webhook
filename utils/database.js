@@ -231,6 +231,12 @@ async function getOrdersPaidSince(sinceISO, untilISO) {
   return data || [];
 }
 
+/** Delhivery's promised delivery date for a shipped order (saved by the tracking sweep). */
+async function setExpectedDelivery(orderId, at) {
+  const { error } = await db().from('orders').update({ expected_delivery_at: at }).eq('order_id', orderId);
+  if (error) throw new Error(error.message);
+}
+
 /** Paid orders that left the house but are not delivered yet (the shipment-tracking sweep watches these). */
 async function getOrdersInTransit(limit = 300) {
   const { data, error } = await db()
@@ -602,7 +608,7 @@ module.exports = {
   upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,
