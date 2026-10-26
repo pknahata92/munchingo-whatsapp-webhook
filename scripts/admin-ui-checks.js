@@ -110,6 +110,42 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Take out several flavours in one entry; sold at an exhibition or event (26 Oct 2026)
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText, set } = o;
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const apiGet = async (p) => (await (await fetch(BASE + p, { headers: { Authorization: 'Bearer ' + token } })).json());
+    const onHand = async (slug) => (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === slug).on_hand;
+    click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock page');
+    ok(!!byText('#viewStock button', /Take out: several/), 'the stock page has a Take out: several flavours button');
+    click(byText('#viewStock button', /Take out: several/)); await until(() => /Take out several/.test(text(q('#viewStock'))), 4000, 'the multi take-out form');
+    const sel = q('#viewStock select');
+    ok(sel && Array.from(sel.options).some((op) => op.value === 'EVENT_SALE' && /Sold at an exhibition or event/.test(op.textContent)) && sel.value === 'EVENT_SALE', 'reasons include Sold at an exhibition or event, chosen first');
+    const boxes = qa('#viewStock input[data-slug]');
+    ok(['atta-original', 'atta-ajwain', 'atta-kesari', 'atta-lite-sugar'].every((sl) => boxes.some((b) => b.getAttribute('data-slug') === sl)), 'one box per flavour (' + boxes.map((b) => b.getAttribute('data-slug')).join(',') + ')');
+    ok(/Which event/.test(text(q('#viewStock'))), 'it asks which event');
+    const k0 = await onHand('atta-kesari'), o0 = await onHand('atta-original');
+    click(byText('#viewStock button', /^Save take-out$/)); await sleep(400);
+    ok(await onHand('atta-kesari') === k0, 'saving with nothing filled is refused and changes nothing');
+    set(q('#viewStock input[data-role="who"]'), 'Diwali Fair, Sector 15');
+    set(boxes.find((b) => b.getAttribute('data-slug') === 'atta-kesari'), '3');
+    set(boxes.find((b) => b.getAttribute('data-slug') === 'atta-original'), '2');
+    click(byText('#viewStock button', /^Save take-out$/));
+    await until(async () => (await onHand('atta-kesari')) === k0 - 3, 5000, 'stock to drop').catch(() => {});
+    ok(await onHand('atta-kesari') === k0 - 3 && await onHand('atta-original') === o0 - 2, 'one save takes 3 Kesari and 2 Original off stock');
+    const hist = await apiGet('/admin/api/inventory/history?types=EVENT_SALE&limit=10');
+    ok(hist.movements && hist.movements.length >= 2 && hist.movements.every((m) => m.type === 'EVENT_SALE' && m.ref === 'Diwali Fair, Sector 15'), 'the lines are event sales with the event name');
+    // the single take-out and the reports know the new reason
+    await until(() => qa('#viewStock .line').length >= 4, 4000, 'back at the stock list').catch(() => {});
+    click(byText('#viewStock button', /Where did it go/)); await until(() => /Where did the stock go/.test(text(q('#viewStock'))), 4000, 'the flow report').catch(() => {});
+    ok(/Sold at events/.test(text(q('#viewStock'))), 'Where did it go shows Sold at events');
+    click(byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back');
+    click(byText('#viewStock button', /^History$/)); await until(() => /Stock history/.test(text(q('#viewStock'))), 4000, 'history');
+    ok(qa('#viewStock .line').some((l) => /Sold at event/.test(text(l)) && /Diwali Fair, Sector 15/.test(text(l))), 'history labels the lines Sold at event, with the event');
+    ok(o.errors.length === 0, 'no page errors on the multi take-out (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   // Refunded is its own tab, apart from Cancelled
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click } = o;

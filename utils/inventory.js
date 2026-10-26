@@ -12,12 +12,12 @@ const { flavoursOf } = require('./orderText');
 
 class StockError extends Error { constructor(msg, status = 400, extra = {}) { super(msg); this.status = status; this.extra = extra; } }
 
-const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample or tasting', GIFT: 'Given away', EXHIBITION: 'Taken to an exhibition or event', OFFLINE_SALE: 'Sold offline (bulk order or hamper)' };
-const NEEDS_WHO = { GIFT: 'Enter who it is going to.', EXHIBITION: 'Enter the event name.', OFFLINE_SALE: 'Enter who bought it.' };
+const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample or tasting', GIFT: 'Given away', EXHIBITION: 'Taken to an exhibition or event', EVENT_SALE: 'Sold at an exhibition or event', OFFLINE_SALE: 'Sold offline (bulk order or hamper)' };
+const NEEDS_WHO = { GIFT: 'Enter who it is going to.', EXHIBITION: 'Enter the event name.', EVENT_SALE: 'Enter the event name.', OFFLINE_SALE: 'Enter who bought it.' };
 const MAX_QTY = 100000;
 const DUP_WINDOW_MS = 15 * 60_000;
 const DAMAGED_ON_RECEIPT = 'Damaged or not okay on receipt';
-const HISTORY_TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']);
+const HISTORY_TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']);
 const REVERSE_FREE_MS = 24 * 3_600_000;       // anyone can reverse their own slip within a day; later needs the owner
 const slugOfToken = (token) => `atta-${token}`;
 const int = (v) => (typeof v === 'number' ? v : Number(String(v == null ? '' : v).trim()));
@@ -172,6 +172,37 @@ function makeInventory(store) {
     return { onHand: await onHand(slug) };
   }
 
+  // Several items in one entry (e.g. all four flavours sold at a fair): one reason, one note, a count per item. Same checks as
+  // take(); every line is checked before anything is written, so all of it happens or none of it.
+  async function takeMany({ boxes = {}, type, note, who: whoFor, invoice, allowNegative = false, actor }) {
+    if (!TYPES_OUT[type]) throw new StockError('Choose what happened: used, damaged, or sample.');
+    if (type === 'DAMAGED' && !cleanText(note, 300)) throw new StockError('Add a short note on what was wrong.');
+    const forWhom = cleanText(whoFor, 80);
+    if (NEEDS_WHO[type] && !forWhom) throw new StockError(NEEDS_WHO[type]);
+    const inv = cleanText(invoice, 40);
+    if (type === 'OFFLINE_SALE' && !inv) throw new StockError('Enter the invoice number (write PENDING if it is not made yet and fix it later).');
+    const plan = [];
+    for (const [slug, b] of Object.entries(boxes || {})) {
+      if (b === '' || b == null) continue;
+      const q = int(b);
+      if (!Number.isInteger(q) || q < 0 || q > MAX_QTY) throw new StockError('Enter whole numbers (0 or more) for each item.');
+      if (q) plan.push({ item: await need(slug), qty: q });
+    }
+    if (!plan.length) throw new StockError('Enter how many of at least one item.');
+    if (!allowNegative) {
+      const short = [];
+      for (const x of plan) { const have = await onHand(x.item.slug); if (x.qty > have) short.push(`${x.item.name}: need ${x.qty}, have ${have}`); }
+      if (short.length) throw new StockError('Not enough on hand: ' + short.join('; ') + '. Count first, or confirm to go below zero.', 409, { needsConfirm: 'negative' });
+    }
+    const base = type === 'OFFLINE_SALE' ? { type, note: cleanText(note, 300) || null, ref: inv, party: forWhom, ...who(actor) } : { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) };
+    const rows = [];
+    for (const x of plan) rows.push(...await outRows(x.item, x.qty, base));
+    await store.insert(rows);
+    const lines = [];
+    for (const x of plan) lines.push({ slug: x.item.slug, name: x.item.name, qty: x.qty, onHand: await onHand(x.item.slug) });
+    return { type, lines };
+  }
+
   // A hamper sold offline. Only the biscuit boxes come off stock (whole boxes opened, per flavour); bag, candle and paper are not tracked.
   // The hamper's name and count go in the note so the history shows how many hampers went. One entry: all of it happens or none of it.
   async function offlineHamper({ hamper, hampers, boxes = {}, buyer, invoice, note, allowNegative = false, actor }) {
@@ -197,16 +228,16 @@ function makeInventory(store) {
   }
 
   // Where did the stock go? Per flavour: what came in, and where each box went. Reversals are netted into the line they cancel.
-  const FLOW = { RECEIVE: 'received', RETURN: 'returns', SALE: 'website', SALE_UNDO: 'website', OFFLINE_SALE: 'offline', GIFT: 'gifts', SAMPLE: 'samples',
+  const FLOW = { RECEIVE: 'received', RETURN: 'returns', SALE: 'website', SALE_UNDO: 'website', OFFLINE_SALE: 'offline', EVENT_SALE: 'event_sales', GIFT: 'gifts', SAMPLE: 'samples',
     EXHIBITION: 'events', EXHIBITION_RETURN: 'events', DAMAGED: 'damaged', USE: 'used', COUNT_FIX: 'fixes' };
   async function flow() {
     const [items, totals, map] = await Promise.all([store.items(), store.totals(), onHandMap()]);
     const out = items.filter((i) => i.active && i.kind === 'product').sort((a, b) => a.sort - b.sort).map((i) => {
-      const g = { received: 0, returns: 0, website: 0, offline: 0, gifts: 0, samples: 0, events: 0, damaged: 0, used: 0, fixes: 0, other: 0 };
+      const g = { received: 0, returns: 0, website: 0, offline: 0, event_sales: 0, gifts: 0, samples: 0, events: 0, damaged: 0, used: 0, fixes: 0, other: 0 };
       for (const t of totals) if (t.item_slug === i.slug) { const k = FLOW[t.type] || 'other'; g[k] += t.qty; }
       const m = map[i.slug];
       // "out" groups are stored negative; show them as positive boxes. Received, returns and fixes keep their sign.
-      return { slug: i.slug, name: i.name, unit: i.unit, received: g.received, returns: g.returns, website: -g.website, offline: -g.offline, gifts: -g.gifts, samples: -g.samples, events: -g.events, damaged: -g.damaged, used: -g.used, fixes: g.fixes, other: g.other, on_hand: m ? m.total : 0 };
+      return { slug: i.slug, name: i.name, unit: i.unit, received: g.received, returns: g.returns, website: -g.website, offline: -g.offline, event_sales: -g.event_sales, gifts: -g.gifts, samples: -g.samples, events: -g.events, damaged: -g.damaged, used: -g.used, fixes: g.fixes, other: g.other, on_hand: m ? m.total : 0 };
     });
     return { items: out };
   }
@@ -361,7 +392,7 @@ function makeInventory(store) {
   // { slug: boxes still sellable } for the flavours that have stock recorded (used by utils/stock.js for the automatic sold-out).
   async function sellable() { const [items, rows, committed] = await Promise.all([store.items(), store.byLot(), store.committed()]); return computeSellable(items, rows, committed); }
 
-  return { overview, sellable, receive, receipt, renameLot, take, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
+  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────

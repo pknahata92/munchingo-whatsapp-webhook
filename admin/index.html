@@ -813,7 +813,7 @@ header small{color:var(--ink2);opacity:1}
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
       var body = [h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
-        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null,
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { invPick('Rename lot', invRenameLot); } }, 'Rename lot') : null),
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
@@ -880,11 +880,11 @@ header small{color:var(--ink2);opacity:1}
     }, 'Rename lot');
   }
   function invTake(it) {
-    var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'OFFLINE_SALE' }, 'Sold offline (bulk order)'), h('option', { value: 'SAMPLE' }, 'Sample or tasting')),
+    var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'EVENT_SALE' }, 'Sold at an exhibition or event'), h('option', { value: 'OFFLINE_SALE' }, 'Sold offline (bulk order)'), h('option', { value: 'SAMPLE' }, 'Sample or tasting')),
       q = numIn('how many'), whoIn = h('input', { placeholder: '' }), whoLabel = h('label', {}, ''), whoWrap = h('div', { hidden: true }, whoLabel, whoIn), invIn = h('input', { placeholder: 'e.g. MUN/OFF/26-27/0001 (or PENDING)' }), invWrap = h('div', { hidden: true }, h('label', {}, 'Invoice number'), invIn), note = h('input', { placeholder: 'Note (needed for damaged)' });
     if (it.kind === 'product') type.value = 'GIFT';
     function sync() {
-      var g = type.value === 'GIFT', e = type.value === 'EXHIBITION', o = type.value === 'OFFLINE_SALE';
+      var g = type.value === 'GIFT', e = type.value === 'EXHIBITION' || type.value === 'EVENT_SALE', o = type.value === 'OFFLINE_SALE';
       whoWrap.hidden = !(g || e || o); invWrap.hidden = !o;
       whoLabel.textContent = g ? 'Who is it for (and why)' : o ? 'Who bought it' : 'Which event';
       whoIn.placeholder = g ? 'e.g. Mrs Sharma, Diwali gift' : o ? 'e.g. Acme Corp (company or person)' : 'e.g. Diwali Mela, Delhi, 20-22 Oct';
@@ -899,6 +899,30 @@ header small{color:var(--ink2);opacity:1}
     invForm('Count', it, [h('label', {}, 'Counted on the shelf'), c, h('label', {}, 'Note'), note], function (done) {
       postInv('count', { slug: it.slug, counted: c.value, note: note.value }, done, function (x) { return x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'; });
     }, 'Save count');
+  }
+  // Several flavours in one entry (e.g. everything sold at a fair): one reason, one note, a count per flavour; all or nothing.
+  function invTakeMany() {
+    var prods = ((state.inv && state.inv.items) || []).filter(function (i) { return i.kind === 'product'; });
+    var type = h('select', {}, h('option', { value: 'EVENT_SALE' }, 'Sold at an exhibition or event'), h('option', { value: 'SAMPLE' }, 'Sample or tasting'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'OFFLINE_SALE' }, 'Sold offline (bulk order)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'));
+    var whoIn = h('input', { 'data-role': 'who' }), whoLabel = h('label', {}, ''), whoWrap = h('div', {}, whoLabel, whoIn);
+    var invIn = h('input', { placeholder: 'e.g. MUN/OFF/26-27/0001 (or PENDING)' }), invWrap = h('div', { hidden: true }, h('label', {}, 'Invoice number'), invIn);
+    var note = h('input', { placeholder: 'Note (needed for damaged)' });
+    var boxIn = {}; prods.forEach(function (p) { boxIn[p.slug] = numIn('0'); boxIn[p.slug].setAttribute('data-slug', p.slug); });
+    function sync() {
+      var t = type.value, g = t === 'GIFT', o = t === 'OFFLINE_SALE', ev = t === 'EVENT_SALE' || t === 'EXHIBITION' || t === 'SAMPLE';
+      whoWrap.hidden = !(g || o || ev); invWrap.hidden = !o;
+      whoLabel.textContent = g ? 'Who is it for (and why)' : o ? 'Who bought it' : t === 'SAMPLE' ? 'Which event or occasion (optional)' : 'Which event';
+      whoIn.placeholder = g ? 'e.g. Mrs Sharma, Diwali gift' : o ? 'e.g. Acme Corp' : 'e.g. Diwali Fair, Sector 15, 24-25 Oct';
+    }
+    type.addEventListener('change', sync); sync();
+    var fields = [h('p', { class: 'muted' }, 'One entry for several flavours. Leave a flavour empty if none went. Nothing is saved unless every line can be.'),
+      h('label', {}, 'What happened'), type, whoWrap, invWrap, h('label', {}, 'Boxes per flavour')]
+      .concat(prods.map(function (p) { return h('div', { class: 'line', style: 'align-items:center' }, h('span', {}, p.name + ' (on hand ' + p.on_hand + ')'), h('span', { style: 'width:90px' }, boxIn[p.slug])); }))
+      .concat([h('label', {}, 'Note'), note]);
+    invForm('Take out several', { name: 'flavours', on_hand: prods.reduce(function (a, p) { return a + p.on_hand; }, 0), unit: 'boxes in all' }, fields, function (done) {
+      var boxes = {}; prods.forEach(function (p) { if (boxIn[p.slug].value) boxes[p.slug] = boxIn[p.slug].value; });
+      postInv('take-many', { type: type.value, boxes: boxes, who: whoIn.value, invoice: invIn.value, note: note.value }, done, function (x) { return 'Done: ' + x.lines.map(function (l) { return l.qty + ' ' + l.name + ' (left ' + l.onHand + ')'; }).join(', '); });
+    }, 'Save take-out');
   }
   // A hamper sold offline: which hamper, how many, and the biscuit boxes opened for them. Bag, candle and paper are not counted.
   function invHamper() {
@@ -917,7 +941,7 @@ header small{color:var(--ink2);opacity:1}
   function invFlow() {
     api('/admin/api/inventory/flow').then(function (j) {
       if (!j.ok) return toast(j.error || 'Failed', 6000);
-      var cols = [['received', 'Received'], ['returns', 'Returned in'], ['website', 'Website sales'], ['offline', 'Sold offline'], ['gifts', 'Given away'], ['samples', 'Samples'], ['events', 'At events'], ['damaged', 'Damaged'], ['used', 'Used'], ['fixes', 'Count fixes']];
+      var cols = [['received', 'Received'], ['returns', 'Returned in'], ['website', 'Website sales'], ['offline', 'Sold offline'], ['event_sales', 'Sold at events'], ['gifts', 'Given away'], ['samples', 'Samples'], ['events', 'At events'], ['damaged', 'Damaged'], ['used', 'Used'], ['fixes', 'Count fixes']];
       var rows = j.items.map(function (i) {
         return h('div', { class: 'sec' }, h('h3', {}, i.name),
           h('dl', { class: 'kv' }, cols.reduce(function (a, c) { if (i[c[0]]) { a.push(h('dt', {}, c[1])); a.push(h('dd', {}, String(i[c[0]]))); } return a; }, []).concat([h('dt', { style: 'font-weight:700' }, 'On the shelf'), h('dd', { style: 'font-weight:700' }, String(i.on_hand))])));
@@ -927,7 +951,7 @@ header small{color:var(--ink2);opacity:1}
   }
   // History filters: receipts used to be pushed out of the latest 60 lines by packed-order lines, so you could not find them.
   var invHistFilter = 'all';
-  var HIST_TYPES = { all: '', received: 'RECEIVE', out: 'DAMAGED,USE,SAMPLE,GIFT,EXHIBITION,EXHIBITION_RETURN,OFFLINE_SALE,RETURN,COUNT_FIX', sales: 'SALE,SALE_UNDO' };
+  var HIST_TYPES = { all: '', received: 'RECEIVE', out: 'DAMAGED,USE,SAMPLE,GIFT,EXHIBITION,EXHIBITION_RETURN,OFFLINE_SALE,EVENT_SALE,RETURN,COUNT_FIX', sales: 'SALE,SALE_UNDO' };
   function correctReceipt(m) {
     var it = ((state.inv && state.inv.items) || []).filter(function (x) { return x.slug === m.item_slug; })[0];
     if (!it) return toast('Open the Stock tab first, then History.', 5000);
@@ -937,11 +961,11 @@ header small{color:var(--ink2);opacity:1}
     var types = HIST_TYPES[invHistFilter];
     api('/admin/api/inventory/history?limit=60' + (types ? '&types=' + types : '')).then(function (j) {
       if (!j.ok) return toast(j.error || 'Failed');
-      var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', GIFT: 'Given away', EXHIBITION: 'Taken to event', EXHIBITION_RETURN: 'Back from event', OFFLINE_SALE: 'Sold offline', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
+      var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', GIFT: 'Given away', EXHIBITION: 'Taken to event', EXHIBITION_RETURN: 'Back from event', OFFLINE_SALE: 'Sold offline', EVENT_SALE: 'Sold at event', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
       var chips = h('div', { class: 'chips' }, [['all', 'All'], ['received', 'Received'], ['out', 'Taken out'], ['sales', 'Sales']].map(function (c) { return h('button', { class: 'chip' + (invHistFilter === c[0] ? ' on' : ''), type: 'button', onclick: function () { invHistFilter = c[0]; invHistory(); } }, c[1]); }));
       var lines = j.movements.map(function (m) {
-        var can = !m.reversed && ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
-        return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.reversed ? ' · Cancelled' : '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
+        var can = !m.reversed && ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
+        return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.reversed ? ' · Cancelled' : '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'EVENT_SALE'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
           h('div', { class: 'linebtns' }, !m.reversed && m.type === 'RECEIVE' ? h('button', { class: 'btn small', onclick: function () { correctReceipt(m); } }, 'Correct') : null,
           can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null));
       });

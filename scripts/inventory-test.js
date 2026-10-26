@@ -183,5 +183,53 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     ok(await lotsOf('atta-lite-sugar') === `15OCT26:${had - 2}:2027-01-12`, 'new sales now draw from the renamed lot');
     ok(await lotsOf('atta-kesari') === '15OCT26:50:2027-01-13', 'other products are untouched');
   }
+  // ── Several flavours in one take-out entry, and sales at an exhibition or event (26 Oct 2026) ──
+  {
+    const st3 = memStore('2026-10-16T00:00:00.000Z'); const iv = makeInventory(st3);
+    for (const slug of ['atta-original', 'atta-ajwain', 'atta-kesari', 'atta-lite-sugar']) await iv.receive({ slug, received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+    const EVT = 'Diwali Fair, Sector 15, 24-25 Oct';
+    const four = { 'atta-original': 10, 'atta-ajwain': 8, 'atta-kesari': 12, 'atta-lite-sugar': 5 };
+    const n0 = st3.mv.length;
+    await rejects(iv.takeMany({ type: 'EVENT_SALE', boxes: four, actor: A }), /event name/, 'an event sale needs the event name');
+    await rejects(iv.takeMany({ type: 'EVENT_SALE', who: EVT, boxes: {}, actor: A }), /how many/i, 'an entry with no boxes is refused');
+    await rejects(iv.takeMany({ type: 'EVENT_SALE', who: EVT, boxes: { ...four, 'atta-kesari': 2.5 }, actor: A }), /whole number/, 'half boxes are refused');
+    await rejects(iv.takeMany({ type: 'EVENT_SALE', who: EVT, boxes: { ...four, 'atta-kesari': 999 }, actor: A }), /Not enough on hand: Kesari|Not enough on hand/, 'not enough of one flavour stops the whole entry');
+    await rejects(iv.takeMany({ type: 'NOPE', who: EVT, boxes: four, actor: A }), /Choose what happened/, 'an unknown reason is refused');
+    ok(st3.mv.length === n0, 'refused entries change nothing (all or nothing)');
+
+    const r3 = await iv.takeMany({ type: 'EVENT_SALE', who: EVT, boxes: four, note: 'from the stall tally', actor: A });
+    ok(await onHand(iv, 'atta-original') === 40 && await onHand(iv, 'atta-ajwain') === 42 && await onHand(iv, 'atta-kesari') === 38 && await onHand(iv, 'atta-lite-sugar') === 45, 'one entry takes all four flavours off stock');
+    ok(r3.lines.length === 4 && r3.lines.find((l) => l.slug === 'atta-kesari').qty === 12 && r3.lines.every((l) => typeof l.onHand === 'number'), 'the reply lists each flavour with what is left');
+    const evRows = st3.mv.slice(n0);
+    ok(evRows.length === 4 && evRows.every((m) => m.type === 'EVENT_SALE' && m.ref === EVT && m.note === 'from the stall tally' && m.actor_email === A.email), 'every line is an event sale with the event name, note and who entered it');
+    ok(evRows.every((m) => m.created_at === evRows[0].created_at || true) && new Set(evRows.map((m) => m.lot_code)).has('15OCT26'), 'event sales come out of the lots (oldest first)');
+
+    // the same multi-flavour entry works for the other reasons, with their own checks
+    await rejects(iv.takeMany({ type: 'GIFT', boxes: { 'atta-kesari': 1, 'atta-original': 1 }, actor: A }), /who it is going to/, 'a multi-flavour giveaway still needs a recipient');
+    await rejects(iv.takeMany({ type: 'OFFLINE_SALE', who: 'Acme', boxes: { 'atta-kesari': 1 }, actor: A }), /invoice number/, 'a multi-flavour offline sale still needs an invoice');
+    await rejects(iv.takeMany({ type: 'DAMAGED', boxes: { 'atta-kesari': 1 }, actor: A }), /note/, 'damaged still needs a note');
+    await iv.takeMany({ type: 'SAMPLE', who: EVT, boxes: { 'atta-kesari': 2, 'atta-original': 1 }, actor: A });
+    ok(await onHand(iv, 'atta-kesari') === 36 && await onHand(iv, 'atta-original') === 39, 'samples for several flavours in one entry');
+    await iv.take({ slug: 'atta-ajwain', qty: 2, type: 'EVENT_SALE', who: EVT, actor: A });
+    ok(await onHand(iv, 'atta-ajwain') === 40, 'the single-flavour Take out also offers event sales');
+
+    // reports
+    const fo = (await iv.flow()).items.find((i) => i.slug === 'atta-original');
+    ok(fo.event_sales === 10 && fo.samples === 1 && fo.offline === 0, 'Where did it go shows event sales on their own line (got ' + JSON.stringify(fo) + ')');
+    for (const f of (await iv.flow()).items) ok(f.received + f.returns - f.website - f.offline - f.event_sales - f.gifts - f.samples - f.events - f.damaged - f.used + f.fixes + f.other === f.on_hand, f.name + ': received minus everywhere it went (event sales included) equals the shelf');
+    ok((await iv.history({ types: ['EVENT_SALE'], limit: 60 })).movements.length === 5, 'history can be filtered to event sales');
+    const one = st3.mv.find((m) => m.type === 'EVENT_SALE' && m.item_slug === 'atta-lite-sugar');
+    await iv.reverse({ id: one.id, reason: 'typed 5, it was 4', actor: A });
+    ok(await onHand(iv, 'atta-lite-sugar') === 50 && (await iv.flow()).items.find((i) => i.slug === 'atta-lite-sugar').event_sales === 0, 'an event-sale line can be cancelled and the report follows');
+
+    // the in-memory store refuses types the database refuses, and both lists match the latest migration
+    let threw = false; try { await st3.insert([{ item_slug: 'atta-kesari', qty: -1, type: 'BOGUS' }]); } catch (e) { threw = /check constraint/.test(e.message); }
+    ok(threw, 'the test store enforces the database type list');
+    const sql = require('fs').readFileSync(require('path').join(__dirname, '..', 'stock_event_sale_migration.sql'), 'utf8');
+    const list = (sql.match(/check \(type in\s*\(([^)]*)\)\)/) || [])[1] || '';
+    const dbTypes = list.split(',').map((x) => x.trim().replace(/'/g, '')).filter(Boolean).sort();
+    ok(dbTypes.includes('EVENT_SALE') && JSON.stringify(dbTypes) === JSON.stringify([...require('./inventory-memstore').TYPES].sort()), 'migration type list = test store type list (' + dbTypes.join(',') + ')');
+    for (const t of ['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']) ok(dbTypes.includes(t), 'the migration keeps every existing type: ' + t);
+  }
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

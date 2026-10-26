@@ -78,6 +78,7 @@ router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: 
 router.get('/admin/api/inventory/receipt', sw((req, inv) => inv.receipt({ id: Number(req.query.id) })));
 router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin, isOwner: req.admin.role === 'owner' })));   // isOwner after the spread: a client can never claim it
 router.post('/admin/api/inventory/take', sw((req, inv) => inv.take({ ...(req.body || {}), actor: req.admin })));
+router.post('/admin/api/inventory/take-many', sw((req, inv) => inv.takeMany({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/event-return', sw((req, inv) => inv.eventReturn({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/pause', sw(async (req) => {
   const slug = String((req.body || {}).slug || ''); const paused = !!(req.body || {}).paused;

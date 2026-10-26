@@ -1,5 +1,7 @@
 'use strict';
-// In-memory stand-in for the stock tables (tests and the practice admin). Mirrors the database's one-write-per-sale rule.
+// In-memory stand-in for the stock tables (tests and the practice admin). Mirrors the database's one-write-per-sale rule
+// and its list of allowed movement types (stock_movements_type_check; kept equal to the latest migration by inventory-test).
+const TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']);
 function memStore(trackingFrom) {
   let id = 0; const mv = [];
   const items = [
@@ -15,7 +17,7 @@ function memStore(trackingFrom) {
     mv,
     items: async () => items, item: async (s) => items.find((i) => i.slug === s) || null,
     byLot: async () => { const m = {}; mv.forEach((r) => { const k = `${r.item_slug}|${r.lot_code || ''}|${r.best_before || ''}`; (m[k] = m[k] || { item_slug: r.item_slug, lot_code: r.lot_code, best_before: r.best_before, qty: 0 }).qty += r.qty; }); return Object.values(m); },
-    insert: async (rows) => { const seen = new Set(mv.filter((r) => r.type === 'SALE' || r.type === 'SALE_UNDO').map(uniq)); rows.forEach((r) => { if ((r.type === 'SALE' || r.type === 'SALE_UNDO') && seen.has(uniq(r))) throw new Error('duplicate key (sale written twice)'); }); rows.forEach((r) => mv.push({ id: ++id, created_at: new Date().toISOString(), reverses_id: null, ...r })); },
+    insert: async (rows) => { rows.forEach((r) => { if (!TYPES.has(r.type)) throw new Error('new row for relation "stock_movements" violates check constraint "stock_movements_type_check" (' + r.type + ')'); }); const seen = new Set(mv.filter((r) => r.type === 'SALE' || r.type === 'SALE_UNDO').map(uniq)); rows.forEach((r) => { if ((r.type === 'SALE' || r.type === 'SALE_UNDO') && seen.has(uniq(r))) throw new Error('duplicate key (sale written twice)'); }); rows.forEach((r) => mv.push({ id: ++id, created_at: new Date().toISOString(), reverses_id: null, ...r })); },
     recent: async ({ item_slug, type, types, since, limit = 50 }) => mv.filter((r) => (!item_slug || r.item_slug === item_slug) && (!type || r.type === type) && (!types || !types.length || types.includes(r.type)) && (!since || r.created_at >= since)).slice().reverse().slice(0, limit),
     movement: async (i) => mv.find((r) => r.id === i) || null, reversalOf: async (i) => mv.some((r) => r.reverses_id === i), reversedAmong: async (ids) => mv.filter((r) => r.reverses_id && ids.includes(r.reverses_id)).map((r) => r.reverses_id),
     updateItem: async (s, f) => Object.assign(items.find((i) => i.slug === s), f), insertItem: async (row) => items.push({ manual_low: false, active: true, ...row }),
@@ -29,4 +31,4 @@ function memStore(trackingFrom) {
   };
 }
 
-module.exports = { memStore };
+module.exports = { memStore, TYPES };
