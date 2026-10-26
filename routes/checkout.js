@@ -106,7 +106,7 @@ const { normalisePhone, isIndianPhone, isValidPhone } = require('../utils/phone'
 // (who submits once), tight enough to blunt scripted abuse.
 router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
     try {
-          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts, recipient, previewKey, track, source } = req.body;
+          const { name, phone, address, email, items, total, couponCode, subscribe, giftNote, addressParts, recipient, previewKey, track, source, marketing } = req.body;
 
       // Orders open at launch (see utils/launch.js); the owner can test earlier with the preview key.
       if (!ordersOpen(previewKey)) {
@@ -228,6 +228,8 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
           try { const t = require('../utils/serverTracking').cleanTrack(track, req); if (Object.keys(t).length) parts.track = t; } catch (e) { console.error('[TRACKING] could not read device ids:', e.message); }
           // Where the order came from (the buyer's answer plus first-touch utm). Optional, cleaned, never blocks the order; see utils/orderSource.js.
           try { require('../utils/orderSource').attachSource(parts, source); } catch (e) { console.error('[SOURCE] could not read the source tag:', e.message); }
+          // The unticked 'Send me new Flavors and offers on WhatsApp' box: a tick is kept on the order and joins `contacts` only once paid (utils/checkoutOptIn.js).
+          try { require('../utils/checkoutOptIn').attach(parts, marketing); } catch (e) { console.error('[OPTIN] could not read the opt-in:', e.message); }
           await updateOrderAddress(orderId, address, parts);
 
       // 2. Create Razorpay Payment Link via the EXISTING utils/razorpay.js

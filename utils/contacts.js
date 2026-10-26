@@ -74,4 +74,4 @@ async function handleStop(phone) {
   return wa.sendText(phone, REPLY.stop);
 }
 
-module.exports = { SHOP_BUTTON, signupSource, isStop, handleSignup, handleOptIn, handleStop, setDeps, CONSENT_QUESTION, BUTTONS, KEYWORDS };
+module.exports = { SHOP_BUTTON, signupSource, isStop, handleSignup, handleOptIn, handleStop, setDeps, CONSENT_QUESTION, BUTTONS, KEYWORDS, save, D };

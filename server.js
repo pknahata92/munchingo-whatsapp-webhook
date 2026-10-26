@@ -189,6 +189,9 @@ app.post('/razorpay-webhook', async (req, res) => {
         console.error('[INVOICE] Unexpected failure after payment:', err.message);
       }
 
+      // Checkout WhatsApp opt-in: a ticked box joins `contacts` now that the order is paid (buyer only; never throws).
+      if (existing) await require('./utils/checkoutOptIn').onPaid({ ...existing, status: 'paid' });
+
       // Pre-order window: the approved confirmation templates promise "dispatch within 48 hours of payment", which a
       // pre-order does not meet. Skip them (the email and the order page carry the dispatch date) unless a pre-order
       // template has been approved and named in PREORDER_WA_TEMPLATE.

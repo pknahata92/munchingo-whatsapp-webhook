@@ -42,7 +42,7 @@ async function remembersBeforePaying() {
   ok(w.localStorage.getItem('munchingo_customer') === null, 'unticking Remember forgets what was saved');
   w.close();
 }
-async function run(label, { source, expectSent = true, saved }) {
+async function run(label, { source, expectSent = true, saved, optin }) {
   const html = fs.readFileSync(path.join(SITE, 'checkout.html'), 'utf8');
   const sent = [];
   const dom = new JSDOM(html, {
@@ -64,6 +64,10 @@ async function run(label, { source, expectSent = true, saved }) {
   const set = (id, v) => { const e = d.getElementById(id); e.value = v; e.dispatchEvent(new w.Event('input', { bubbles: true })); e.dispatchEvent(new w.Event('change', { bubbles: true })); };
   set('ck-name', 'Test Buyer'); set('ck-phone', '9999900001'); set('ck-addr-pincode', '121007'); set('ck-addr-city', 'Faridabad'); set('ck-addr-state', 'Haryana');
   set('ck-addr-line1', '43 Sector 14 test street'); set('ck-email', 't@example.com'); if (source) set('ck-source', source);
+  const box = d.getElementById('ck-whatsapp-optin');
+  ok(box && box.type === 'checkbox' && box.checked === false, `${label}: the WhatsApp offers box exists and starts unticked`);
+  ok(box && /Send me new Flavors and offers on WhatsApp\. A few messages a month\. Reply STOP any time\./.test((box.closest('label') || {}).textContent || ''), `${label}: the box shows the approved wording`);
+  if (optin && box) { box.checked = true; box.dispatchEvent(new w.Event('change', { bubbles: true })); }
   await wait(600); w.__pinBlocked = false;
   d.getElementById('ck-submit').form.requestSubmit();
   await wait(1200);
@@ -75,6 +79,7 @@ async function run(label, { source, expectSent = true, saved }) {
     ok(/\/api\/checkout$/.test(sent[0].url), `${label}: it goes to /api/checkout`);
     ok(b.name === 'Test Buyer' && b.items.length === 1 && b.total === 900, `${label}: name, items and total are in the request`);
     if (source) ok(b.source && b.source.how === source, `${label}: the "how did you hear" answer rides along`);
+    ok(optin ? b.marketing === true : b.marketing === undefined, `${label}: marketing is ${optin ? 'true' : 'not sent'} in the request`);
   }
   if (expectSent) { const mem = JSON.parse(w.localStorage.getItem('munchingo_customer') || 'null'); ok(mem && mem.name === 'Test Buyer' && mem.pincode === '121007', `${label}: details are remembered after a successful order`); }
   ok(w.location.hash === '#paid', `${label}: the page moves on to the payment link`);
@@ -84,6 +89,7 @@ async function run(label, { source, expectSent = true, saved }) {
 (async () => {
   await run('with a source answer', { source: 'instagram' });
   await run('without a source answer', {});
+  await run('with the WhatsApp box ticked', { optin: true });
   await prefill();
   await remembersBeforePaying();
   console.log(`checkout-submit-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
