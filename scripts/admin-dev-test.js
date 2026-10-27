@@ -1,6 +1,9 @@
 'use strict';
-// Runs against the practice copy:  node scripts/admin-dev.js   (in one terminal)   node scripts/admin-dev-test.js   (in another)
-const fs = require('fs');
+// Runs against the practice copy:  node scripts/admin-dev-test.js   (starts its own scripts/admin-dev.js with WhatsApp order notices
+// OFF, the case this test checks, and stops it at the end; like admin-ui-test and updates-flow-test, it never relies on a server
+// another test may have stopped or left in a different state)
+const fs = require('fs'), path = require('path');
+const { spawn, execSync } = require('child_process');
 const B = 'http://localhost:8430/admin/api';
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
@@ -13,6 +16,12 @@ async function login(email) {
   return v.j;
 }
 (async () => {
+  try { execSync('pkill -f scripts/admin-dev.js', { stdio: 'ignore' }); await new Promise((r) => setTimeout(r, 400)); } catch (e) { /* none running */ }
+  const env = { ...process.env }; delete env.SHIPPED_WA_ENABLED;
+  const dev = spawn(process.execPath, [path.join(__dirname, 'admin-dev.js')], { stdio: 'ignore', env });
+  const stop = () => { try { dev.kill(); } catch (e) { /* already gone */ } };
+  process.on('exit', stop);
+  for (let i = 0; i < 100; i++) { try { if ((await fetch('http://localhost:8430/admin')).ok) break; } catch (e) { /* not up yet */ } await new Promise((r) => setTimeout(r, 100)); }
   const o = await login('owner@example.com'), s = await login('staff@example.com');
   ok(o.role === 'owner' && s.role === 'staff', 'roles at login');
   const bad = await call('/login', null, { email: 'nobody@example.com' }); ok(bad.j.ok, 'login answer does not leak');

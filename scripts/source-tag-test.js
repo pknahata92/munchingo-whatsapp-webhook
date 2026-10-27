@@ -4,7 +4,8 @@ const path = require('path');
 const fs = require('fs');
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
-const file = path.resolve(__dirname, '../../../munchingo-website/js/source-tag.js');
+const SITE = process.env.SITE_DIR || path.resolve(__dirname, '../../../munchingo-website');   // SITE_DIR like the other website tests
+const file = path.join(SITE, 'js/source-tag.js');
 if (!fs.existsSync(file)) { console.log('FAIL: missing ' + file); process.exit(1); }
 const { parse, merge, payload } = require(file);
 const DAY = 864e5, NOW = Date.parse('2026-10-19T10:00:00Z');
