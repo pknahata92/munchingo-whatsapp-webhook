@@ -8,7 +8,7 @@ const MRPS = { 'atta-original': 300, 'atta-ajwain': 300, 'atta-kesari': 350, 'at
 const PRICES = {
   'atta-original':   259,
   'atta-kesari':      299,
-  'atta-lite-sugar':  299,
+  'atta-lite-sugar':  329,   // Prashant, 27 Oct 2026 (was 299; MRP 350 unchanged)
   'atta-ajwain':      259,
   'full-range-set':   999,
 };

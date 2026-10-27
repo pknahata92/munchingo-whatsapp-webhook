@@ -17,7 +17,7 @@ const FLAVOURS = [
   { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', price: 259, img: 'email-original.jpg' },
   { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', price: 299, img: 'email-kesari.jpg' },
   { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', price: 259, img: 'email-ajwain.jpg' },
-  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 299, img: 'email-lite.jpg' },
+  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 329, img: 'email-lite.jpg' },
 ];
 
 function esc(str) {

@@ -39,6 +39,7 @@ async function open({ book, soldOut = [], nowIso }) {
   ok(!/₹949<\/s>|<s>₹949|<s>₹1,199/.test(d.body.innerHTML), 'no struck-through ₹949 / ₹1,199 anywhere');
   ok(!/save ₹/i.test(text(d.querySelector('[data-gb="promo"]'))), 'gift builder: one saving figure only (the MRP row), none in the early-grab line');
   const gbPromo = d.querySelector('[data-gb="promo"]');
+  ok((function () { const r = d.querySelector('[data-gb="sv"]').parentNode; return r.style.display !== 'none'; })(), 'before Diwali: the Trio saving row is shown (₹799 vs ₹950+)');
   ok(gbPromo && !gbPromo.hidden && text(gbPromo) === 'Early-grab price till Diwali · ₹949 from 9 Nov', 'gift builder: Trio early-grab line under the total: ' + text(gbPromo));
   w.document.querySelector('.gb-opt[data-size="4"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
   await wait(50);
@@ -69,6 +70,15 @@ async function open({ book, soldOut = [], nowIso }) {
   dom = await open({ book: after, nowIso: '2026-11-09T09:00:00+05:30' }); d = dom.window.document;
   ok(d.querySelector('[data-promo-sets]').hidden && d.querySelector('[data-gb="promo"]').hidden, '9 Nov: promo notes gone');
   ok(text(d.querySelector('[data-price-for="trio-gift-set"]')) === '₹949' && text(d.querySelector('[data-price-for="full-range-set"]')) === '₹1,199', '9 Nov: new set prices shown');
+  const row = (k) => d.querySelector('[data-gb="' + k + '"]').parentNode;
+  const shown = (el) => el.style.display !== 'none';
+  w = dom.window;
+  Array.prototype.slice.call(d.querySelectorAll('.gb-fl')).filter((b) => !b.disabled).slice(0, 3).forEach((b) => b.dispatchEvent(new w.MouseEvent('click', { bubbles: true })));
+  await wait(50);
+  ok(!shown(row('mrp')) && !shown(row('sv')), '9 Nov Trio at ₹949: no "You save ₹1" — the MRP and saving rows are hidden (price within 5% of the cheapest boxes\' MRP)');
+  w.document.querySelector('.gb-opt[data-size="4"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await wait(50);
+  ok(shown(row('mrp')) && shown(row('sv')) && text(d.querySelector('[data-gb="sv"]')) === 'Save ₹101', '9 Nov Full Range at ₹1,199: saving vs ₹1,300 MRP still shown: ' + text(d.querySelector('[data-gb="sv"]')));
   dom.window.close();
 
   // 9 Nov with no stored list (backend asleep): the fallback already knows the new prices and shows no promo

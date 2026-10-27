@@ -27,7 +27,7 @@ const { boxesIn } = require('../utils/orderText');
 (async () => {
   // prices
   ok(catalog.priceForSlug('atta-original') === 259 && catalog.priceForSlug('atta-ajwain') === 259, 'Original and Ajwain are Rs 259');
-  ok(catalog.priceForSlug('atta-kesari') === 299 && catalog.priceForSlug('atta-lite-sugar') === 299, 'Kesari and Sugar-Lite are Rs 299');
+  ok(catalog.priceForSlug('atta-kesari') === 299 && catalog.priceForSlug('atta-lite-sugar') === 329, 'Kesari Rs 299, Sugar-Lite Rs 329 (27 Oct)');
   ok(catalog.priceForSlug('trio-gift-set-ajwain-kesari-original') === 799 && catalog.priceForSlug('full-range-set') === 999, 'Trio Rs 799, Full Range Rs 999');
   const book = catalog.priceBook();
   ok(book['atta-original'].mrp === 300 && book['atta-kesari'].mrp === 350, 'the printed MRP (300 / 350) stays as the struck-through price');
@@ -59,7 +59,7 @@ const { boxesIn } = require('../utils/orderText');
   ok(o.items.length === 3 && S.isShippingItem(o.items[2]) && o.items[2].item_price === 49, 'the shipping fee is saved as its own line');
   ok(links[links.length - 1].amount === 567, 'the Razorpay amount includes shipping');
   r = await post('/api/checkout', { ...buyer, items: cart(['atta-kesari', 1], ['atta-lite-sugar', 1]), total: 598 });
-  o = saved[saved.length - 1]; ok(r.j.ok && o.total === 598 + 49, 'Kesari + Sugar-Lite: Rs 598 + Rs 49 = Rs 647');
+  o = saved[saved.length - 1]; ok(r.j.ok && o.total === 628 + 49, 'Kesari + Sugar-Lite: Rs 628 + Rs 49 = Rs 677');
   r = await post('/api/checkout', { ...buyer, items: cart(['atta-original', 3]), total: 777 });
   o = saved[saved.length - 1]; ok(r.j.ok && o.total === 777 && o.items.length === 1, 'three boxes (Rs 777) ship free: no shipping line');
   r = await post('/api/checkout', { ...buyer, items: cart(['trio-gift-set-ajwain-kesari-original', 1]), total: 799 });
