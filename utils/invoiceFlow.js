@@ -34,6 +34,8 @@ async function processPaidOrder({ order, phone }) {
 
   // 3. The ONE owner email per paid order (pack list, address, gift message, invoice PDF). Switch off with OWNER_ORDER_ALERT=off.
   if (process.env.NOTIFY_EMAIL) await step('owner email', () => mailer.sendOwnerPaidEmail({ order, invoice, pdf }));
+  // 3b. The same heads-up on the owner's WhatsApp (OWNER_PHONE). Never throws; recorded on the order so it never repeats.
+  await step('owner whatsapp', () => require('./ownerAlerts').paidAlert(order));
 
   // 4. WhatsApp invoice: THE one WhatsApp message a customer gets for a paid order (it already says
   //    'payment confirmed'). If it can't be sent the caller falls back to the order-confirmed template.

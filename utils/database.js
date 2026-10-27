@@ -231,6 +231,13 @@ async function getOrdersPaidSince(sinceISO, untilISO) {
   return data || [];
 }
 
+/** Orders created since a time (the owner's unpaid-order alert looks at the last day or so). */
+async function listOrdersSince(sinceIso, limit = 500) {
+  const { data, error } = await db().from('orders').select('order_id, customer_name, customer_phone, total, status, created_at').gte('created_at', sinceIso).order('created_at', { ascending: true }).limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 /** Delhivery's promised delivery date for a shipped order (saved by the tracking sweep). */
 async function setExpectedDelivery(orderId, at) {
   const { error } = await db().from('orders').update({ expected_delivery_at: at }).eq('order_id', orderId);
@@ -608,7 +615,7 @@ module.exports = {
   upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,
