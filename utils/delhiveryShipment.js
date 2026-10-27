@@ -18,10 +18,14 @@ const SELLER = { name: 'Munchingo', gstin: '06AIIPN5005C2ZP', hsn: '1905' };
 // Packed weight in grams = 250 g per box + packaging (mailer, filler, slip, tape). MEASURED by Prashant on 17 Oct 2026: a 3-box parcel
 // weighs 1,220 g and (18 Oct) a 4-box parcel stays under 1,600 g, so 1,600 g is used (600 g of packaging). Declared weight barely matters:
 // every parcel is billed on the 1,678 g volumetric weight of the 8 in box unless it weighs more than that. The 1-box and 2-box figures are NOT measured (guesses).
-// VOLUMETRIC WEIGHT: the 8 in cube is 20.3^3 / 5000 = 1,678 g, which is more than the contents weigh, so Delhivery charges 1,678 g (the 2 kg slab) for EVERY parcel of 1 to 4 boxes. A snugger box would be billed on actual weight instead.
+// VOLUMETRIC WEIGHT (L x W x H cm / 5000): the 8 in cube is 1,678 g, more than 1-2 boxes weigh, so a cube parcel bills in the 2 kg slab.
+// NEW CARTONS (Prashant, 27 Oct 2026): 3 boxes ship in a 6 x 6 x 8 in carton (938 g volumetric, so the 1,220 g real weight bills: the
+// 1.5 kg slab) and 4 boxes in a 6 x 8 x 8 in carton (1,253 g volumetric). The 4-box weight stays 1,600 g (2 kg slab) until a 4-box
+// parcel in the new carton is weighed: declaring less than the real weight makes Delhivery re-weigh and bill the difference.
+// 1 and 2 boxes still go in the cube until Prashant confirms they ship in the 6 x 6 x 8 in carton (with filler).
 // The admin lets staff overwrite the weight per order.
 const PACKAGING_G = { 1: 350, 2: 420, 3: 470, 4: 600 };
-const SIZE_CM = { 1: [20.3, 20.3, 20.3], 2: [20.3, 20.3, 20.3], 3: [20.3, 20.3, 20.3], 4: [20.3, 20.3, 20.3] };   // every parcel currently ships in the same 8 x 8 x 8 in (20.3 cm) box, per Prashant 18 Oct
+const SIZE_CM = { 1: [20.3, 20.3, 20.3], 2: [20.3, 20.3, 20.3], 3: [20.3, 15.2, 15.2], 4: [20.3, 20.3, 15.2] };   // cube for 1-2 boxes; 6x6x8 in and 6x8x8 in cartons for 3 and 4 (27 Oct)
 const MAX_BOXES = 4;   // 5+ boxes ship as two parcels (decided 12 Oct): book those in Delhivery One
 
 // The Pack of 2 (25 Oct 2026): a snug 2-box mailer, about 20 x 15 x 10 cm and 660 g packed, bills in the 1 kg slab instead of the 2 kg cube slab

@@ -101,7 +101,7 @@ const { boxesIn } = require('../utils/orderText');
   process.env.DELHIVERY_2BOX_MAILER = '1';
   sh = payload(2);
   ok(sh.shipment_length === '20' && sh.shipment_width === '15' && sh.shipment_height === '10' && sh.weight === '660', 'with DELHIVERY_2BOX_MAILER=1 a 2-box parcel is declared 20 x 15 x 10 cm and 660 g (1 kg slab)');
-  sh = payload(3); ok(sh.shipment_length === '20.3', 'a 3-box parcel stays in the cube');
+  sh = payload(3); ok([sh.shipment_length, sh.shipment_width, sh.shipment_height].join('x') === '20.3x15.2x15.2', 'the 2-box mailer flag leaves a 3-box parcel in its own 6 x 6 x 8 in carton');
   delete process.env.DELHIVERY_2BOX_MAILER;
 
   console.log(`pack-of-2-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
