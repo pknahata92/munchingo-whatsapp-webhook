@@ -12,8 +12,8 @@ class Local extends ResourceLoader { fetch(url) { const u = new URL(url); if (u.
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
 
 async function open(soldOut) {
-  const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'index.html'), 'utf8'), {
-    url: 'http://localhost/index.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+  const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'build-a-box.html'), 'utf8'), {
+    url: 'http://localhost/build-a-box.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
     beforeParse(w) { w.localStorage.setItem('munchingo_soldout', JSON.stringify(soldOut)); w.fetch = (u) => Promise.resolve({ ok: true, status: 200, json: async () => (/stock/.test(u) ? { ok: true, soldOut } : { ok: true, prices: {} }) }); w.scrollTo = () => {}; w.SVGElement.prototype.getComputedTextLength = () => 100; w.matchMedia = w.matchMedia || (() => ({ matches: false, addEventListener() {}, addListener() {} })); },
   });
   await wait(900);
@@ -30,7 +30,7 @@ async function open(soldOut) {
   ok(!msg.hidden && /Kesari and Sugar-Lite are sold out for now/.test(text(msg)) && /Original and Ajwain are available/.test(text(msg)), 'a message names what is out and what is available: ' + text(msg));
   ok(/A Trio needs 3 different flavors/.test(text(msg)), 'the message says why the Trio cannot be completed');
   ok(/Trio unavailable today/.test(text(d.querySelector('[data-gb="cta"]'))) && d.querySelector('[data-gb="cta"]').disabled, 'Trio button says unavailable today');
-  ok(!d.querySelector('[data-gb="singles"]').hidden && /single boxes/.test(text(d.querySelector('[data-gb="singles"]'))) && d.querySelector('[data-gb="singles"]').getAttribute('href') === 'index.html#range', 'a link points to the single boxes in stock');
+  ok(!d.querySelector('[data-gb="singles"]').hidden && /single boxes/.test(text(d.querySelector('[data-gb="singles"]'))) && d.querySelector('[data-gb="singles"]').getAttribute('href') === 'shop.html', 'a link points to the single boxes in stock');
   click(d.querySelector('.gb-opt[data-size="4"]')); await wait(100);
   ok(/Full Range returns soon/.test(text(d.querySelector('[data-gb="cta"]'))) && /Back soon/.test(text(d.querySelector('.gb-opt[data-size="4"] small'))), 'Full Range: option says back soon and the button says it returns soon');
   ok(/The Full Range needs all four|both are unavailable/.test(text(msg)), 'Full Range message explains');
