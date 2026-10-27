@@ -741,6 +741,7 @@ app.post('/webhook', async (req, res) => {
 app.listen(PORT, () => {
   try { require('./utils/serverTracking').startSweep(); } catch (e) { console.error('[TRACKING] could not start:', e.message); }
   try { require('./utils/orderUpdates').startSweep(); } catch (e) { console.error('[UPDATES] could not start:', e.message); }
+  try { require('./utils/ownerAlerts').start(); } catch (e) { console.error('[OWNER-ALERT] could not start:', e.message); }
   console.log(`✅ Munchingo WhatsApp webhook running on port ${PORT}`);
   console.log(`   Health:  http://localhost:${PORT}/`);
   console.log(`   Webhook: http://localhost:${PORT}/webhook`);
