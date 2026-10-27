@@ -86,9 +86,10 @@ function boxesForSlug(slug) {
 function priceForSlug(slug) {
   const live = require('./prices').current();
   const key = typeof slug === 'string' && slug.startsWith(TRIO_PREFIX) ? 'trio-gift-set' : slug;
-  if (live && live[key]) return live[key].price;
-  if (Object.prototype.hasOwnProperty.call(PRICES, slug)) return PRICES[slug];
-  if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) return TRIO_PRICE;
+  const promo = require('./giftPromo');
+  if (live && live[key]) return promo.effective(key, live[key].price);
+  if (Object.prototype.hasOwnProperty.call(PRICES, slug)) return promo.effective(slug, PRICES[slug]);
+  if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) return promo.effective('trio-gift-set', TRIO_PRICE);
   return null;
 }
 
@@ -100,12 +101,22 @@ function mrpForSlug(slug) {
 }
 
 // Everything the website needs to show prices: the live table, or the built-in prices before the table is switched on.
+// Gift sets: the price charged today (see utils/giftPromo.js) plus, while the pre-Diwali offer runs, a `promo` note.
 function priceBook() {
   const live = require('./prices').current();
-  if (live) return live;
-  const book = {};
-  Object.keys(PRICES).forEach((k) => { book[k] = { price: PRICES[k], mrp: MRPS[k] || null }; });
-  book['trio-gift-set'] = { price: TRIO_PRICE, mrp: null };
+  let book = {};
+  if (live) Object.keys(live).forEach((k) => { book[k] = { ...live[k] }; });
+  else {
+    Object.keys(PRICES).forEach((k) => { book[k] = { price: PRICES[k], mrp: MRPS[k] || null }; });
+    book['trio-gift-set'] = { price: TRIO_PRICE, mrp: null };
+  }
+  const promo = require('./giftPromo');
+  ['trio-gift-set', 'full-range-set'].forEach((k) => {
+    if (!book[k]) return;
+    const p = promo.promoFor(k, book[k].price);
+    book[k].price = promo.effective(k, book[k].price);
+    if (p) book[k].promo = p;
+  });
   return book;
 }
 
