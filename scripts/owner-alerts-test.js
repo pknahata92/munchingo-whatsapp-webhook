@@ -48,6 +48,7 @@ const order = (o) => ({ order_id: 'MNG-AAAA-2710', customer_name: 'Riya Kapoor',
   // template not usable: plain text; both fail: recorded as failed, never throws
   f = fakes({ templateFails: true }); a.setDeps(f.deps);
   r = await a.paidAlert(order());
+  ok(r.how === 'text_unconfirmed' && f.events.some((e) => e.event === 'owner_paid_alert' && e.meta && e.meta.how === 'text_unconfirmed'), 'a plain-text fallback is recorded as unconfirmed, never as a plain sent (WhatsApp may block it outside 24 h) (' + JSON.stringify(r) + ')');
   ok(r.sent && f.sent[0].kind === 'text' && /New paid order MNG-AAAA-2710/.test(f.sent[0].text) && /₹799/.test(f.sent[0].text) && /Riya Kapoor/.test(f.sent[0].text), 'no usable template: the same alert goes as plain text (' + (f.sent[0] || {}).text + ')');
   f = fakes({ templateFails: true, textFails: true }); a.setDeps(f.deps);
   let threw = false; try { r = await a.paidAlert(order()); } catch (e) { threw = true; }

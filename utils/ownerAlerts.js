@@ -34,7 +34,9 @@ async function deliver(kind, order, params, text) {
   if (!to) return { sent: false, reason: 'no_owner_phone' };
   let how = null, err = '';
   try { await wa.sendTemplate(to, TEMPLATE[kind], 'en', params); how = 'template'; }
-  catch (e) { err = e.message; try { await wa.sendText(to, text); how = 'text'; } catch (e2) { err += ' | text: ' + e2.message; } }
+  // A plain message is accepted by WhatsApp even outside the 24-hour window and only fails a moment later, so it is recorded as
+  // unconfirmed: the timeline never claims an alert arrived when it may not have.
+  catch (e) { err = e.message; try { await wa.sendText(to, text); how = 'text_unconfirmed'; } catch (e2) { err += ' | text: ' + e2.message; } }
   try {
     if (how) await db.logOrderEvent({ actor_name: 'System', order_id: order.order_id, event: `owner_${kind}_alert`, meta: { how } });
     else await db.logOrderEvent({ actor_name: 'System', order_id: order.order_id, event: 'owner_alert_failed', meta: { kind, error: err.slice(0, 300) } });
