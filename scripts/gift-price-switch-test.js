@@ -12,7 +12,7 @@ const at = (iso) => promo.setNow(() => Date.parse(iso));
 at('2026-11-08T23:59:00+05:30');
 ok(cat.priceForSlug('trio-gift-set-ajwain-kesari-original') === 799 && cat.priceForSlug('full-range-set') === 999, 'Diwali night: still 799 / 999');
 let b = cat.priceBook();
-ok(b['trio-gift-set'].promo && b['trio-gift-set'].promo.next === 949 && b['full-range-set'].promo.next === 1199 && /Promotional brand offer until Diwali/.test(b['trio-gift-set'].promo.label), 'price list carries the promo note and the coming price');
+ok(b['trio-gift-set'].promo && b['trio-gift-set'].promo.next === 949 && b['full-range-set'].promo.next === 1199 && /^Early-grab price till Diwali$/.test(b['trio-gift-set'].promo.label), 'price list carries the promo note and the coming price');
 ok(b['trio-gift-set'].mrp === null && b['full-range-set'].mrp === null, 'no struck-through MRP for sets');
 ok(!b['atta-original'].promo && b['atta-original'].price === 259, 'single boxes untouched');
 

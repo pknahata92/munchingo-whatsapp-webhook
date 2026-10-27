@@ -10,8 +10,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 class Local extends ResourceLoader { fetch(url) { const u = new URL(url); if (u.hostname !== 'localhost') return Promise.resolve(Buffer.from('')); const f = path.join(SITE, decodeURIComponent(u.pathname)); return Promise.resolve(fs.existsSync(f) ? fs.readFileSync(f) : Buffer.from('')); } }
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
 const BOOK = { 'atta-original': { price: 259, mrp: 300 }, 'atta-ajwain': { price: 259, mrp: 300 }, 'atta-kesari': { price: 299, mrp: 350 }, 'atta-lite-sugar': { price: 299, mrp: 350 },
-  'trio-gift-set': { price: 799, mrp: null, promo: { label: 'Promotional brand offer until Diwali', until: '2026-11-08', next: 949, nextFrom: '2026-11-09' } },
-  'full-range-set': { price: 999, mrp: null, promo: { label: 'Promotional brand offer until Diwali', until: '2026-11-08', next: 1199, nextFrom: '2026-11-09' } } };
+  'trio-gift-set': { price: 799, mrp: null, promo: { label: 'Early-grab price till Diwali', until: '2026-11-08', next: 949, nextFrom: '2026-11-09' } },
+  'full-range-set': { price: 999, mrp: null, promo: { label: 'Early-grab price till Diwali', until: '2026-11-08', next: 1199, nextFrom: '2026-11-09' } } };
 
 async function open({ book, soldOut = [], nowIso }) {
   const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'index.html'), 'utf8'), {
@@ -34,14 +34,15 @@ async function open({ book, soldOut = [], nowIso }) {
   let dom = await open({ book: BOOK, soldOut: ['atta-kesari', 'atta-lite-sugar'], nowIso: '2026-10-28T10:00:00+05:30' });
   let d = dom.window.document, w = dom.window;
   const note = d.querySelector('[data-promo-sets]');
-  ok(note && !note.hidden && /Promotional brand offer until Diwali/.test(text(note)) && /Trio ₹949/.test(text(note)) && /Full Range ₹1,199/.test(text(note)), 'home: promo note names the coming prices: ' + text(note));
+  ok(note && !note.hidden && text(note) === 'Early-grab price till Diwali: Trio ₹799 (₹949 from 9 Nov), Full Range ₹999 (₹1,199 from 9 Nov).', 'home: early-grab note names today\'s and the coming prices: ' + text(note));
   ok(text(d.querySelector('[data-price-for="trio-gift-set"]')) === '₹799', 'home: Trio still shows ₹799 today');
   ok(!/₹949<\/s>|<s>₹949|<s>₹1,199/.test(d.body.innerHTML), 'no struck-through ₹949 / ₹1,199 anywhere');
+  ok(!/save ₹/i.test(text(d.querySelector('[data-gb="promo"]'))), 'gift builder: one saving figure only (the MRP row), none in the early-grab line');
   const gbPromo = d.querySelector('[data-gb="promo"]');
-  ok(gbPromo && !gbPromo.hidden && /₹949 from 9 Nov/.test(text(gbPromo)), 'gift builder: Trio promo line under the total');
+  ok(gbPromo && !gbPromo.hidden && text(gbPromo) === 'Early-grab price till Diwali · ₹949 from 9 Nov', 'gift builder: Trio early-grab line under the total: ' + text(gbPromo));
   w.document.querySelector('.gb-opt[data-size="4"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
   await wait(50);
-  ok(/₹1,199 from 9 Nov/.test(text(d.querySelector('[data-gb="promo"]'))), 'gift builder: Full Range promo line');
+  ok(text(d.querySelector('[data-gb="promo"]')) === 'Early-grab price till Diwali · ₹1,199 from 9 Nov', 'gift builder: Full Range early-grab line: ' + text(d.querySelector('[data-gb="promo"]')));
 
   // Pack of 2
   const p2 = d.getElementById('pack2');
@@ -77,6 +78,8 @@ async function open({ book, soldOut = [], nowIso }) {
   // before Diwali with no stored list: the fallback shows the promo note
   dom = await open({ book: null, nowIso: '2026-10-28T09:00:00+05:30' }); d = dom.window.document;
   ok(!d.querySelector('[data-promo-sets]').hidden, 'before Diwali, no live list: promo note still shown from the fallback');
+  ok(text(d.querySelector('[data-promo-sets]')) === 'Early-grab price till Diwali: Trio ₹799 (₹949 from 9 Nov), Full Range ₹999 (₹1,199 from 9 Nov).', 'no live list: today\'s prices come from the page: ' + text(d.querySelector('[data-promo-sets]')));
+  ok(text(d.querySelector('[data-gb="promo"]')) === 'Early-grab price till Diwali · ₹949 from 9 Nov', 'no live list: the gift builder line (its own MRP saving row shows the saving): ' + text(d.querySelector('[data-gb="promo"]')));
   dom.window.close();
   console.log(`website-promo-pack2-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
