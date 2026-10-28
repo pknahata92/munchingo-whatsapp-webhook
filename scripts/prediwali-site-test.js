@@ -71,7 +71,12 @@ const ITEM = (slug, name, price) => ({ slug, name, price, mrp: price + 41, unit:
   ok(!/FOUNDING10/.test(visibleText(read('checkout.html'))), 'checkout: FOUNDING10 not in the page text');
   ['atta-original', 'atta-ajwain', 'atta-kesari', 'atta-lite-sugar'].forEach((s) => ok(new RegExp('<a href="' + s + '\\.html">').test(home), 'home: plain link to ' + s));
   ok(!/delivered free to your doorstep/i.test(visibleText(home)), 'home: no unconditional free-delivery promise');
-  ok(/og-gift-boxes\.jpg/.test(home) && /og:image:width" content="1200"/.test(home), 'home: 1200x630 share image');
+  ok(/og-home\.jpg/.test(home) && /og:image:width" content="1200"/.test(home), 'home: 1200x630 share image of all four Flavors');
+  // 28 Oct (Prashant): the home page is not gift-first. Meet the Flavors, then the Pack of 2 (how to start), then gift boxes.
+  const at = (id) => home.indexOf('id="' + id + '"');
+  ok(at('range') > 0 && at('range') < at('pack-of-2') && at('pack-of-2') < at('gifts'), 'home order: Flavors, then the Pack of 2, then gift boxes');
+  ok(!/2026-11-09/.test(home) && !/Gifting this Diwali/.test(home), 'home: no Diwali reorder script, no gift chip on the hero');
+  ok(/href="#pack-of-2" data-launch-pill/.test(home), 'hero pill points to the Pack of 2');
 
   // 4. 404 page
   const nf = read('404.html');
