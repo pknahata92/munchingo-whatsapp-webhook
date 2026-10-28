@@ -77,6 +77,7 @@ const ITEM = (slug, name, price) => ({ slug, name, price, mrp: price + 41, unit:
   ok(at('range') > 0 && at('range') < at('pack-of-2') && at('pack-of-2') < at('gifts'), 'home order: Flavors, then the Pack of 2, then gift boxes');
   ok(!/2026-11-09/.test(home) && !/Gifting this Diwali/.test(home), 'home: no Diwali reorder script, no gift chip on the hero');
   ok(/href="#pack-of-2" data-launch-pill/.test(home), 'hero pill points to the Pack of 2');
+  ok(!/id="order"/.test(home) && /Dispatched within 48 hours of payment/.test(home), 'home: "How to order" cut, its 48-hour dispatch line kept in the trust row');
 
   // 4. 404 page
   const nf = read('404.html');
