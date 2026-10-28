@@ -97,6 +97,16 @@ const rw = (fn) => wrap(async (req) => { try { return await fn(req); } catch (e)
 router.get('/admin/api/reviews', owner, rw(() => rv().list()));
 router.post('/admin/api/reviews/:id/publish', owner, rw((req) => rv().publish(req.params.id, req.admin)));
 router.post('/admin/api/reviews/:id/hide', owner, rw((req) => rv().hide(req.params.id, (req.body || {}).reason, req.admin)));
+// Suggestions and feedback from WhatsApp (utils/suggestions.js), newest first; the owner marks what happened to each.
+const SUGGESTION_STATUS = ['new', 'planned', 'done', 'not_for_us'];
+router.get('/admin/api/suggestions', owner, wrap(async () => ({ rows: await require('../utils/database').listSuggestions() })));
+router.post('/admin/api/suggestions/:id/status', owner, wrap(async (req) => {
+  const status = String((req.body || {}).status || '');
+  if (!SUGGESTION_STATUS.includes(status)) throw new actions.AdminError('Choose Planned, Done, Not for us or New.', 400);
+  const row = await require('../utils/database').setSuggestionStatus(Number(req.params.id), status, req.admin.email);
+  if (!row) throw new actions.AdminError('No such suggestion.', 404);
+  return { row };
+}));
 router.get('/admin/api/founding-tasters', owner, rw(async () => ({ rows: await rv().tasterCandidates() })));
 router.post('/admin/api/founding-tasters', owner, rw((req) => rv().saveTasters((req.body || {}).rows, req.admin)));
 router.post('/admin/api/orders/:id/known', owner, rw((req) => rv().setKnown(req.params.id, (req.body || {}).known)));

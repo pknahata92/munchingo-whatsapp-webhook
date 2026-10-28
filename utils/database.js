@@ -238,6 +238,41 @@ async function listOrdersSince(sinceIso, limit = 500) {
   return data || [];
 }
 
+// Suggestions from WhatsApp (utils/suggestions.js).
+async function setSuggestionWait(phone, at) {
+  const { error } = await db().from('suggestion_waits').upsert({ phone, asked_at: at }, { onConflict: 'phone' });
+  if (error) throw new Error(error.message);
+}
+async function getSuggestionWait(phone) {
+  const { data, error } = await db().from('suggestion_waits').select('*').eq('phone', phone).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+async function clearSuggestionWait(phone) {
+  const { error } = await db().from('suggestion_waits').delete().eq('phone', phone);
+  if (error) throw new Error(error.message);
+}
+async function insertSuggestion(row) {
+  const { data, error } = await db().from('suggestions').insert(row).select().single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+async function listSuggestions(limit = 300) {
+  const { data, error } = await db().from('suggestions').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function setSuggestionStatus(id, status, by) {
+  const { data, error } = await db().from('suggestions').update({ status, status_by: by || null, status_at: new Date().toISOString() }).eq('id', id).select().maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+async function listSuggestionsBetween(sinceIso, untilIso) {
+  const { data, error } = await db().from('suggestions').select('*').gte('created_at', sinceIso).lt('created_at', untilIso).order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 /** Delhivery's promised delivery date for a shipped order (saved by the tracking sweep). */
 async function setExpectedDelivery(orderId, at) {
   const { error } = await db().from('orders').update({ expected_delivery_at: at }).eq('order_id', orderId);
@@ -612,6 +647,7 @@ async function listCouponOrderTotals() {
 const client = () => db();
 
 module.exports = {
+  setSuggestionWait, getSuggestionWait, clearSuggestionWait, insertSuggestion, listSuggestions, setSuggestionStatus, listSuggestionsBetween,
   upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,

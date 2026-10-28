@@ -2,6 +2,7 @@
 
 const wa = require('../utils/whatsapp');
 const contacts = require('../utils/contacts');
+const suggestions = require('../utils/suggestions');
 const { wantsHuman } = require('../utils/handoff');
 const { getStoredLang, setLang, HINDI_ENABLED } = require('../utils/langPrefs');
 const { sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
@@ -183,6 +184,7 @@ async function sendOrderInstructions(to) {
       `2️⃣ Select the cookies you want & tap *Add to Cart*\n` +
       `3️⃣ When ready, tap *View Cart → Checkout*\n` +
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
+      `💳 All orders are pre-paid: UPI (Google Pay, PhonePe, Paytm), debit or credit card, or net banking, through a secure link.\n\n` +
       `Minimum order: ${MIN_BOXES} boxes for delivery. Free shipping from ₹${FREE_FROM} (3 boxes), ₹${SHIPPING_FEE} below that.\n` +
       `Delivery across India 🇮🇳`,
     [
@@ -543,7 +545,7 @@ async function sendFAQ(to) {
         rows: [
           { id: 'faq_shipping', title: 'Do you deliver to me? 🚚', description: 'Delivery coverage & timelines' },
           { id: 'faq_order',    title: 'How do I order? 📦',       description: 'Step-by-step ordering guide' },
-          { id: 'faq_payment',  title: 'Payment options? 💳',      description: 'UPI, cards, COD' },
+          { id: 'faq_suggest',  title: 'Share a suggestion 💡',    description: 'New Flavors, packaging, anything' },
           { id: 'faq_return',   title: 'Returns & refunds? ↩️',   description: 'Our return policy' },
         ],
       },
@@ -713,6 +715,11 @@ async function routeText(to, text, name) {
 
   // ── 00. Marketing opt-out and sign-up keywords (e.g. FAIR from the stall QR) — before everything else ──
   if (contacts.isStop(text)) return contacts.handleStop(to);
+  // ── 00b. Suggestions: a waiting answer first, then the keyword (suggest / idea), or one typed inline ("idea: ...") ──
+  if (await suggestions.capture(to, name, text)) return;
+  const inlineIdea = suggestions.inlineSuggestion(text);
+  if (inlineIdea) return suggestions.saveSuggestion(to, name, inlineIdea);
+  if (suggestions.isAsk(text)) return suggestions.ask(to);
   const signup = contacts.signupSource(text);
   if (signup) return contacts.handleSignup(to, name, signup);
 
@@ -891,6 +898,7 @@ async function routeFlowReply(to, nfmReply, name) {
   // Feedback flow
   if (data.rating) {
     console.log('[FEEDBACK]', { customer: to, name, rating: data.rating, comments: data.comments });
+    await suggestions.recordFeedback(to, name, data.rating, data.comments);   // saved, not only emailed
     try {
       await sendFeedbackAlert({ customerPhone: to, customerName: name, rating: data.rating, comments: data.comments });
     } catch (err) {
@@ -962,6 +970,7 @@ async function routeInteractive(to, interactive, name) {
     case 'faq_return':      return sendReturnPolicy(to);
     case 'faq_bulk':        return sendBulkOrderInfo(to);
     case 'faq_human':       return sendHumanHandoff(to, name);
+    case 'faq_suggest':     return suggestions.ask(to);
     case 'faq_shelf':
       return wa.sendText(
         to,

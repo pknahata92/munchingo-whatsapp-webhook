@@ -57,6 +57,10 @@ const reviews = [
   { id: 1, order_id: 'MNG-REVB-1002', customer_phone: '919810000777', ratings: { 'atta-original': 1, 'atta-ajwain': 4 }, comment: '<img src=x onerror=alert(1)>', display_name: 'Founding', city: 'Delhi', consent_publish: false, network: false, founding_taster: true, status: 'new', hidden_reason: null, created_at: new Date(now - 2 * 86400000).toISOString() },
   { id: 2, order_id: 'MNG-REVA-1001', customer_phone: '919810000101', ratings: { 'atta-original': 5, 'atta-kesari': 4, 'atta-lite-sugar': 5 }, comment: 'Kesari is the one', display_name: 'Riya', city: 'Mumbai', consent_publish: true, network: true, founding_taster: false, status: 'new', hidden_reason: null, created_at: new Date(now - 86400000).toISOString() },
 ]; let reviewSeq = 2;
+const suggestionsRows = [
+  { id: 1, phone: '919810000001', name: 'Riya Kapoor', kind: 'feedback', text: 'Kesari too sweet', rating: '4', order_id: 'MNG-SUGG-2810', status: 'new', created_at: new Date(now - 3 * 86400000).toISOString() },
+  { id: 2, phone: '919810000001', name: 'Riya Kapoor', kind: 'suggestion', text: 'Make a jaggery one', rating: null, order_id: 'MNG-SUGG-2810', status: 'new', created_at: new Date(now - 86400000).toISOString() },
+];
 const tasters = [{ phone: '919810000777', name: 'Founding Taster', first_order_id: 'MNG-REVB-1002', note: 'practice', added_at: new Date(now - 20 * 86400000).toISOString() }];
 const invoices = {};
 orders.filter((o) => o.payment_id && o.order_id !== 'MNG-FFFF-1010').forEach((o, i) => { const inv = buildInvoice(o, { invoiceNo: `MUN/26-27/${String(i + 1).padStart(4, '0')}`, issuedAt: new Date(o.created_at) }); invoices[o.order_id] = { order_id: o.order_id, invoice_no: inv.invoiceNo, supply_type: inv.supplyType, total_paise: inv.totalPaise, data: inv }; });
@@ -83,6 +87,8 @@ stub('utils/database.js', {
   listReviews: async ({ limit = 200 } = {}) => reviews.slice().reverse().slice(0, limit),
   updateReview: async (id, f) => { Object.assign(reviews.find((r) => r.id === Number(id)) || {}, f); },
   listFoundingTasters: async () => tasters.slice(),
+  listSuggestions: async () => suggestionsRows.slice().reverse(),
+  setSuggestionStatus: async (id, status, by) => { const r = suggestionsRows.find((x) => x.id === Number(id)); if (r) Object.assign(r, { status, status_by: by, status_at: new Date().toISOString() }); return r || null; },
   setFoundingTasters: async (rows) => { tasters.length = 0; rows.forEach((r) => tasters.push({ added_at: new Date().toISOString(), ...r })); },
   listDeliveredOrders: async ({ since }) => orders.filter((o) => o.status === 'paid' && o.delivered_at && o.delivered_at >= since),
   setKnownToUs: async (id, known) => { const o = orders.find((x) => x.order_id === id); if (o) o.known_to_us = !!known; },

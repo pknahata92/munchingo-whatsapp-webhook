@@ -179,6 +179,28 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     s.close();
   });
 
+  // Suggestions from WhatsApp: More > Suggestions lists them; the owner marks Planned / Done / Not for us (28 Oct 2026)
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText } = o;
+    click(byText('#tabs .tab', /^More$/)); await until(() => !!byText('#viewMore .morebtn', /Suggestions/), 4000, 'the More page');
+    click(byText('#viewMore .morebtn', /Suggestions/)); await until(() => /jaggery/i.test(text(q('#panel'))), 4000, 'the suggestions list').catch(() => {});
+    const p = text(q('#panel'));
+    ok(/Make a jaggery one/.test(p) && /Riya Kapoor/.test(p) && /MNG-SUGG-2810/.test(p), 'a suggestion shows its text, who sent it and their latest order');
+    ok(/Feedback/.test(p) && /4/.test(p) && /Kesari too sweet/.test(p), 'feedback form answers are listed too, with the rating');
+    ok(/taste it first, free/i.test(p), 'the screen reminds the owner of the promise');
+    const row = qa('#panel .line').find((l) => /jaggery/i.test(text(l)));
+    const done = row && Array.from(row.querySelectorAll('button')).find((b) => /^Done$/.test(text(b)));
+    ok(!!done, 'each suggestion has Planned / Done / Not for us');
+    click(done); await until(() => qa('#panel .line').some((l) => /jaggery/i.test(text(l)) && /DONE/.test(text(l))), 4000, 'the status to change').catch(() => {});
+    ok(qa('#panel .line').some((l) => /jaggery/i.test(text(l)) && /DONE/.test(text(l))), 'marking Done shows DONE (promise to keep: they taste it first)');
+    ok(o.errors.length === 0, 'no page errors on Suggestions (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+    const s = await openAdmin('staff');
+    click(s.byText('#tabs .tab', /^Orders$/)); await sleep(100);
+    ok(!s.byText('#tabs .tab', /^More$/) || s.q('#moreTab').hidden, 'staff cannot open More (Suggestions stays with the owner)');
+    s.close();
+  });
+
   // Refunded is its own tab, apart from Cancelled
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click } = o;

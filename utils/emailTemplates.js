@@ -344,7 +344,7 @@ function ownerRefundHtml({ order, refund, creditNote }) {
 }
 
 // ── Owner: 8:00 AM summary of the previous day ───────────────────────────────
-function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes = [] }) {
+function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes = [], suggestions = [] }) {
   const money = (n) => '&#8377;' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
   const allItems = orders.flatMap((o) => o.items || []);
   const boxes = allItems.reduce((n, i) => n + (Number(i.quantity) || 0) * boxesIn(i), 0);
@@ -378,6 +378,7 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
     ${refundBlock}
     <tr><td style="padding:4px 26px 22px;font-family:${FONT};font-size:12px;color:#8A7765;">A CSV of these orders (for accounting) is attached.</td></tr>`
     : `<tr><td style="padding:24px 26px 28px;font-family:${FONT};font-size:14px;color:${C.ink};">No paid orders yesterday. This email still arrives every morning, so you know the summary is working.</td></tr>`}
+    ${suggestions.length ? `<tr><td style="padding:0 26px 22px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} or feedback on WhatsApp</div>${suggestions.map((x) => `<div style="font-family:${FONT};font-size:13px;color:${C.ink};padding:4px 0;border-bottom:1px solid #EEE3D0;"><b>${esc(x.name || 'Customer')}</b>${x.kind === 'feedback' ? ' &middot; feedback' + (x.rating ? ' ' + esc(x.rating) : '') : ''}: ${esc(x.text || '')}</div>`).join('')}<div style="font-family:${FONT};font-size:12px;color:#8A7765;margin-top:6px;">Admin, More, Suggestions to mark them.</div></td></tr>` : ''}
   </table></td></tr></table></body></html>`;
 }
 

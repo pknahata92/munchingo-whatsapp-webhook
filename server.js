@@ -367,7 +367,9 @@ app.get('/internal/daily-digest', async (req, res) => {
 
     const dayLabel = new Date(Date.parse(dayIst + 'T12:00:00Z')).toLocaleDateString('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
     try {
-      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder, creditNotes });
+      let suggestions = [];
+      try { suggestions = await require('./utils/database').listSuggestionsBetween(since.toISOString(), until.toISOString()); } catch (e) { console.error('[DIGEST] suggestions not read:', e.message); }
+      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder, creditNotes, suggestions });
     } catch (sendErr) {
       if (!force) await releaseDigestDay(dayIst); // let the next trigger retry
       throw sendErr;

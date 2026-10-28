@@ -119,6 +119,24 @@ async function sendHumanHandoffAlert({ customerPhone, customerName, message, ord
   console.log(`[MAILER] Human handoff alert sent for ${customerPhone}`);
 }
 
+async function sendSuggestionAlert({ phone, name, text, order_id: orderId }) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#6B3A2A;padding:22px 26px;"><h2 style="color:#fff;margin:0;font-size:20px;">&#128161; New suggestion</h2></div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(name) || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${escapeHtml(phone)}</td></tr>
+          ${orderId ? `<tr><td style="padding:4px 0;color:#888;">Latest order</td><td style="padding:4px 0;">${escapeHtml(orderId)}</td></tr>` : ''}
+          <tr><td style="padding:4px 0;color:#888;vertical-align:top;">Suggestion</td><td style="padding:4px 0;white-space:pre-wrap;">${escapeHtml(text)}</td></tr>
+        </table>
+        <p style="font-size:13px;color:#8A7765;margin:0;">They were promised: if we make the idea, they taste it first, free. Mark it in Admin, More, Suggestions.</p>
+      </div>
+    </div>`;
+  const { error } = await resend.emails.send({ from: 'Munchingo Orders <orders@munchingo.com>', to: [process.env.NOTIFY_EMAIL], subject: `New suggestion from ${name || '+' + phone}`, html });
+  if (error) throw new Error(error.message);
+}
+
 async function sendFeedbackAlert({ customerPhone, customerName, rating, comments }) {
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
@@ -369,7 +387,7 @@ function csvCell(v) {
 }
 
 // 8:00 AM summary of the previous day: totals, pack list, every order, plus a CSV for accounting.
-async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, creditNotes = [] }) {
+async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, creditNotes = [], suggestions = [] }) {
   const t = require('./emailTemplates');
   const { contentsOf } = require('./orderText');
   const revenue = orders.reduce((n, o) => n + Number(o.total || 0), 0);
@@ -377,7 +395,7 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [process.env.NOTIFY_EMAIL],
     subject: (orders.length ? `Munchingo ${dayLabel}: ${orders.length} order${orders.length === 1 ? '' : 's'}, Rs.${revenue}` : `Munchingo ${dayLabel}: no orders`) + (creditNotes.length ? ` (${creditNotes.length} refund${creditNotes.length === 1 ? '' : 's'})` : ''),
-    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder, creditNotes }),
+    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder, creditNotes, suggestions }),
   };
   if (orders.length) {
     const head = ['order_id', 'paid_at_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_note', 'coupon', 'discount', 'total', 'invoice_no', 'taxable', 'cgst', 'sgst', 'igst', 'payment_id', 'ship_to'];
@@ -396,4 +414,4 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+module.exports = { sendSuggestionAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };

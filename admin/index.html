@@ -268,6 +268,7 @@ header small{color:var(--ink2);opacity:1}
       moreBtn('Prices', 'Change what each box and gift set costs on the website.', openPrices),
       moreBtn('Coupons and offers', 'Create discount codes and the stock-up offer.', openCoupons),
       moreBtn('Reviews', 'What buyers said. Publish, or hide for a fixed reason.', openReviews),
+      moreBtn('Suggestions', 'Ideas and feedback customers sent on WhatsApp. Mark what you did with each.', openSuggestions),
       moreBtn('Founding tasters', 'The first buyers: every new launch reaches them first, free.', openTasters),
       moreBtn('Team', 'Who can sign in, and what they can do.', openTeam),
       moreBtn('Label sheet', 'Make a print sheet from a labels PDF you already have.', openLabelSheet),
@@ -1158,6 +1159,26 @@ header small{color:var(--ink2);opacity:1}
     });
   }
   // ── Founding tasters (owner): the first buyers; every future launch reaches them first, free ──
+  // Suggestions and feedback from WhatsApp. The customer was promised: if we make the idea, they taste it first, free (Done).
+  var SUGG_LABEL = { new: 'NEW', planned: 'PLANNED', done: 'DONE', not_for_us: 'NOT FOR US' };
+  function openSuggestions() {
+    api('/admin/api/suggestions').then(function (j) {
+      if (!j.ok) return toast(j.error || 'Could not load suggestions');
+      var rows = j.rows || [];
+      var setStatus = function (r, st, btn) { btn.disabled = true; api('/admin/api/suggestions/' + r.id + '/status', { method: 'POST', body: { status: st } }).then(function (x) { if (!x.ok) { btn.disabled = false; return toast(x.error || 'Failed', 5000); } openSuggestions(); }); };
+      var lines = rows.map(function (r) {
+        var who = (r.name || 'Customer') + ' · +' + r.phone + (r.order_id ? ' · latest order ' + r.order_id : '') + ' · ' + when(r.created_at);
+        var acts = [['planned', 'Planned'], ['done', 'Done'], ['not_for_us', 'Not for us']].filter(function (a) { return a[0] !== r.status; }).map(function (a) { return h('button', { class: 'btn ghost small', onclick: function (e) { setStatus(r, a[0], e.target); } }, a[1]); });
+        return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' },
+          h('div', {}, h('b', {}, r.kind === 'feedback' ? 'Feedback' + (r.rating ? ' · rated ' + r.rating : '') : 'Suggestion'), h('span', { class: 'badge b-' + (r.status === 'done' ? 'delivered' : r.status === 'not_for_us' ? 'cancelled' : r.status === 'planned' ? 'packed' : 'topack') }, SUGG_LABEL[r.status] || r.status)),
+          h('div', { style: 'white-space:pre-wrap' }, r.text || '(no comment)'),
+          h('small', { class: 'muted' }, who),
+          r.kind === 'suggestion' ? h('div', { class: 'acts' }, acts) : null);
+      });
+      ownerPanel('Suggestions', [h('p', { class: 'muted' }, 'From the WhatsApp bot (More Info, Share a suggestion) and the feedback form. Customers were promised: if we make your idea, you taste it first, free. Mark it Done when you make it, so you know whom to send it to.')]
+        .concat(lines.length ? lines : [h('p', { class: 'muted' }, 'No suggestions yet.')]));
+    });
+  }
   function openTasters() {
     api('/admin/api/founding-tasters').then(function (j) {
       if (!j.ok) return toast(j.error || 'Could not load the list');
