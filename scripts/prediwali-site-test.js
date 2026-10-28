@@ -106,5 +106,19 @@ const ITEM = (slug, name, price) => ({ slug, name, price, mrp: price + 41, unit:
   ok(/button,input,select,textarea\{font-family:inherit/.test(css), 'controls inherit the page font');
   ok(/\.v2-range \.v2-card \.v2-body \.v2-add,\.v2-range \.v2-card \.v2-qty\{height:48px;margin:6px 0 0/.test(css), 'button and stepper share one 48px box');
 
+  // 7. Home: the Pack of 2 picker knows what is already in the bag (it sits right under the Flavor cards).
+  dom = await open('index.html', { cart: [ITEM('atta-original', 'Atta Original', 259), ITEM('atta-ajwain', 'Atta Ajwain', 259)] }); d = dom.window.document;
+  let have = d.querySelector('[data-p2-have]');
+  ok(have && !have.hidden && /2 boxes/.test(text(have)) && have.querySelector('a[href="checkout.html"]'), 'Pack of 2: bag with 2 boxes says so and links to checkout: ' + text(have));
+  dom.window.close();
+  dom = await open('index.html', { cart: [ITEM('atta-original', 'Atta Original', 259)] }); d = dom.window.document;
+  have = d.querySelector('[data-p2-have]');
+  ok(have && !have.hidden && /1 box/.test(text(have)) && /one more/.test(text(have)), 'Pack of 2: bag with 1 box asks for one more: ' + text(have));
+  dom.window.close();
+  dom = await open('index.html', {}); d = dom.window.document;
+  have = d.querySelector('[data-p2-have]');
+  ok(have && have.hidden, 'Pack of 2: empty bag, no bag line');
+  dom.window.close();
+
   console.log(`prediwali-site-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
