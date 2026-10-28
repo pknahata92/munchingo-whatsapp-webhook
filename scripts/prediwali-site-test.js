@@ -47,7 +47,7 @@ const ITEM = (slug, name, price) => ({ slug, name, price, mrp: price + 41, unit:
   dom = await open('atta-kesari.html', { soldOut: [] }); d = dom.window.document;
   ok(!d.getElementById('add').disabled && !d.getElementById('soldout-note'), 'Kesari in stock: buy box normal');
   ok(schemaAvail(d).every((x) => /InStock/.test(x.a)), 'product data says InStock');
-  ok(/Saffron sweet/.test(text(d.querySelector('.v2-buy .v2-tag'))) && !/Royally/i.test(read('atta-kesari.html')), 'Kesari tag no longer uses "royal"');
+  ok(/Royally sweet/.test(text(d.querySelector('.v2-buy .v2-tag'))), 'Kesari tag is "Royally sweet" (approved 28 Oct)');
   dom.window.close();
 
   // 2. Cart and checkout hold a sold-out box
