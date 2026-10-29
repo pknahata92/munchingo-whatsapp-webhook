@@ -461,12 +461,15 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await until(() => qa('#viewStock .line').length >= 4, 4000, 'back at the stock list');
 
     click(byText('#viewStock button', /^History$/)); await until(() => /Stock history/.test(text(q('#viewStock'))), 4000, 'history again');
-    click(byText('#viewStock .chip', /^Received$/)); await sleep(300);
+    // Wait for the history to redraw for the chosen chip (it reloads from the server), not a fixed time: a 300 ms sleep
+    // read the previous view on a slow run, and the late redraw then hit the closed window (flaky until 29 Oct 2026).
+    const shown = (chip, linesOk) => until(() => !!byText('#viewStock .chip.on', chip) && linesOk(qa('#viewStock .line')), 5000, 'the history to show ' + chip);
+    click(byText('#viewStock .chip', /^Received$/)); await shown(/^Received$/, (ls) => ls.length >= 2 && ls.every((l) => /Received/.test(text(l)))).catch(() => {});
     lines = qa('#viewStock .line').filter((l) => /atta-lite-sugar/.test(text(l)));
     const oldLine = lines.find((l) => /\+33/.test(text(l))), newLine = lines.find((l) => /\+36/.test(text(l)));
     ok(!!oldLine && /Cancelled/.test(text(oldLine)) && !btn(oldLine, /^(Correct|Reverse)$/), 'the old receipt now says Cancelled and offers no Correct or Reverse (' + (oldLine ? text(oldLine).slice(0, 80) : 'missing') + ')');
     ok(!!newLine && !!btn(newLine, /^Correct$/), 'the new receipt is there, and can itself be corrected');
-    click(byText('#viewStock .chip', /^All$/)); await sleep(300);
+    click(byText('#viewStock .chip', /^All$/)); await shown(/^All$/, (ls) => ls.some((l) => !/Received/.test(text(l)))).catch(() => {});
     ok(qa('#viewStock .line').some((l) => /Reversed/.test(text(l))), 'the All view shows the reversing lines too');
     ok(o.errors.length === 0, 'no page errors on stock history (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
