@@ -142,5 +142,38 @@ const ITEM = (slug, name, price) => ({ slug, name, price, mrp: price + 41, unit:
     ok(!b.classList.contains('chrome-away'), 'laptop: chrome never hides');
     dm.window.close();
   }
+  // 10. Taps on phones (29 Oct): no hover look that sticks after a tap, no grey tap flash, brand font arrives early
+  {
+    const css = read('css/style.css');
+    const unguarded = [];
+    const walk = function walk(src, guarded) {
+      let i = 0, depth = 0, start = 0;
+      while (i < src.length) {
+        const c = src[i];
+        if (c === '{') {
+          const head = src.slice(start, i).trim();
+          let j = i + 1, d = 1; while (j < src.length && d) { if (src[j] === '{') d++; else if (src[j] === '}') d--; j++; }
+          const body = src.slice(i + 1, j - 1);
+          if (head.startsWith('@media') || head.startsWith('@supports')) walk(body, guarded || /hover:\s*hover/.test(head));
+          else if (/:hover/.test(head) && !guarded) unguarded.push(head.slice(0, 60));
+          i = j; start = j; continue;
+        }
+        if (c === '}') start = i + 1;
+        i++;
+      }
+    };
+    walk(css.replace(/\/\*[\s\S]*?\*\//g, ''), false);
+    fs.readdirSync(SITE).filter((f) => f.endsWith('.html')).forEach((f) => (read(f).match(/<style[^>]*>[\s\S]*?<\/style>/g) || []).forEach((b) => {
+      const before = unguarded.length; walk(b.replace(/<\/?style[^>]*>/g, '').replace(/\/\*[\s\S]*?\*\//g, ''), false);
+      for (let k = before; k < unguarded.length; k++) unguarded[k] = f + ': ' + unguarded[k];
+    }));
+    ok(unguarded.length === 0, 'every :hover style sits inside @media (hover:hover), so a tap never leaves it stuck: ' + unguarded.slice(0, 5).join(' | '));
+    ok(/-webkit-tap-highlight-color:\s*transparent/.test(css), 'no grey tap flash on Android');
+    ok(/\.v2-card:active/.test(css) && /\.door-card:active/.test(css), 'cards give a pressed look on tap instead');
+    ok(fs.existsSync(path.join(SITE, 'display-font.woff2')) && /url\('\.\.\/display-font\.woff2'\) format\('woff2'\)/.test(css), 'display font served as WOFF2 (91 KB, was 171 KB OTF)');
+    const pages = fs.readdirSync(SITE).filter((f) => f.endsWith('.html') && /<link[^>]*href="css\/style\.css/.test(read(f)));
+    const noPreload = pages.filter((f) => !/<link rel="preload" href="display-font\.woff2" as="font" type="font\/woff2" crossorigin>/.test(read(f)));
+    ok(pages.length > 10 && noPreload.length === 0, 'every page preloads the display font: missing on ' + noPreload.join(', '));
+  }
   console.log(`prediwali-site-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
