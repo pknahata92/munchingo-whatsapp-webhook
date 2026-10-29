@@ -278,6 +278,9 @@ function shippedHtml({ order, carrier, awb, trackUrl }) {
   if (byHand) line = `<b>Delivered by hand</b>${awb && !isLink ? ` &middot; by <b>${esc(awb)}</b>` : ''}. Please keep your phone nearby: we may call you on arrival.`;
   else if (porter) line = `<b>Porter</b> same-city delivery${awb && !isLink ? ` &middot; booking <b>${esc(awb)}</b>` : ''}. The driver may call you on arrival.`;
   else line = `<b>${esc(carrier || 'Courier')}</b>${awb && !isLink ? ` &middot; tracking number <b>${esc(awb)}</b>` : ''}`;
+  // Delhivery's promised date (saved by the tracking sweep), worded as their estimate, never our promise; a past date is never shown.
+  const eta = Date.parse(order.expected_delivery_at || '');
+  if (Number.isFinite(eta) && eta > Date.now()) line += `<br>Expected around <b>${esc(new Date(eta).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }))}</b> (${esc(carrier && !/delhivery/i.test(carrier) ? 'the courier' : 'Delhivery')}&rsquo;s estimate).`;
   const body = card(`
     <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:10px;">Order ${esc(order.order_id)}</div>
     <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">${line}</div>

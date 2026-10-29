@@ -85,6 +85,7 @@ async function sweepOnce() {
       if (edd && edd !== order.expected_delivery_at && db.setExpectedDelivery) {
         try { await db.setExpectedDelivery(order.order_id, edd); } catch (e) { console.error(`[UPDATES] ${order.order_id} could not save the delivery date:`, e.message); }
       }
+      if (edd) order.expected_delivery_at = edd;   // the shipped email below uses the date just read, not the row's older value
       if (stage === 'booked') { res.waiting++; continue; }
       if (stage === 'unknown') { res.unknown++; continue; }
       // The courier has had this parcel at some point: record it once. The admin Shipped tab uses this to tell

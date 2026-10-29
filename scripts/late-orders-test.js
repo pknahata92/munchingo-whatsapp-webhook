@@ -78,6 +78,29 @@ const DAY = 86400000;
   const sql = fs.readFileSync(path.join(__dirname, '..', 'delivery_date_migration.sql'), 'utf8').replace(/\s+/g, ' ').toLowerCase();
   ok(sql.includes('alter table orders add column if not exists expected_delivery_at timestamptz'), 'migration adds orders.expected_delivery_at');
 
+  // ── the shipped email says when to expect it (Delhivery's estimate, never a promise; never a date already past) ──
+  const tpl = require('../utils/emailTemplates');
+  const base = { order_id: 'MNG-ETA1-2810', customer_name: 'Riya Kapoor', items: [] };
+  const soon = new Date(Date.now() + 3 * DAY);
+  const soonText = soon.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+  let html = tpl.shippedHtml({ order: { ...base, expected_delivery_at: soon.toISOString() }, carrier: 'Delhivery', awb: '67409110000140', trackUrl: 'https://www.delhivery.com/track/package/67409110000140' });
+  ok(html.includes('Expected around <b>' + soonText + '</b>') && /Delhivery&rsquo;s estimate|Delhivery's estimate/.test(html), 'the shipped email says Expected around <date> (Delhivery\'s estimate) [' + soonText + ']');
+  html = tpl.shippedHtml({ order: { ...base }, carrier: 'Delhivery', awb: '67409110000140' });
+  ok(!/Expected around/.test(html), 'no courier date: no line');
+  html = tpl.shippedHtml({ order: { ...base, expected_delivery_at: new Date(Date.now() - DAY).toISOString() }, carrier: 'Delhivery', awb: '67409110000140' });
+  ok(!/Expected around/.test(html), 'a date already past is never shown');
+  html = tpl.shippedHtml({ order: { ...base, expected_delivery_at: 'nonsense' }, carrier: 'Delhivery', awb: '1' });
+  ok(!/Expected around/.test(html), 'a broken date is never shown');
+
+  // the sweep gives the email the date it just read from Delhivery (the order row it holds was read before the save)
+  const mailed = [];
+  const f2 = fake([{ ...order('MNG-ETA2', null), customer_email: 'r@example.com' }], '2026-11-02T18:29:59.000Z');
+  f2.db.listOrderEvents = async () => [{ event: 'shipped', meta: { notify: 'deferred' } }];
+  f2.mail = { sendShippedEmail: async (x) => { mailed.push(x.order.expected_delivery_at); } };
+  updates.setDeps(f2);
+  await updates.sweepOnce();
+  ok(mailed.length === 1 && mailed[0] === '2026-11-02T18:29:59.000Z', 'the shipped email sent by the sweep carries the fresh date (' + JSON.stringify(mailed) + ')');
+
   console.log(`late-orders-test: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); console.log(`late-orders-test: ${pass} passed, ${fail} failed`); process.exit(1); });
