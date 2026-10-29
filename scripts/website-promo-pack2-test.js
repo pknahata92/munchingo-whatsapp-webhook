@@ -49,7 +49,10 @@ async function open({ book, soldOut = [], nowIso, page = 'index.html' }) {
     ok(!was(bd, 'trio-gift-set').hidden && /₹949/.test(text(was(bd, 'trio-gift-set'))) && /₹1,199/.test(text(was(bd, 'full-range-set'))), 'Build a box intro: ₹949 and ₹1,199 struck through');
     b2.window.close(); }
   { const k = await open({ book: BOOK, soldOut: [], nowIso: '2026-10-28T10:00:00+05:30', page: 'atta-kesari.html' }); const kd = k.window.document;
-    ok(!kd.querySelector('[data-promo-sets]') && !/from 9 Nov|Early-grab/.test(kd.body.textContent), 'product page: no long promo sentence');
+    ok(!kd.querySelector('[data-promo-sets]') && !/Early-grab/.test(kd.body.textContent), 'product page: no long promo sentence');
+    const bundle = kd.querySelector('.v2-bundle');
+    ok(!/1,300/.test(text(bundle)) && /₹949/.test(text(bundle.querySelector('[data-was-for="trio-gift-set"]'))) && /₹1,199/.test(text(bundle.querySelector('[data-was-for="full-range-set"]'))), 'product page: set line strikes ₹949 / ₹1,199 like home and shop, no MRP ₹1,300');
+    ok(/₹1,199/.test(text(kd.querySelector('.v2-giftlink [data-was-for="full-range-set"]'))), 'product page: gifting link strikes ₹1,199 too');
     k.window.close(); }
 
   // Pack of 2
@@ -89,5 +92,9 @@ async function open({ book, soldOut = [], nowIso, page = 'index.html' }) {
   ok(!d.querySelector('[data-promo-for="trio-gift-set"]').hidden, 'before Diwali, no live list: promo note still shown from the fallback');
   ok(!d.querySelector('[data-was-for="trio-gift-set"]').hidden && /₹949/.test(text(d.querySelector('[data-was-for="trio-gift-set"]'))), 'before Diwali, no live list: ₹949 struck from the fallback');
   dom.window.close();
+  { const c = await open({ book: BOOK, soldOut: [], nowIso: '2026-10-28T10:00:00+05:30', page: 'corporate-gifting.html' }); const cd = c.window.document;
+    ok(/₹949/.test(text(cd.querySelector('[data-was-for="trio-gift-set"]'))) && /₹1,199/.test(text(cd.querySelector('[data-was-for="full-range-set"]'))), 'corporate page: set prices struck the same way');
+    c.window.close(); }
+  for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html']) ok(!/MRP ₹1,300/.test(fs.readFileSync(path.join(SITE, f), 'utf8')), f + ': no MRP ₹1,300 line');
   console.log(`website-promo-pack2-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
