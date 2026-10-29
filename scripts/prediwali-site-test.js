@@ -14,7 +14,7 @@ const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
 const read = (f) => fs.readFileSync(path.join(SITE, f), 'utf8');
 const visibleText = (html) => html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ').replace(/<[^>]+>/g, ' ');
 
-async function open(page, { soldOut = [], cart = [] } = {}) {
+async function open(page, { soldOut = [], cart = [], phone = false } = {}) {
   const dom = new JSDOM(read(page), {
     url: 'http://localhost/' + page, runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
     beforeParse(w) {
@@ -22,7 +22,7 @@ async function open(page, { soldOut = [], cart = [] } = {}) {
       if (cart.length) w.localStorage.setItem('munchingo_cart', JSON.stringify(cart));
       w.fetch = (u) => Promise.resolve({ ok: true, status: 200, json: async () => (/stock/.test(u) ? { ok: true, soldOut } : { ok: true, prices: {} }) });
       w.scrollTo = () => {}; w.SVGElement.prototype.getComputedTextLength = () => 100;
-      w.matchMedia = w.matchMedia || (() => ({ matches: false, addEventListener() {}, addListener() {} }));
+      w.matchMedia = (q) => ({ matches: phone && /max-width/.test(q), addEventListener() {}, addListener() {} });
       w.HTMLCanvasElement.prototype.getContext = () => null;
     },
   });
@@ -122,5 +122,25 @@ const ITEM = (slug, name, price) => ({ slug, name, price, mrp: price + 41, unit:
   ok(have && have.hidden, 'Pack of 2: empty bag, no bag line');
   dom.window.close();
 
+  // 9. Phones (29 Oct): header and WhatsApp button slide away while scrolling down, come back on any scroll up
+  {
+    const css = read('css/style.css');
+    ok(/body\.chrome-away \.v2-header\{transform:translateY\(-100%\)\}/.test(css) && /body\.chrome-away \.wa-float\{opacity:0/.test(css), 'phone CSS: header and WhatsApp button hide under chrome-away');
+    const scrollTo = async (w, y) => { Object.defineProperty(w, 'scrollY', { value: y, configurable: true, writable: true }); w.dispatchEvent(new w.Event('scroll')); await wait(60); };
+    let dm = await open('shop.html', { phone: true }); let w = dm.window, b = w.document.body;
+    await scrollTo(w, 100); await scrollTo(w, 500);
+    ok(b.classList.contains('chrome-away'), 'phone: scrolling down past the top hides the chrome');
+    await scrollTo(w, 420);
+    ok(!b.classList.contains('chrome-away'), 'phone: scrolling up brings it straight back');
+    await scrollTo(w, 900); w.document.querySelector('.v2-header').classList.add('nav-open'); await scrollTo(w, 1200);
+    ok(!b.classList.contains('chrome-away'), 'phone: never hides while the menu is open');
+    w.document.querySelector('.v2-header').classList.remove('nav-open'); await scrollTo(w, 1300); await scrollTo(w, 80);
+    ok(!b.classList.contains('chrome-away'), 'phone: always shown near the top of the page');
+    dm.window.close();
+    dm = await open('shop.html'); w = dm.window; b = w.document.body;
+    await scrollTo(w, 100); await scrollTo(w, 900);
+    ok(!b.classList.contains('chrome-away'), 'laptop: chrome never hides');
+    dm.window.close();
+  }
   console.log(`prediwali-site-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

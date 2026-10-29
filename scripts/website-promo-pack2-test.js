@@ -33,18 +33,24 @@ async function open({ book, soldOut = [], nowIso, page = 'index.html' }) {
   // before Diwali, live list with promo
   let dom = await open({ book: BOOK, soldOut: ['atta-kesari', 'atta-lite-sugar'], nowIso: '2026-10-28T10:00:00+05:30' });
   let d = dom.window.document, w = dom.window;
+  // Prashant, 29 Oct: sets show a short "Promotional brand pricing" tag and the 9 Nov price struck through, no other text.
   const note = d.querySelector('.door-card [data-promo-for="full-range-set"]');
-  ok(note && !note.hidden && /Promotional brand offer until Diwali/.test(text(note)) && /₹1,199 from 9 Nov/.test(text(note)), 'home: promo note names the coming price: ' + text(note));
+  ok(note && !note.hidden && text(note) === 'Promotional brand pricing', 'home: set tag reads only "Promotional brand pricing": ' + text(note));
   ok(text(d.querySelector('[data-price-for="trio-gift-set"]')) === '₹799', 'home: Trio still shows ₹799 today');
-  ok(!/₹949<\/s>|<s>₹949|<s>₹1,199/.test(d.body.innerHTML), 'no struck-through ₹949 / ₹1,199 anywhere');
+  const was = (root, slug) => root.querySelector('.door-card [data-was-for="' + slug + '"], [data-was-for="' + slug + '"]');
+  ok(was(d, 'trio-gift-set') && was(d, 'trio-gift-set').tagName === 'S' && !was(d, 'trio-gift-set').hidden && /₹949/.test(text(was(d, 'trio-gift-set'))), 'home: Trio shows ₹949 struck through');
+  ok(was(d, 'full-range-set') && !was(d, 'full-range-set').hidden && /₹1,199/.test(text(was(d, 'full-range-set'))), 'home: Full Range shows ₹1,199 struck through');
+  ok(!/from 9 Nov|Early-grab/.test(d.body.textContent.replace(/<s[^]*?<\/s>/g, '').replace(/Price from 9 Nov/g, '')), 'home: no "from 9 Nov" / "Early-grab" sentence left');
   ok(!d.querySelector('[data-gb-left]') && d.querySelector('.door-card[href="build-a-box.html"]'), 'home: builder moved off; gift-box doorway links to Build a box');
-  ok(/₹949 from 9 Nov/.test(text(d.querySelector('.door-card [data-promo-for="trio-gift-set"]'))), 'home doorway: Trio promo line');
   { const b2 = await open({ book: BOOK, soldOut: [], nowIso: '2026-10-28T10:00:00+05:30', page: 'build-a-box.html' }); const bd = b2.window.document;
     const gbPromo = bd.querySelector('[data-gb="promo"]');
-    ok(gbPromo && !gbPromo.hidden && /₹949 from 9 Nov/.test(text(gbPromo)), 'Build a box: Trio promo line under the total');
-    bd.querySelector('.gb-opt[data-size="4"]').dispatchEvent(new b2.window.MouseEvent('click', { bubbles: true })); await wait(50);
-    ok(/₹1,199 from 9 Nov/.test(text(bd.querySelector('[data-gb="promo"]'))), 'Build a box: Full Range promo line');
+    ok(gbPromo && !gbPromo.hidden && text(gbPromo) === 'Promotional brand pricing', 'Build a box: builder tag reads only "Promotional brand pricing"');
+    ok(!bd.querySelector('[data-promo-sets]'), 'Build a box: the long promo sentence is gone');
+    ok(!was(bd, 'trio-gift-set').hidden && /₹949/.test(text(was(bd, 'trio-gift-set'))) && /₹1,199/.test(text(was(bd, 'full-range-set'))), 'Build a box intro: ₹949 and ₹1,199 struck through');
     b2.window.close(); }
+  { const k = await open({ book: BOOK, soldOut: [], nowIso: '2026-10-28T10:00:00+05:30', page: 'atta-kesari.html' }); const kd = k.window.document;
+    ok(!kd.querySelector('[data-promo-sets]') && !/from 9 Nov|Early-grab/.test(kd.body.textContent), 'product page: no long promo sentence');
+    k.window.close(); }
 
   // Pack of 2
   const p2 = d.getElementById('pack2');
@@ -70,6 +76,7 @@ async function open({ book, soldOut = [], nowIso, page = 'index.html' }) {
   const after = JSON.parse(JSON.stringify(BOOK)); after['trio-gift-set'] = { price: 949, mrp: null }; after['full-range-set'] = { price: 1199, mrp: null };
   dom = await open({ book: after, nowIso: '2026-11-09T09:00:00+05:30' }); d = dom.window.document;
   ok([...d.querySelectorAll('[data-promo-for]')].every((e) => e.hidden), '9 Nov: promo notes gone');
+  ok([...d.querySelectorAll('[data-was-for]')].every((e) => e.hidden), '9 Nov: no struck price once ₹949 / ₹1,199 apply');
   ok(text(d.querySelector('[data-price-for="trio-gift-set"]')) === '₹949' && text(d.querySelector('[data-price-for="full-range-set"]')) === '₹1,199', '9 Nov: new set prices shown');
   dom.window.close();
 
@@ -80,6 +87,7 @@ async function open({ book, soldOut = [], nowIso, page = 'index.html' }) {
   // before Diwali with no stored list: the fallback shows the promo note
   dom = await open({ book: null, nowIso: '2026-10-28T09:00:00+05:30' }); d = dom.window.document;
   ok(!d.querySelector('[data-promo-for="trio-gift-set"]').hidden, 'before Diwali, no live list: promo note still shown from the fallback');
+  ok(!d.querySelector('[data-was-for="trio-gift-set"]').hidden && /₹949/.test(text(d.querySelector('[data-was-for="trio-gift-set"]'))), 'before Diwali, no live list: ₹949 struck from the fallback');
   dom.window.close();
   console.log(`website-promo-pack2-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
