@@ -509,6 +509,25 @@ app.get('/internal/subscription-renewals', async (req, res) => {
         continue;
       }
 
+      // Delhi NCR only (3 Nov 2026): no renewal order or payment link outside the delivery area. Like sold out, the date is
+      // not moved, so it renews by itself once DELIVERY_NATIONWIDE=1 reopens India.   Tests: scripts/renewal-area-test.js
+      const area = require('./utils/deliveryArea');
+      const subAddress = typeof sub.delivery_address === 'string' ? sub.delivery_address : (sub.delivery_address && sub.delivery_address.raw) || '';
+      if (!area.inArea(area.pinIn(subAddress))) {
+        console.warn(`[SUBSCRIPTIONS] Subscription ${sub.id} skipped — address is outside the delivery area.`);
+        try {
+          await sendHumanHandoffAlert({
+            customerPhone: sub.customer_phone,
+            customerName: sub.customer_name,
+            message: `Subscription #${sub.id} renewal skipped — the delivery address is outside Delhi NCR (or has no pincode). Retries daily; renews by itself if DELIVERY_NATIONWIDE=1 is set. Pause or cancel it if you will not deliver there.`,
+          });
+        } catch (alertErr) {
+          console.error('[SUBSCRIPTIONS] Failed to send outside-area alert:', alertErr.message);
+        }
+        results.push({ id: sub.id, ok: false, reason: 'outside_delivery_area' });
+        continue;
+      }
+
       // Recompute every item's price + availability fresh — never trust
       // what was true when the customer first subscribed.
       await require('./utils/stock').ensureFresh();
