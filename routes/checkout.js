@@ -13,6 +13,7 @@ const { rateLimit } = require('../utils/rateLimit');
 const { validateCoupon } = require('../utils/coupons');
 const { priceCart } = require('../utils/offers');
 const { checkPincode } = require('../utils/delhivery');
+const deliveryArea = require('../utils/deliveryArea');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
 const { MIN_BOXES, goodsOnly, shippingFor, shippingItem } = require('../utils/shipping');
 const { boxesIn } = require('../utils/orderText');
@@ -148,6 +149,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       // Delivery check: refuse only when Delhivery explicitly says it cannot deliver prepaid parcels to this pincode.
       // Unknown (no token, timeout, outage) never blocks an order.
       const deliveryPin = String((addressParts && addressParts.pincode) || '').trim();
+      if (!deliveryArea.inArea(deliveryPin)) return res.status(400).json({ ok: false, error: deliveryArea.MESSAGE });   // Delhi NCR only (2 Nov 2026)
       if (/^[0-9]{6}$/.test(deliveryPin)) {
         const pc = await checkPincode(deliveryPin);
         if (pc.serviceable === false) {
@@ -348,6 +350,10 @@ router.post('/api/quote', rateLimit({ windowMs: 60_000, max: 30 }), async (req, 
 // serviceable null = unknown (no token yet, or Delhivery did not answer): the website then relies on India Post and does not block.
 router.get('/api/pincode/:pin', rateLimit({ windowMs: 60_000, max: 40 }), async (req, res) => {
   try {
+    if (/^[1-9][0-9]{5}$/.test(String(req.params.pin)) && !deliveryArea.inArea(req.params.pin)) {   // outside the delivery area: no Delhivery call
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.json({ ok: true, pin: String(req.params.pin), valid: true, serviceable: false, outside: true, message: deliveryArea.MESSAGE });
+    }
     const r = await checkPincode(req.params.pin);
     res.set('Cache-Control', 'public, max-age=300');
     res.json({ ok: true, pin: r.pin, valid: r.valid, serviceable: r.serviceable, city: r.city || '', district: r.district || '', state: r.state || '', remote: !!r.remote });

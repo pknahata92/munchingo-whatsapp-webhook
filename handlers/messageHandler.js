@@ -7,6 +7,7 @@ const { wantsHuman } = require('../utils/handoff');
 const { getStoredLang, setLang, HINDI_ENABLED } = require('../utils/langPrefs');
 const { sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
 const { ordersOpen, CLOSED_MESSAGE } = require('../utils/launch');
+const deliveryArea = require('../utils/deliveryArea');
 const {
   saveOrder,
   updateOrderAddress,
@@ -239,8 +240,9 @@ async function sendAllergenInfo(to) {
 async function sendShippingInfo(to) {
   await wa.sendButtons(
     to,
-    `🚚 *Munchingo delivers across India!*\n\n` +
-      `📍 We ship to all major cities & tier-2 towns\n` +
+    (deliveryArea.nationwide()
+      ? `🚚 *Munchingo delivers across India!*\n\n📍 We ship to all major cities & tier-2 towns\n`
+      : `🚚 *${deliveryArea.MESSAGE}*\n\n`) +
       (require('./../utils/launch').isPreorder()
         ? `🗓️ Orders placed now are *pre-orders*: dispatched from ${require('./../utils/launch').dispatchLabel()}\n`
         : `⏱️ We dispatch within 48 hours of payment\n`) +
@@ -664,6 +666,14 @@ async function handleOrderMessage(to, order, contactName) {
 // ── Shared by both the Flow form and the free-text fallback: saves the
 // address/email, then generates and sends the payment link ───────────────────
 async function completeAddressCollection(to, pendingOrder, address, email) {
+  if (!deliveryArea.nationwide()) {   // Delhi NCR only (2 Nov 2026): outside NCR nothing is saved and no payment link is made
+    const pin = deliveryArea.pinIn(address);
+    if (!pin) {
+      await wa.sendText(to, `📍 Please add your 6-digit pincode to the address so I can continue order *#${pendingOrder.order_id}*.`);
+      return;
+    }
+    if (!deliveryArea.inArea(pin)) { await wa.sendText(to, deliveryArea.MESSAGE); return; }
+  }
   await updateOrderAddress(pendingOrder.order_id, address);
   if (email) {
     try {
