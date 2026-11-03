@@ -47,11 +47,12 @@ function makeMeta({ http = require('axios'), token = process.env.META_CATALOG_TO
   }
 
   // items: [{ slug, state }]. Meta takes the batch asynchronously: ok means accepted; the next read shows whether it landed.
+  // allow_upsert false: Graph's default (true) lets an UPDATE create an item that is missing; a missing item is reported, never made.
   async function push(items) {
     ready();
     if (!items.length) return { ok: true, handles: [] };
     const requests = items.map(({ slug, state }) => ({ method: 'UPDATE', data: toMeta(slug, state) }));
-    const data = await call({ method: 'POST', url: `${GRAPH}/${catalogId}/items_batch`, data: { item_type: 'PRODUCT_ITEM', requests: JSON.stringify(requests) } });
+    const data = await call({ method: 'POST', url: `${GRAPH}/${catalogId}/items_batch`, data: { item_type: 'PRODUCT_ITEM', allow_upsert: false, requests: JSON.stringify(requests) } });
     return { ok: true, handles: data.handles || [] };
   }
 

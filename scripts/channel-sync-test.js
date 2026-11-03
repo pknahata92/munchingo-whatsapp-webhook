@@ -94,6 +94,7 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     const c2 = h2.calls[0];
     eq([c2.method, c2.url], ['POST', `${GRAPH}/items_batch`], 'meta push: POST to items_batch');
     eq(c2.data.item_type, 'PRODUCT_ITEM', 'meta push: item type');
+    ok(c2.data.allow_upsert === false, 'meta push: allow_upsert is false, so an UPDATE never creates a missing item (Graph default is true)');
     eq(c2.data.requests, '[{"method":"UPDATE","data":{"id":"w2w5ynf2m5","availability":"in stock","price":"350.00 INR","sale_price":"299.00 INR"}}]', 'meta push: requests is the JSON string of the UPDATE');
     eq(c2.headers.Authorization, 'Bearer T', 'meta push: bearer header');
     ok(c2.timeout === 15000 && !JSON.stringify(c2).includes('access_token'), 'meta push: 15 s timeout, no access_token');
