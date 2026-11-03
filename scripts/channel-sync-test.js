@@ -135,5 +135,209 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     ok(offByEnv === false && onByEnv === true, 'meta client() reads META_CATALOG_TOKEN');
   }
 
+  // ---- google: Merchant Center client (a routing fake stands in for axios; throwaway key made here; no network) ----
+  {
+    const crypto = require('crypto');
+    const google = require(path.join(root, 'utils/channels/google.js'));
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const PEM = privateKey.export({ type: 'pkcs8', format: 'pem' });
+    const keyJson = JSON.stringify({ client_email: 'sync@munchingo-test.iam.gserviceaccount.com', private_key: PEM });
+    const API = 'https://merchantapi.googleapis.com';
+    const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+    const REG = `${API}/accounts/v1/accounts/1/developerRegistration:registerGcp`;
+    const DS = `${API}/datasources/v1/accounts/1/dataSources`;
+    const PR = `${API}/products/v1/accounts/1/products`;
+    const INSERT = `${API}/products/v1/accounts/1/productInputs:insert`;
+    const OURS = 'accounts/1/dataSources/9';
+    const caught = async (p) => { try { await p; return null; } catch (e) { return e.message; } };
+    const httpErr = (status, message) => Object.assign(new Error(`Request failed with status code ${status}`), { response: { status, data: { error: { code: status, message } } } });
+    const sheet = (id) => ({ name: `accounts/1/dataSources/${id}`, displayName: `Sheet ${id}`, input: 'FILE', primaryProductDataSource: { defaultRule: { takeFromDataSources: [{ self: true }] } } });
+    const product = (offerId, attrs) => ({ name: `accounts/1/products/en~IN~${offerId}`, offerId, contentLanguage: 'en', feedLabel: 'IN', productAttributes: Object.assign({ title: offerId, availability: 'IN_STOCK' }, attrs) });
+    const three = () => [product('MNG-ORIGINAL-250'), product('MNG-KESARI-250'), product('MNG-AJWAIN-250')];
+    const hits = (f, method, url) => f.calls.filter((c) => c.method === method && c.url.split('?')[0] === url);
+    let clock = Date.UTC(2026, 10, 3, 10, 0, 0);
+    const T0 = clock;
+    const make = (f, extra) => google.makeGoogle(Object.assign({ http: f, keyJson, accountId: '1', now: () => clock }, extra));
+
+    // One router over method + url: answers each endpoint the client uses, records every call, refuses anything else.
+    const merchant = ({ sources = [], products = [], pageLen = 100 } = {}) => {
+      let n = 0;
+      const f = async (cfg) => {
+        f.calls.push(cfg);
+        const [url, query = ''] = cfg.url.split('?');
+        const route = `${cfg.method} ${url}`;
+        if (route === `POST ${TOKEN_URL}`) return { data: { access_token: `AT-${++n}`, expires_in: 3600 } };
+        if (route === `POST ${REG}`) { if (f.registerError) throw f.registerError; return { data: {} }; }
+        if (route === `GET ${DS}`) return { data: { dataSources: f.sources } };
+        if (route === `POST ${DS}`) { const made = Object.assign({ name: OURS }, cfg.data); f.sources.push(made); return { data: made }; }
+        if (cfg.method === 'PATCH' && url.startsWith(`${DS}/`)) {
+          const hit = f.sources.find((s) => `${API}/datasources/v1/${s.name}` === url);
+          hit.primaryProductDataSource.defaultRule = cfg.data.primaryProductDataSource.defaultRule; return { data: hit };
+        }
+        if (route === `GET ${PR}`) {
+          const start = Number((new URLSearchParams(query).get('pageToken') || 'page-0').slice(5));
+          const more = start + pageLen < f.products.length;
+          return { data: Object.assign({ products: f.products.slice(start, start + pageLen) }, more ? { nextPageToken: `page-${start + pageLen}` } : {}) };
+        }
+        if (cfg.method === 'GET' && url.startsWith(`${PR}/`)) {
+          const name = `accounts/1/products/${decodeURIComponent(url.slice(PR.length + 1))}`;
+          if (f.productError) throw f.productError;
+          const hit = f.products.find((p) => p.name === name);
+          if (!hit) throw httpErr(404, 'Product not found');
+          return { data: hit };
+        }
+        if (route === `POST ${INSERT}`) { const e = f.insertError && f.insertError(cfg); if (e) throw e; return { data: { name: 'accounts/1/productInputs/x' } }; }
+        throw new Error(`unexpected call ${route}`);
+      };
+      f.calls = []; f.sources = sources; f.products = products;
+      return f;
+    };
+
+    // token: form-encoded jwt-bearer grant, RS256 JWT, cached until 60 s before it expires
+    const h1 = merchant();
+    const g1 = make(h1);
+    ok(g1.configured() === true, 'google configured() with a key and an account');
+    const tok = await g1.token();
+    const c1 = h1.calls[0];
+    eq([c1.method, c1.url], ['POST', TOKEN_URL], 'google token: POST to the OAuth token endpoint');
+    eq(c1.headers, { 'Content-Type': 'application/x-www-form-urlencoded' }, 'google token: form content type, no bearer header on the token request itself');
+    ok(typeof c1.data === 'string' && c1.data.startsWith('grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion='), 'google token: body is a form string with the jwt-bearer grant');
+    ok(c1.timeout === 20000, 'google token: 20 s timeout');
+    const form = new URLSearchParams(c1.data);
+    eq(form.get('grant_type'), 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'google token: grant type decodes to the jwt-bearer URN');
+    const jwt = form.get('assertion'); const [jh, jp, js] = jwt.split('.');
+    ok(jwt.split('.').length === 3 && !/[=+/]/.test(jwt), 'google token: three base64url parts, no padding');
+    eq(JSON.parse(Buffer.from(jh, 'base64url').toString()), { alg: 'RS256', typ: 'JWT' }, 'google token: JWT header');
+    eq(JSON.parse(Buffer.from(jp, 'base64url').toString()), { iss: 'sync@munchingo-test.iam.gserviceaccount.com', scope: 'https://www.googleapis.com/auth/content', aud: TOKEN_URL, iat: T0 / 1000, exp: T0 / 1000 + 3600 }, 'google token: JWT payload (iat and exp in seconds)');
+    ok(crypto.createVerify('RSA-SHA256').update(`${jh}.${jp}`).verify(publicKey, Buffer.from(js, 'base64url')), 'google token: the signature verifies with the public key');
+    ok(tok === 'AT-1', 'google token: returns the access token');
+    await g1.token(); clock = T0 + 3539 * 1000; await g1.token();
+    eq(h1.calls.length, 1, 'google token: no second HTTP call inside the hour (still cached at 3539 s)');
+    clock = T0 + 3541 * 1000; const tok2 = await g1.token();
+    ok(h1.calls.length === 2 && tok2 === 'AT-2', 'google token: 60 s before expiry it fetches a fresh one');
+    clock = T0;
+
+    // setup: first run against a shop with no supplemental source and one Sheets primary
+    const h2 = merchant({ sources: [sheet(5)], products: three(), pageLen: 2 });
+    const g2 = make(h2);
+    const res = await g2.setup();
+    eq(hits(h2, 'POST', REG).map((c) => c.data), [{}], 'google setup: registers with an empty body');
+    eq(hits(h2, 'POST', DS).map((c) => c.data), [{ displayName: 'Munchingo admin stock', supplementalProductDataSource: {} }], 'google setup: creates the supplemental source');
+    const patch = hits(h2, 'PATCH', `${DS}/5`);
+    eq(patch.length, 1, 'google setup: one PATCH on the sheet source');
+    eq(patch[0].params, { updateMask: 'primaryProductDataSource.defaultRule' }, 'google setup: PATCH with the update mask');
+    eq(patch[0].data.primaryProductDataSource.defaultRule.takeFromDataSources, [{ supplementalDataSourceName: OURS }, { self: true }], 'google setup: ours first, the sheet kept');
+    const pages = hits(h2, 'GET', PR);
+    ok(pages.length === 2 && pages[0].url === `${PR}?pageSize=250` && pages[1].url === `${PR}?pageSize=250&pageToken=page-2`, 'google setup: products listed 250 at a time, following nextPageToken');
+    ok(res.registered === true && res.source === OURS, 'google setup: registered, source is the created data source name');
+    eq(res.names, { 'atta-original': 'en~IN~MNG-ORIGINAL-250', 'atta-ajwain': 'en~IN~MNG-AJWAIN-250', 'atta-kesari': 'en~IN~MNG-KESARI-250' }, 'google setup: names are language~label~offerId, only for the products Google has');
+    eq(res.missing, ['MNG-LITE-250'], 'google setup: the offer id Google lacks is reported missing');
+    eq(res.steps, ['Registered with Google', 'Created the source "Munchingo admin stock"', 'Put it first, ahead of the Google sheet', 'Found 3 of 4 products'], 'google setup: four plain-word steps in order');
+
+    // setup again: nothing to create, nothing to patch
+    const before = h2.calls.length;
+    const res2 = await g2.setup();
+    const again = h2.calls.slice(before);
+    eq(again.filter((c) => c.method === 'POST' && c.url === DS).length, 0, 'google setup again: no POST to dataSources');
+    eq(again.filter((c) => c.method === 'PATCH').length, 0, 'google setup again: no PATCH');
+    ok(res2.source === OURS && res2.missing.length === 1, 'google setup again: same source, same missing');
+    eq(res2.steps.slice(1, 3), ['Found the source "Munchingo admin stock"', 'Already first'], 'google setup again: says it found the source and it is already first');
+
+    // the PATCH replaces the whole rule, so existing entries are kept and ours is not duplicated
+    const hRule = merchant({ sources: [{ name: OURS, displayName: 'Munchingo admin stock', supplementalProductDataSource: {} }, Object.assign(sheet(5), { primaryProductDataSource: { defaultRule: { takeFromDataSources: [{ self: true }, { supplementalDataSourceName: 'accounts/1/dataSources/7' }, { supplementalDataSourceName: OURS }] } } })], products: three() });
+    await make(hRule).setup();
+    eq(hits(hRule, 'PATCH', `${DS}/5`)[0].data.primaryProductDataSource.defaultRule.takeFromDataSources, [{ supplementalDataSourceName: OURS }, { self: true }, { supplementalDataSourceName: 'accounts/1/dataSources/7' }], 'google setup: ours moved first, other entries kept, no duplicate');
+    const hEmpty = merchant({ sources: [Object.assign(sheet(5), { primaryProductDataSource: {} })], products: three() });
+    await make(hEmpty).setup();
+    eq(hits(hEmpty, 'PATCH', `${DS}/5`)[0].data.primaryProductDataSource.defaultRule.takeFromDataSources, [{ supplementalDataSourceName: OURS }, { self: true }], 'google setup: a missing rule becomes ours then the sheet');
+
+    // the sheet primary is the one primary whose input is not API
+    const hApi = merchant({ sources: [sheet(5), { name: 'accounts/1/dataSources/6', displayName: 'Api primary', input: 'API', primaryProductDataSource: {} }], products: three() });
+    ok((await make(hApi).setup()).source === OURS && hits(hApi, 'PATCH', `${DS}/5`).length === 1, 'google setup: an API primary is not counted as a sheet');
+    const hTwo = merchant({ sources: [sheet(5), sheet(6)], products: three() });
+    const twoMsg = await caught(make(hTwo).setup());
+    ok(/found 2 sheet data sources, expected 1; link "Munchingo admin stock" by hand in Merchant Center/.test(twoMsg), 'google setup: two sheets stop with the by-hand message');
+    eq(hits(hTwo, 'PATCH', `${DS}/5`).length + hits(hTwo, 'PATCH', `${DS}/6`).length, 0, 'google setup: two sheets patch nothing');
+    ok(/found 0 sheet data sources/.test(await caught(make(merchant({ sources: [], products: three() })).setup())), 'google setup: no sheet stops too');
+
+    // "already registered" is success, anything else is not
+    const hReg = merchant({ sources: [sheet(5)], products: three() }); hReg.registerError = httpErr(409, 'Conflict');
+    const r409 = await make(hReg).setup();
+    ok(r409.registered === true && r409.steps[0] === 'Already registered with Google', 'google setup: HTTP 409 on registration counts as registered');
+    const hReg2 = merchant({ sources: [sheet(5)], products: three() }); hReg2.registerError = httpErr(400, 'GCP project is already registered');
+    ok((await make(hReg2).setup()).registered === true, 'google setup: an "already registered" message counts as registered');
+    const hReg3 = merchant({ sources: [sheet(5)], products: three() }); hReg3.registerError = httpErr(403, 'The caller does not have permission');
+    eq(await caught(make(hReg3).setup()), 'google: The caller does not have permission', 'google setup: a real registration failure throws');
+    eq(hits(hReg3, 'GET', DS).length, 0, 'google setup: stops at the failed step');
+
+    // push: supplemental insert into our source
+    const h3 = merchant();
+    const g3 = make(h3);
+    const names = { 'atta-kesari': 'en~IN~MNG-KESARI-250', 'atta-ajwain': 'en~IN~MNG-AJWAIN-250', 'atta-original': 'en~IN~MNG-ORIGINAL-250' };
+    await g3.push([{ slug: 'atta-kesari', state: { availability: 'out of stock', price: 299, mrp: 350 } }], { source: OURS, names });
+    const ins = hits(h3, 'POST', INSERT);
+    eq(ins.length, 1, 'google push: one insert per item');
+    eq(ins[0].url, `${INSERT}?dataSource=${OURS}`, 'google push: productInputs:insert for our data source');
+    eq(ins[0].data, { offerId: 'MNG-KESARI-250', contentLanguage: 'en', feedLabel: 'IN', productAttributes: { availability: 'OUT_OF_STOCK', price: { amountMicros: '350000000', currencyCode: 'INR' }, salePrice: { amountMicros: '299000000', currencyCode: 'INR' } } }, 'google push: body has the offer, language, label and the availability and prices');
+    await g3.push([{ slug: 'atta-original', state: { availability: 'in stock', price: 259, mrp: null } }], { source: OURS, names });
+    eq(hits(h3, 'POST', INSERT)[1].data.productAttributes, { availability: 'IN_STOCK' }, 'google push: no MRP sends availability only');
+    ok(hits(h3, 'POST', INSERT).every((c) => c.timeout === 20000 && /^Bearer AT-\d+$/.test(c.headers.Authorization)), 'google push: bearer token, 20 s timeout');
+
+    // push stops at the first failure and names the slug
+    const h4 = merchant(); h4.insertError = (cfg) => (cfg.data.offerId === 'MNG-AJWAIN-250' ? httpErr(400, 'Invalid price') : null);
+    const items = ['atta-kesari', 'atta-ajwain', 'atta-original'].map((slug) => ({ slug, state: { availability: 'in stock', price: 259, mrp: 300 } }));
+    eq(await caught(make(h4).push(items, { source: OURS, names })), 'google: atta-ajwain: Invalid price', 'google push: first failure throws google: <slug>: <message>');
+    eq(hits(h4, 'POST', INSERT).length, 2, 'google push: nothing is sent after the failure');
+    ok(/source not set/.test(await caught(make(merchant()).push(items, { names }))), 'google push without a source throws');
+    ok(/no product name/.test(await caught(make(merchant()).push(items, { source: OURS, names: {} }))), 'google push without a stored name throws');
+    eq(await make(merchant()).push([], { source: OURS, names }), { ok: true }, 'google push of nothing is ok');
+
+    // read: one GET per slug, a 404 is null and the others still come back
+    const h5 = merchant({ products: [product('MNG-ORIGINAL-250', { price: { amountMicros: '300000000', currencyCode: 'INR' }, salePrice: { amountMicros: '259000000', currencyCode: 'INR' } }), product('MNG-AJWAIN-250', { availability: 'OUT_OF_STOCK' })] });
+    const got = await make(h5).read(['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'], names);
+    eq(hits(h5, 'GET', `${PR}/en~IN~MNG-ORIGINAL-250`).length + hits(h5, 'GET', `${PR}/en~IN~MNG-KESARI-250`).length + hits(h5, 'GET', `${PR}/en~IN~MNG-AJWAIN-250`).length, 3, 'google read: one GET per known slug');
+    eq(got['atta-original'], { availability: 'in stock', price: 259, mrp: 300, title: 'MNG-ORIGINAL-250' }, 'google read: product mapped to a state');
+    eq(got['atta-kesari'], null, 'google read: a 404 is null');
+    eq(got['atta-ajwain'].availability, 'out of stock', 'google read: the slug after a 404 is still read');
+    eq(got['atta-lite-sugar'], null, 'google read: a slug with no stored name is null');
+    eq(h5.calls.filter((c) => c.method === 'GET').length, 3, 'google read: no call for the slug with no name');
+    eq(await make(merchant()).read(['full-range-set'], names), {}, 'google read ignores a slug that is not a catalogue item');
+    const h5b = merchant({ products: three() }); h5b.productError = httpErr(500, 'Backend Error');
+    eq(await caught(make(h5b).read(['atta-original'], names)), 'google: Backend Error', 'google read: only a 404 is null, anything else throws');
+
+    // failures carry Google's message only, never the key, the token or the assertion
+    const secretNet = merchant(); secretNet.insertError = () => new Error('timeout of 20000ms exceeded');
+    eq(await caught(make(secretNet).push(items.slice(0, 1), { source: OURS, names })), 'google: atta-kesari: timeout of 20000ms exceeded', 'google: a network error carries its own message');
+    const hBody = async (cfg) => { if (cfg.url === TOKEN_URL) return { data: { access_token: 'AT-SECRET', expires_in: 3600 } }; return { data: { error: { message: 'Bad request' } } }; };
+    eq(await caught(make(hBody).read(['atta-original'], names)), 'google: Bad request', 'google: an error body in a 200 reply throws');
+    const hLeak = async (cfg) => { if (cfg.url === TOKEN_URL) return { data: { access_token: 'AT-SECRET', expires_in: 3600 } }; throw httpErr(401, `Rejected AT-SECRET and ${PEM}`); };
+    const leak = await caught(make(hLeak).read(['atta-original'], names));
+    ok(typeof leak === 'string' && leak.startsWith('google: ') && !leak.includes('AT-SECRET') && !leak.includes('PRIVATE KEY'), 'google: the access token and the key are scrubbed out of an error message');
+    const hTok = async () => { throw Object.assign(new Error('Request failed with status code 400'), { response: { status: 400, data: { error: 'invalid_grant', error_description: 'Invalid JWT Signature.' } } }); };
+    eq(await caught(make(hTok).token()), 'google: Invalid JWT Signature.', 'google token: a token endpoint error carries its description');
+    const hAll = merchant({ sources: [sheet(5)], products: three() });
+    const gAll = make(hAll); await gAll.setup(); await gAll.push(items.slice(0, 1), { source: OURS, names }); await gAll.read(['atta-original'], names);
+    const merchantCalls = hAll.calls.filter((c) => c.url !== TOKEN_URL);
+    ok(merchantCalls.length > 5 && merchantCalls.every((c) => /^Bearer AT-\d+$/.test(c.headers.Authorization) && c.timeout === 20000), 'google: every Merchant call has a bearer token and a 20 s timeout');
+    ok(!JSON.stringify(merchantCalls.map((c) => [c.url, c.params, c.data])).includes('AT-'), 'google: the access token is in the header and nowhere else');
+    ok(!JSON.stringify(hAll.calls.map((c) => [c.url, c.params, c.data, c.headers])).includes('PRIVATE KEY'), 'google: the private key is never sent anywhere');
+
+    // not configured: nothing calls out
+    const hOff = merchant();
+    const badKeys = { none: { keyJson: '' }, 'not json': { keyJson: '{"private_key": "SECRETBITS' }, 'no client_email': { keyJson: JSON.stringify({ private_key: PEM }) }, 'no private_key': { keyJson: JSON.stringify({ client_email: 'a@b' }) }, 'no account': { accountId: '' } };
+    Object.keys(badKeys).forEach((k) => ok(make(hOff, badKeys[k]).configured() === false, `google configured() is false with ${k}`));
+    const offMsgs = [await caught(make(hOff, badKeys['not json']).token()), await caught(make(hOff, badKeys['no account']).setup()), await caught(make(hOff, badKeys.none).read(['atta-original'], names)), await caught(make(hOff, badKeys.none).push(items, { source: OURS, names }))];
+    ok(offMsgs.every((m) => /^google: .*not set/.test(m) && !m.includes('SECRETBITS')), 'google: every call refuses when not configured, without echoing the key');
+    eq(hOff.calls.length, 0, 'google not configured never calls http');
+
+    // defaults: the real key and account come from the environment at call time
+    const was = [process.env.GOOGLE_MERCHANT_KEY, process.env.GOOGLE_MERCHANT_ID];
+    delete process.env.GOOGLE_MERCHANT_KEY; delete process.env.GOOGLE_MERCHANT_ID; const offByEnv = google.client().configured();
+    process.env.GOOGLE_MERCHANT_KEY = keyJson; process.env.GOOGLE_MERCHANT_ID = '1'; const onByEnv = google.client().configured();
+    if (was[0] === undefined) delete process.env.GOOGLE_MERCHANT_KEY; else process.env.GOOGLE_MERCHANT_KEY = was[0];
+    if (was[1] === undefined) delete process.env.GOOGLE_MERCHANT_ID; else process.env.GOOGLE_MERCHANT_ID = was[1];
+    ok(offByEnv === false && onByEnv === true, 'google client() reads GOOGLE_MERCHANT_KEY and GOOGLE_MERCHANT_ID');
+  }
+
   console.log(`channel-sync-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
