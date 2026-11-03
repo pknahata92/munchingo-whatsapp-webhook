@@ -683,5 +683,81 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     }
   }
 
+  // ---- hooks: the triggers sit at the right places, after the action has succeeded ----
+  {
+    const fs = require('fs');
+    const rejects = async (p) => { try { await p; return false; } catch (e) { return true; } };
+    const abs = (p) => require.resolve(path.join(root, p));
+    // earlier sections may already hold the real engine; set those cache entries aside, stub, and put everything back afterwards
+    const keys = ['utils/channelSync.js', 'utils/adminActions.js', 'utils/adminAuth.js', 'utils/stock.js', 'utils/inventory.js', 'utils/database.js', 'utils/prices.js', 'routes/admin.js'].map(abs);
+    const kept = keys.map((k) => require.cache[k]);
+    keys.forEach((k) => { delete require.cache[k]; });
+    const stub = (p, exp) => { const f = abs(p); require.cache[f] = { id: f, filename: f, loaded: true, exports: exp }; };
+    const nudges = []; let nudgeThrows = false; let saveThrows = false; const saved = [];
+    stub('utils/channelSync.js', { nudge: (r) => { if (nudgeThrows) throw new Error('boom'); nudges.push(r); }, startSweep: () => {} });
+    stub('utils/database.js', { listStock: async () => [], setStock: async () => {} });
+    const table = { 'atta-original': { price: 300, mrp: 300 } };
+    stub('utils/prices.js', { refresh: async () => {}, ensureFresh: async () => {}, isOn: () => true, current: () => table, save: async (x) => { if (saveThrows) throw new Error('write refused'); saved.push(x); } });
+    class StockError extends Error { constructor(m) { super(m); this.status = 400; this.extra = {}; } }
+    let invMode = 'ok';
+    stub('utils/inventory.js', { StockError, instance: () => ({ overview: async () => ({ items: [] }), receive: async () => { if (invMode === 'refuse') throw new StockError('Refused.'); if (invMode === 'crash') throw new Error('db down'); return { id: 1 }; } }) });
+    const quiet = console.log; const quietErr = console.error;
+    try {
+      const actions = require(abs('utils/adminActions.js'));
+      const actor = { email: 't@x' };
+      const setPrice = async (args) => { console.log = () => {}; try { return await actions.setPrice({ actor, ...args }); } finally { console.log = quiet; } };
+
+      await setPrice({ slug: 'atta-original', price: 259, mrp: 300 });
+      eq(nudges, ['price'], 'hooks: setPrice records exactly one nudge, reason price');
+      eq(saved.map((x) => [x.slug, x.price, x.mrp]), [['atta-original', 259, 300]], 'hooks: and the price was saved');
+      ok(await rejects(setPrice({ slug: 'atta-original', price: 10, mrp: 300 })) && nudges.length === 1, 'hooks: a refused price (validation) sends no nudge');
+      saveThrows = true;
+      ok(await rejects(setPrice({ slug: 'atta-original', price: 259, mrp: 300 })) && nudges.length === 1, 'hooks: a price that could not be saved sends no nudge');
+      saveThrows = false; nudgeThrows = true;
+      eq(await setPrice({ slug: 'atta-original', price: 249, mrp: 300 }), {}, 'hooks: a nudge that throws never breaks the price change');
+      nudgeThrows = false;
+      eq(saved.length, 2, 'hooks: the price was still saved when the nudge threw');
+
+      // the stock wrapper in routes/admin.js, run for real with a fake inventory: POST nudges once after success, GET and failures do not
+      const router = require(abs('routes/admin.js'));
+      const handler = (method, p) => router.stack.find((l) => l.route && l.route.path === p && l.route.methods[method]).route.stack.slice(-1)[0].handle;
+      const hit = async (method, p) => { let out; await handler(method, p)({ method: method.toUpperCase(), body: {}, query: {}, admin: { email: 'a@b', role: 'owner' } }, { json: (x) => { out = x; }, status() { return this; } }); return out; };
+      nudges.length = 0;
+      eq(await hit('get', '/admin/api/inventory'), { ok: true, items: [] }, 'hooks: a stock screen read answers as before');
+      eq(nudges, [], 'hooks: a stock GET sends no nudge');
+      eq(await hit('post', '/admin/api/inventory/receive'), { ok: true, id: 1 }, 'hooks: a stock POST answers as before');
+      eq(nudges, ['stock'], 'hooks: a successful stock POST sends one nudge, reason stock');
+      invMode = 'refuse'; console.error = () => {};
+      eq((await hit('post', '/admin/api/inventory/receive')).ok, false, 'hooks: a refused stock POST is still refused');
+      invMode = 'crash';
+      eq((await hit('post', '/admin/api/inventory/receive')).ok, false, 'hooks: a crashed stock POST still reports the error');
+      console.error = quietErr; invMode = 'ok';
+      eq(nudges, ['stock'], 'hooks: a stock POST that fails sends no nudge');
+      nudgeThrows = true;
+      eq(await hit('post', '/admin/api/inventory/receive'), { ok: true, id: 1 }, 'hooks: a nudge that throws never breaks a stock action');
+      nudgeThrows = false;
+    } finally {
+      console.log = quiet; console.error = quietErr;
+      keys.forEach((k, i) => { if (kept[i]) require.cache[k] = kept[i]; else delete require.cache[k]; });
+    }
+
+    // the other hook points, found in the source text (a later edit that loses one fails here and names it)
+    const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+    const admin = read('routes/admin.js'), server = read('server.js'), act = read('utils/adminActions.js');
+    const slice = (src, from, to) => { const a = src.indexOf(from); if (a < 0) return ''; const b = src.indexOf(to, a + from.length); return src.slice(a, b < 0 ? undefined : b); };
+    const fnBody = (src, name) => slice(src, `async function ${name}(`, '\n}\n');
+    const safe = (reason) => `try\\s*\\{\\s*require\\('[^']*channelSync'\\)\\.nudge\\('${reason}'\\);\\s*\\}\\s*catch\\s*\\(_\\)\\s*\\{\\s*\\}`;   // the nudge can never throw into the action
+    const after = (body, first, rx) => { const a = body.indexOf(first); const m = rx.exec(body); return a >= 0 && !!m && m.index > a; };
+    const missing = [];
+    const sw = slice(admin, 'const sw = ', '\nrouter.');
+    if (!(sw && after(sw, 'await fn(', new RegExp(`if\\s*\\(req\\.method === 'POST'\\)\\s*\\{\\s*${safe('stock')}`)))) missing.push("routes/admin.js: stock actions (sw wrapper: nudge('stock') after fn, POST only)");
+    if (!after(fnBody(act, 'advance'), 'deductForOrder', new RegExp(`if\\s*\\(to === 'packed'\\)\\s*\\{\\s*${safe('packed')}`))) missing.push("utils/adminActions.js: Packed (advance: nudge('packed') after deductForOrder)");
+    if (!after(fnBody(act, 'undoStep'), 'restoreForOrder', new RegExp(`if\\s*\\(from === 'packed'\\)\\s*\\{\\s*${safe('unpacked')}`))) missing.push("utils/adminActions.js: Undo packed (undoStep: nudge('unpacked') after restoreForOrder)");
+    if (!after(fnBody(act, 'setPrice'), "prices').save", new RegExp(safe('price')))) missing.push("utils/adminActions.js: price change (setPrice: nudge('price') after prices.save)");
+    if (!new RegExp(`\\[RAZORPAY\\] Order \\$\\{orderId\\} paid[^\\n]*\\n\\s*${safe('paid')}`).test(server)) missing.push("server.js: paid order (nudge('paid') straight after the [RAZORPAY] Order paid log)");
+    if (!/require\('\.\/utils\/channelSync'\)\.startSweep\(\)/.test(slice(server, 'app.listen(PORT', '\n});'))) missing.push('server.js: the 15-minute check (startSweep in the app.listen callback)');
+    ok(missing.length === 0, `hooks missing: ${missing.join(' | ')}`);
+  }
+
   console.log(`channel-sync-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

@@ -418,6 +418,7 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
   await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb, ...(require('./orderUpdates').deferShipped(methodFrom(method, carrier)) ? { notify: 'deferred' } : {}) } : null });
   // Stock: boxes leave the shelf when the order is packed (oldest lot first). Never blocks packing: a failure is only logged.
   if (to === 'packed') { try { await require('./inventory').instance().deductForOrder({ orderId, items: order.items, at: now }); } catch (e) { console.error('[STOCK] could not deduct for', orderId, e.message); } }
+  if (to === 'packed') { try { require('./channelSync').nudge('packed'); } catch (_) {} }   // Meta/Google follow the shelf (never blocks packing)
   // Customer updates (email + WhatsApp, utils/orderUpdates.js; each one never throws and never blocks the step):
   //   packed: now. delivered: now. shipped: now for Porter / India Post / by hand, but for Delhivery only once Delhivery's tracking says
   //   the courier has the parcel (the sweep sends it), so "shipped" is never told while the parcel is still on our shelf.
@@ -502,6 +503,7 @@ async function undoStep({ orderId, actor }) {
   if (!(await db.updateOrderIf(orderId, { status: 'paid', ...step.where }, step.fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
   await logEvent(orderId, 'undo', actor, { from, to: step.to, meta: from === 'shipped' ? { carrier: order.carrier, awb: order.awb } : null });
   if (from === 'packed') { try { await require('./inventory').instance().restoreForOrder({ orderId }); } catch (e) { console.error('[STOCK] could not restore for', orderId, e.message); } }
+  if (from === 'packed') { try { require('./channelSync').nudge('unpacked'); } catch (_) {} }
   return { state: step.to };
 }
 
@@ -630,6 +632,7 @@ async function setPrice({ slug, price, mrp, actor }) {
   if (m != null && (!Number.isInteger(m) || m < p || m > 20000)) throw new AdminError('MRP must be a whole number and not less than the price (leave it empty for no strike-through).');
   const before = (await priceList()).rows.find((r) => r.slug === slug);
   await require('./prices').save({ slug, price: p, mrp: m, actor: actor.email });
+  try { require('./channelSync').nudge('price'); } catch (_) {}
   console.log(`[ADMIN] ${actor.email} set ${slug}: Rs ${before && before.price} -> Rs ${p} (MRP ${m})`);
   return {};
 }

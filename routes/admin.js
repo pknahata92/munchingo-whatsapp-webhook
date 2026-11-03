@@ -72,7 +72,7 @@ router.post('/admin/api/pickup', wrap(async (req) => actions.requestDelhiveryPic
 router.post('/admin/api/labels', wrap(async (req) => actions.shippingLabels((req.body || {}).ids)));
 // Stock ledger (staff and owner can receive, take out, count and flag; owner adds items and sets levels). See utils/inventory.js.
 const stock = () => require('../utils/inventory');
-const sw = (fn) => wrap(async (req) => { try { return await fn(req, stock().instance()); } catch (e) { if (e instanceof stock().StockError) throw new actions.AdminError(e.message, e.status, e.extra); throw e; } });
+const sw = (fn) => wrap(async (req) => { try { const out = await fn(req, stock().instance()); if (req.method === 'POST') { try { require('../utils/channelSync').nudge('stock'); } catch (_) {} } return out; } catch (e) { if (e instanceof stock().StockError) throw new actions.AdminError(e.message, e.status, e.extra); throw e; } });
 router.get('/admin/api/inventory', sw((req, inv) => inv.overview()));
 router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: req.query.slug, limit: Number(req.query.limit) || 40, types: req.query.types ? String(req.query.types).split(',') : null })));
 router.get('/admin/api/inventory/receipt', sw((req, inv) => inv.receipt({ id: Number(req.query.id) })));
