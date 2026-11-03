@@ -64,6 +64,15 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
   ok(shape.sameState({ availability: 'in stock', price: 259, mrp: null }, { availability: 'in stock', price: 999, mrp: null }), 'no MRP wanted: prices are not compared');
   ok(!shape.sameState({ availability: 'in stock', price: 259, mrp: null }, { availability: 'out of stock', price: 259, mrp: null }), 'no MRP wanted: availability still compared');
 
+  // priceUnsynced: with no MRP the prices are not sent, so a price or sale price left on the channel is flagged (Ruling 15)
+  const web = { availability: 'in stock', price: 300, mrp: null };
+  ok(shape.priceUnsynced(web, { availability: 'in stock', price: 259, mrp: 300 }), 'price not synced: an old sale price left on the channel');
+  ok(shape.priceUnsynced(web, { availability: 'in stock', price: 350, mrp: null }), 'price not synced: a different price on the channel');
+  ok(!shape.priceUnsynced(web, { availability: 'out of stock', price: 300, mrp: null }), 'price not synced: no, the channel shows the web price (availability is judged elsewhere)');
+  ok(!shape.priceUnsynced(web, { availability: 'in stock', price: 300, mrp: 300 }), 'price not synced: no, a sale price equal to the web price shows no discount');
+  ok(!shape.priceUnsynced({ availability: 'in stock', price: 259, mrp: 300 }, { availability: 'in stock', price: 999, mrp: 1200 }), 'price not synced: never when an MRP is set (then prices are pushed and compared)');
+  ok(!shape.priceUnsynced({ availability: 'in stock', price: null, mrp: null }, { availability: 'in stock', price: 259, mrp: 300 }) && !shape.priceUnsynced(web, null), 'price not synced: no web price, or nothing read: nothing to compare');
+
   // ---- meta: catalogue client (a recording fake stands in for axios; no network) ----
   {
     const meta = require(path.join(root, 'utils/channels/meta.js'));
@@ -374,16 +383,16 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
 
     // A fake channel: `shown` is what it holds (all four in stock at the built-in prices); a push lands there unless `lag` is on.
     function fakeChannel(label) {
-      const ch = { on: true, lag: false, missing: new Set(), omit: new Set(), pushFails: 0, readFails: 0, reads: [], pushes: [], setups: 0,
+      const ch = { on: true, lag: false, missing: new Set(), omit: new Set(), pushFails: 0, readFails: 0, reads: [], pushes: [], log: [], setups: 0,
         shown: Object.fromEntries(SLUGS.map((s) => [s, { availability: 'in stock', price: P[s].price, mrp: P[s].mrp }])) };
       ch.configured = () => ch.on;
       ch.read = async (slugs, names) => {
-        ch.reads.push({ slugs: slugs.slice(), names });
+        ch.reads.push({ slugs: slugs.slice(), names }); ch.log.push('read');
         if (ch.readFails > 0) { ch.readFails--; throw new Error(`${label}: read refused`); }
         const o = {}; slugs.filter((s) => !ch.omit.has(s)).forEach((s) => { o[s] = ch.missing.has(s) ? null : { ...ch.shown[s] }; }); return o;
       };
       ch.push = async (items, opts) => {
-        ch.pushes.push({ items: clone(items), opts: opts && clone(opts) });
+        ch.pushes.push({ items: clone(items), opts: opts && clone(opts) }); ch.log.push('push');
         if (ch.pushFails > 0) { ch.pushFails--; throw new Error(`${label}: Invalid OAuth access token`); }
         if (!ch.lag) items.forEach(({ slug, state }) => { ch.shown[slug] = { ...state }; });
         return { ok: true };
@@ -393,15 +402,15 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     }
     // One test world: both channels in `mode` (Google set up) unless `state` says otherwise; `deps` replaces any fake.
     function world({ state, mode = 'all', out = [], deps = {} } = {}) {
-      const w = { t: T0, out: new Set(out), table: clone(P), pricesOn: true, stockOn: true, timers: [], logs: [], mails: [], saves: 0, mailFails: 0, meta: fakeChannel('meta'), google: fakeChannel('google') };
+      const w = { t: T0, out: new Set(out), table: clone(P), pricesOn: true, stockOn: true, timers: [], logs: [], mails: [], saves: 0, refreshes: 0, mailFails: 0, meta: fakeChannel('meta'), google: fakeChannel('google') };
       const initial = state !== undefined ? state : { meta: { mode, items: {} }, google: { mode, source: SOURCE, names: NAMES, items: {} } };
       w.stored = initial == null ? null : JSON.stringify(initial);
       sync.setDeps(Object.assign({
         meta: w.meta, google: w.google,
         load: async () => (w.stored == null ? null : JSON.parse(w.stored)),
         save: async (s) => { w.saves++; w.stored = JSON.stringify(s); },
-        stock: { refresh: async () => {}, soldOutSlugs: () => (w.stockOn ? [...w.out] : null) },
-        prices: { refresh: async () => {}, isOn: () => w.pricesOn, current: () => (w.pricesOn ? w.table : null) },
+        stock: { refresh: async () => { w.refreshes++; }, soldOutSlugs: () => (w.stockOn ? [...w.out] : null) },
+        prices: { refresh: async () => { w.refreshes++; }, isOn: () => w.pricesOn, current: () => (w.pricesOn ? w.table : null) },
         isAvailable: (s) => !w.out.has(s),
         mail: async (a) => { if (w.mailFails > 0) { w.mailFails--; throw new Error('Resend is down'); } w.mails.push(clone(a)); },
         now: () => w.t,
@@ -473,6 +482,20 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     w.stockOn = true; w.pricesOn = false;
     eq(await sync.runOnce({ readBack: false, reason: 'test' }), { skipped: 'stock or prices not loaded' }, 'engine: prices not loaded skips the run');
     ok(w.meta.reads.length + w.meta.pushes.length + w.google.reads.length + w.google.pushes.length === 0 && w.saves === 0, 'engine: a skipped run calls no client and saves nothing');
+    // a skipped run is logged once per episode, not on every nudge (T-c)
+    w = world(); w.stockOn = false;
+    const skips = () => w.logs.filter((l) => l === '[CHANNELS] skipped: stock or prices not loaded').length;
+    await sync.runOnce({ readBack: true }); await sync.sweepOnce(); sync.nudge('a'); await w.fire();
+    eq(skips(), 1, 'engine: three skipped runs log "skipped: stock or prices not loaded" once');
+    w.stockOn = true; await sync.sweepOnce(); w.stockOn = false; await sync.sweepOnce();
+    eq(skips(), 2, 'engine: after a run that went through, the next skip is logged again');
+    // nothing switched on: stock and prices are not even refreshed (M6)
+    w = world({ mode: 'off' }); await sync.sweepOnce(); sync.nudge('pause'); await w.fire();
+    ok(w.refreshes === 0 && w.saves === 0, 'engine: with no channel switched on, stock and prices are not refreshed (' + w.refreshes + ' refreshes)');
+    w = world(); w.meta.on = false; w.google.on = false; await sync.sweepOnce();
+    eq(w.refreshes, 0, 'engine: nor with no channel usable (no keys)');
+    w = world(); await sync.sweepOnce();
+    eq(w.refreshes, 2, 'engine: with a channel in use, stock and prices are refreshed once each');
 
     // modes: off (even with a token), test (Original only), token not set
     w = world({ mode: 'off' }); w.out.add('atta-kesari');
@@ -506,6 +529,50 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     const longErr = 'x'.repeat(500);
     w.meta.push = async () => { throw new Error(`meta: ${longErr}`); }; w.out.delete('atta-kesari'); sync.nudge('receive'); await w.fire();
     eq(w.item('meta', 'atta-kesari').lastError.length, 200, 'engine: lastError is cut to 200 characters');
+
+    // the latest try failing shows at once; the email still waits for 3 failures or 30 min (I2)
+    w = world(); await sync.sweepOnce();
+    w.meta.pushFails = 1; w.out.add('atta-kesari'); sync.nudge('pause'); await w.fire();
+    s = await sync.status();
+    ok(s.meta.why === 'last try failed' && s.meta.error === 'Meta did not accept the change: Invalid OAuth access token' && s.meta.problems.length === 0 && w.mails.length === 0, 'engine: one refused push shows at once as "Meta did not accept the change", no email yet: ' + JSON.stringify([s.meta.why, s.meta.error]));
+    w.at(15); r = await sync.sweepOnce(); s = await sync.status();
+    ok(s.meta.why === 'waiting for Meta to update' && s.meta.error === null && r.meta.errors.length === 0, 'engine: once a push goes through the failure line goes away: ' + JSON.stringify([s.meta.why, s.meta.error]));
+    w = world(); await sync.sweepOnce();
+    ok((await sync.status()).meta.why === 'matches', 'engine: (a good check first)');
+    w.meta.readFails = 1; w.at(15); r = await sync.sweepOnce(); s = await sync.status();
+    eq(r.meta.errors, ['Meta could not be read: read refused'], 'engine: the run reports a failed read in plain words');
+    ok(s.meta.why === 'last try failed' && s.meta.error === 'Meta could not be read: read refused' && s.meta.checkedAt === new Date(T0).toISOString(), 'engine: after a good check, a failed read no longer says matches; the time stays that of the last good check: ' + JSON.stringify([s.meta.why, s.meta.error, s.meta.checkedAt]));
+    s = await sync.checkNow();
+    ok(s.meta.why === 'matches' && s.meta.error === null && Array.isArray(s.errors) && s.errors.length === 0, 'engine: Check now reads again: matches, and no errors come back');
+    w.meta.readFails = 3;
+    const cn1 = await sync.checkNow(); await sync.checkNow(); s = await sync.checkNow();
+    eq(cn1.errors, ['Meta could not be read: read refused'], 'engine: Check now returns what failed, in plain words');
+    ok(s.meta.why === 'problem' && s.meta.problems.length === 4 && s.meta.problems.every((p) => p.text === 'Meta could not be read: read refused'), 'engine: three failed reads are a problem that says could not be read, not did not accept (M3): ' + JSON.stringify(s.meta.problems[0]));
+    ok(w.mails.length === 1 && w.mails[0].problems.every((p) => p.text === 'Meta could not be read: read refused'), 'engine: and one email says the same');
+
+    // owner words never carry the client's prefix or a slug, and a real first word in the message stays (M3)
+    w = world(); await sync.sweepOnce();
+    w.google.push = async (items) => { w.google.pushes.push({ items: clone(items) }); throw new Error('google: atta-ajwain: Invalid price'); };
+    w.meta.push = async () => { throw new Error('meta: invalid: price field'); };
+    w.out.add('atta-kesari'); w.out.add('atta-ajwain'); r = await sync.runOnce({ readBack: false, reason: 'test' });
+    ok(w.item('google', 'atta-kesari').pushed.availability === 'out of stock' && w.item('google', 'atta-ajwain').fails === 1 && w.item('google', 'atta-ajwain').pushed.availability === 'in stock', 'engine: a Google batch that stops at Ajwain counts Kesari as pushed and Ajwain as failed');
+    eq(w.item('google', 'atta-ajwain').lastError, 'Invalid price', 'engine: the google: prefix and the slug are taken off at the source');
+    eq(r.google.errors, ['Google did not accept the change: Invalid price'], 'engine: the run error names no slug');
+    eq(w.item('meta', 'atta-kesari').lastError, 'invalid: price field', 'engine: a real first word in the message is kept');
+    s = await sync.status();
+    eq([s.meta.error, s.google.error], ['Meta did not accept the change: invalid: price field', 'Google did not accept the change: Invalid price'], "engine: the status says it in the owner's words");
+    w.at(1); await sync.runOnce({ readBack: false }); w.at(2); await sync.runOnce({ readBack: false }); s = await sync.status();
+    eq(s.google.problems, [{ slug: 'atta-ajwain', name: 'Atta Ajwain', text: 'Google did not accept the change: Invalid price' }], 'engine: after three, the problem names no slug');
+    ok(w.mails.length === 2 && w.mails.every((m) => m.problems.every((p) => !/atta-|meta: |google: /.test(p.text))), 'engine: no slug or client prefix in the alert emails: ' + JSON.stringify(w.mails.map((m) => m.problems.map((p) => p.text))));
+
+    // a malformed saved row never makes status() reject, and a run still works on it (T-a)
+    w = world({ state: { meta: { mode: 'all', checkedAt: 'soon', items: { 'atta-original': null, 'atta-kesari': 'x', 'atta-ajwain': { pushedAt: 'yesterday', mismatchSince: 'abc', alertedAt: {}, fails: 'two', shown: 5, pushed: 'p' }, 'atta-lite-sugar': [1] } }, google: { mode: 'all', source: SOURCE, names: 'bad', missing: 'bad', checkedAt: 1e20, items: [1, 2] } } });
+    ok(!(await rejects(sync.status())), 'engine: status() does not reject on a malformed saved row');
+    s = await sync.status().catch(() => ({ meta: { items: {} }, google: {} }));
+    const aj = s.meta.items['atta-ajwain'] || {};
+    ok(!('atta-original' in s.meta.items) && !('atta-kesari' in s.meta.items) && !('atta-lite-sugar' in s.meta.items) && aj.pushedAt === null && aj.fails === 0 && aj.pushed === null && aj.shown === undefined && s.meta.checkedAt === null && s.google.checkedAt === null, 'engine: entries that are not objects are dropped and bad times ignored: ' + JSON.stringify([s.meta.items, s.meta.checkedAt, s.google.checkedAt]));
+    eq(s.google.missing, [], 'engine: a malformed missing list reads as none');
+    ok(!(await rejects(sync.sweepOnce())) && w.meta.reads.length === 1 && w.google.reads.length === 1, 'engine: a run on that row works');
 
     // a hand edit in Commerce Manager is pushed back, but not within 20 min of our last push
     w = world({ out: ['atta-kesari'] });
@@ -588,7 +655,25 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     ok(w.logs.includes('[CHANNELS] meta: price not synced: no MRP (atta-original)') && w.logs.includes('[CHANNELS] google: price not synced: no MRP (atta-original)'), 'engine: logs price not synced: no MRP');
     w.meta.shown['atta-original'] = { availability: 'out of stock', price: 999, mrp: 1200 };
     w.at(25); await sync.sweepOnce();
-    ok(w.meta.pushes.length === 1 && !('mismatchSince' in w.item('meta', 'atta-original')), 'engine: with no MRP the channel prices are ignored: it matches, no re-push');
+    ok(w.meta.pushes.length === 1 && !('mismatchSince' in w.item('meta', 'atta-original')), 'engine: with no MRP only availability decides a push: no re-push');
+    s = await sync.status();
+    const PNS = 'Atta Original: price not synced (no MRP above the web price). Set the price by hand in Commerce Manager and the Google sheet.';
+    eq(s.meta.problems, [{ slug: 'atta-original', name: 'Atta Original', text: PNS }], 'engine: but a price on the channel that differs from the web price is a problem, never matches (Ruling 15)');
+    ok(s.meta.why === 'problem' && s.google.why === 'matches', 'engine: Meta has the problem; Google shows the web price and matches: ' + JSON.stringify([s.meta.why, s.google.why]));
+
+    // ending a discount (MRP removed, or equal to the price): the channels keep the old sale price, and the admin says so
+    w = world(); await sync.sweepOnce();
+    w.table['atta-original'] = { price: 300, mrp: 300 }; sync.nudge('price'); await w.fire();
+    s = await sync.status();
+    eq(w.meta.pushes.length + w.google.pushes.length, 0, 'engine: ending a discount pushes nothing (availability is unchanged; no prices without an MRP)');
+    ok(s.meta.why === 'problem' && s.google.why === 'problem' && s.meta.problems.length === 1 && s.meta.problems[0].text === PNS && s.google.problems[0].text === PNS, 'engine: both channels say price not synced, not matches: ' + JSON.stringify([s.meta.why, s.meta.problems]));
+    eq(w.mails.map((m) => [m.channel, m.problems.map((p) => p.text)]), [['meta', [PNS]], ['google', [PNS]]], 'engine: one email per channel names it');
+    w.at(15); await sync.sweepOnce(); w.at(30); await sync.sweepOnce();
+    eq(w.mails.length, 2, 'engine: still the old sale price later: no second email (one per episode)');
+    w.at(31); w.out.add('atta-original'); sync.nudge('take'); await w.fire();
+    eq(w.meta.pushes.map((p) => p.items), [[{ slug: 'atta-original', state: { availability: 'out of stock', price: 300, mrp: null } }]], 'engine: availability is still pushed');
+    w.at(45); await sync.sweepOnce(); s = await sync.status();
+    ok(s.meta.why === 'matches' && s.google.why === 'matches' && !('alertedAt' in w.item('meta', 'atta-original')), 'engine: once the channel shows the web price it matches and the episode ends: ' + JSON.stringify([s.meta.why, s.google.why]));
 
     // prices come from the same table as the website, and go out through the real Meta client
     const wire = [];
@@ -622,15 +707,42 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     const why = async (p) => { try { await p; return ''; } catch (e) { return e.message; } };
     ok(/meta or google/.test(await why(sync.setMode('x', 'all', OWNER))), 'engine: setMode refuses a channel other than meta or google');
     ok(/off, test or all/.test(await why(sync.setMode('meta', 'on', OWNER))), 'engine: setMode refuses a mode outside off, test or all');
+    for (const bad of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) ok(/meta or google/.test(await why(sync.setMode(bad, 'test', OWNER))), `engine: setMode refuses the inherited name ${bad} (T-b)`);
     ok(w.saves === 0 && w.meta.reads.length === 0, 'engine: a refused setMode changes nothing');
     s = await sync.setMode('meta', 'test', OWNER);
     ok(s.meta.mode === 'test' && s.meta.on === true && s.meta.why === 'matches', 'engine: setMode test returns the new status');
+    eq(w.pushed('meta'), [['atta-original']], 'engine: Test with Original pushes Original once, even though Meta already shows it (Ruling 14)');
+    eq(w.meta.log, ['push', 'read'], 'engine: the push goes first, then Original is read back');
     eq(w.meta.reads.map((x) => x.slugs), [['atta-original']], 'engine: switching to test reads Original back straight away');
     ok(s.meta.items['atta-original'].shown.availability === 'in stock' && s.meta.items['atta-original'].pushed.availability === 'in stock', 'engine: the read-back is in the status');
+    ok(s.meta.testPassed === true && Array.isArray(s.errors) && s.errors.length === 0, 'engine: a push that went through and a matching read-back pass the test; setMode returns no errors');
     const st0 = JSON.parse(w.stored);
     ok(st0.meta.modeBy === 'owner@example.test' && typeof st0.meta.modeAt === 'string' && st0.google.mode === 'off', 'engine: setMode records who switched it, and leaves Google off');
     s = await sync.setMode('meta', 'off', OWNER);
-    ok(s.meta.why === 'switched off' && w.meta.reads.length === 1, 'engine: switching off reads nothing');
+    ok(s.meta.why === 'switched off' && w.meta.reads.length === 1 && w.meta.pushes.length === 1, 'engine: switching off reads and pushes nothing');
+
+    // Test with Original, the cases around it (Ruling 14): Switch on all four only after a push that went through and a later matching read
+    w = world({ mode: 'off' }); w.meta.pushFails = 1;
+    s = await sync.setMode('meta', 'test', OWNER);
+    ok(w.meta.pushes.length === 1 && w.meta.reads.length === 0, 'engine: a refused test push is not read back (a matching read would hide the refusal)');
+    ok(s.meta.why === 'last try failed' && s.meta.error === 'Meta did not accept the change: Invalid OAuth access token' && s.meta.testPassed === false, 'engine: a refused test push shows at once: ' + JSON.stringify([s.meta.why, s.meta.error, s.meta.testPassed]));
+    eq(s.errors, ['Meta did not accept the change: Invalid OAuth access token'], 'engine: setMode returns what failed, in plain words');
+    s = await sync.setMode('meta', 'test', OWNER);
+    ok(w.meta.pushes.length === 2 && s.meta.why === 'matches' && s.meta.testPassed === true && s.errors.length === 0, 'engine: Test with Original again pushes again, and now passes');
+    w = world({ mode: 'off' }); w.meta.lag = true; w.out.add('atta-original');
+    s = await sync.setMode('meta', 'test', OWNER);
+    ok(w.meta.pushes.length === 1 && s.meta.why === 'waiting for Meta to update' && s.meta.testPassed === false, 'engine: pushed but not shown yet: waiting, no Switch on all four: ' + JSON.stringify([s.meta.why, s.meta.testPassed]));
+    w.meta.shown['atta-original'].availability = 'out of stock'; w.at(15); await sync.sweepOnce(); s = await sync.status();
+    ok(s.meta.why === 'matches' && s.meta.testPassed === true && w.meta.pushes.length === 1, 'engine: a later read-back that matches passes the test, with no second push');
+    w.meta.lag = false; w.at(16); w.out.delete('atta-original'); sync.nudge('receive'); await w.fire(); w.out.add('atta-original'); sync.nudge('take'); await w.fire();
+    s = await sync.status();
+    ok(w.meta.pushes.length === 3 && s.meta.why === 'matches' && s.meta.testPassed === false, 'engine: a newer push not yet read back hides Switch on all four: ' + JSON.stringify([w.meta.pushes.length, s.meta.why, s.meta.testPassed]));
+    w = world(); await sync.sweepOnce();
+    ok((await sync.status()).meta.testPassed === false, 'engine: Switch on all four is only offered in test mode');
+    w = world({ state: { meta: { mode: 'off', items: {} }, google: { mode: 'off', source: SOURCE, names: Object.fromEntries(Object.entries(NAMES).filter(([k]) => k !== 'atta-original')), items: {} } } });
+    w.google.missing.add('atta-original');
+    s = await sync.setMode('google', 'test', OWNER);
+    ok(w.google.pushes.length === 0 && w.google.reads.length === 1 && s.google.problems.length === 1 && s.google.problems[0].text === 'not found in Google: MNG-ORIGINAL-250', 'engine: a product Google does not have is never test-pushed, only reported: ' + JSON.stringify(s.google.problems));
 
     // setupGoogle: one setup at a time, the result saved into the state
     w = world({ state: null });
@@ -642,6 +754,24 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     w.google.setup = async () => { throw new Error('google: The caller does not have permission'); };
     const g3 = await sync.setupGoogle(OWNER);
     ok(g3 && /permission/.test(g3.error) && JSON.parse(w.stored).google.source === SOURCE, 'engine: a failed setup returns the error and keeps the saved source');
+    w.google.setup = async () => { throw Object.assign(new Error('Google: found 2 sheet data sources, expected 1'), { steps: ['Registered with Google', 'Found the source "Munchingo admin stock"'] }); };
+    eq((await sync.setupGoogle(OWNER)).steps, ['Registered with Google', 'Found the source "Munchingo admin stock"'], 'engine: a failed set-up returns the steps done before it stopped (M2)');
+
+    // set up again (I3): the offer ids set-up did not find are in the status; a re-run recomputes the names, so a fixed offer id starts syncing
+    w = world();
+    const NO_LITE = Object.fromEntries(Object.entries(NAMES).filter(([k]) => k !== 'atta-lite-sugar'));
+    w.google.setup = async () => { w.google.setups++; return { registered: true, source: SOURCE, names: { ...NO_LITE }, missing: ['MNG-LITE-250'], steps: ['Found 3 of 4 products'] }; };
+    w.google.missing.add('atta-lite-sugar');
+    await sync.setupGoogle(OWNER); s = await sync.status();
+    ok(JSON.stringify(s.google.missing) === '["MNG-LITE-250"]' && JSON.stringify(s.meta.missing) === '[]', 'engine: the status lists the offer ids set-up did not find: ' + JSON.stringify([s.google.missing, s.meta.missing]));
+    ok(w.google.reads.length === 1 && s.google.problems.some((p) => p.text === 'not found in Google: MNG-LITE-250'), 'engine: with Google on, set-up reads back straight away (Sugar-Lite not found)');
+    w.google.missing.delete('atta-lite-sugar'); w.google.shown['atta-lite-sugar'].availability = 'out of stock';
+    w.google.setup = async () => { w.google.setups++; return { registered: true, source: SOURCE, names: { ...NAMES }, missing: [], steps: ['Found 4 of 4 products'] }; };
+    w.at(40); await sync.setupGoogle(OWNER); s = await sync.status();
+    ok(JSON.stringify(JSON.parse(w.stored).google.names) === JSON.stringify(NAMES) && s.google.missing.length === 0, 'engine: set up again: the names are recomputed and nothing is missing');
+    eq(w.google.reads.slice(-1)[0] && w.google.reads.slice(-1)[0].names, NAMES, 'engine: the read-back after it uses the new names');
+    ok(w.pushed('google').some((p) => p.includes('atta-lite-sugar')), 'engine: the fixed offer id starts syncing (Sugar-Lite is pushed)');
+    ok(s.google.why === 'waiting for Google to update' && s.google.problems.length === 0 && w.mails.length === 0, 'engine: found again is a new episode: waiting, not an old 30-minute mismatch: ' + JSON.stringify([s.google.why, s.google.problems]));
 
     // startSweep: first run at 3 min, then every 15 min; a second call does nothing
     w = world();
@@ -690,7 +820,7 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
       ok(typeof mailer.sendChannelSyncAlert === 'function', 'mailer exports sendChannelSyncAlert');
       await mailer.sendChannelSyncAlert({ channel: 'meta', problems: [{ slug: 'atta-kesari', name: 'Atta Kesari', text: 'Atta Kesari shows in stock; the admin says out of stock' }] });
       eq(sent[0] && [sent[0].subject, sent[0].to], ['Meta does not match the admin: Atta Kesari', ['owner@example.test']], 'alert email: subject names the one flavour, sent to NOTIFY_EMAIL');
-      ok(sent[0] && sent[0].html.includes('Atta Kesari shows in stock; the admin says out of stock') && sent[0].html.includes('Nothing is blocked; the website is unaffected. It retries every 15 minutes.'), 'alert email: one line per problem, then the reassurance');
+      ok(sent[0] && sent[0].html.includes('Atta Kesari shows in stock; the admin says out of stock') && sent[0].html.includes('Nothing is blocked; the website is unaffected. It checks again every 15 minutes.') && !sent[0].html.includes('retries'), 'alert email: one line per problem, then the reassurance (true for every problem type)');
       await mailer.sendChannelSyncAlert({ channel: 'google', problems: [{ slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', text: 'not found in Google: MNG-LITE-250' }, { slug: 'atta-kesari', name: 'Atta Kesari', text: 'Google did not accept the change: <b>quota</b> & "limits"' }] });
       eq(sent[1] && sent[1].subject, 'Google does not match the admin: 2 flavours', 'alert email: two flavours in the subject');
       ok(sent[1] && sent[1].html.includes('Atta Sugar-Lite: not found in Google: MNG-LITE-250'), 'alert email: a line that does not name the flavour gets the name in front');

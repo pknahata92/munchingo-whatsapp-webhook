@@ -148,7 +148,7 @@ async function sendChannelSyncAlert({ channel, problems }) {
       <div style="background:#B0413E;padding:22px 26px;"><h2 style="color:#fff;margin:0;font-size:20px;">${escapeHtml(label)} does not match the admin</h2></div>
       <div style="padding:22px 26px;background:#fffaf6;font-size:14px;">
         <ul style="margin:0 0 16px;padding-left:18px;">${list.map((p) => `<li style="margin:4px 0;">${escapeHtml(line(p))}</li>`).join('')}</ul>
-        <p style="margin:0;color:#8A7765;">Nothing is blocked; the website is unaffected. It retries every 15 minutes.</p>
+        <p style="margin:0;color:#8A7765;">Nothing is blocked; the website is unaffected. It checks again every 15 minutes.</p>
       </div>
     </div>`;
   const subject = `${label} does not match the admin: ${names.length === 1 ? names[0] : `${names.length} flavours`}`;

@@ -27,6 +27,13 @@ function sameState(want, shown) {
   return want.mrp == null || (want.price === shown.price && want.mrp === shown.mrp);
 }
 
+// With no MRP the prices are not sent, so a channel can keep an old price or sale price (a discount that ended). True when what the
+// channel shows differs from the web price: such an item is reported, never "matches" (Ruling 15). Availability is judged by sameState.
+function priceUnsynced(want, shown) {
+  if (!want || !shown || want.mrp != null || want.price == null) return false;
+  return shown.price !== want.price || (shown.mrp != null && shown.mrp !== want.price);
+}
+
 const amount = (v) => { const n = Math.round(parseFloat(String(v == null ? '' : v).replace(/[^0-9.]/g, ''))); return Number.isFinite(n) ? n : null; };
 const micros = (n) => String(Math.round(n * 1e6));
 const money = (n) => ({ amountMicros: micros(n), currencyCode: 'INR' });
@@ -57,4 +64,4 @@ function fromGoogle(product) {
   return { availability: String(a.availability || '').toLowerCase().replace(/_/g, ' '), price: sale != null ? sale : first, mrp: sale != null ? first : null, title: a.title };
 }
 
-module.exports = { SLUGS, META_IDS, GOOGLE_OFFER_IDS, publicState, sameState, toMeta, fromMeta, toGoogle, fromGoogle };
+module.exports = { SLUGS, META_IDS, GOOGLE_OFFER_IDS, publicState, sameState, priceUnsynced, toMeta, fromMeta, toGoogle, fromGoogle };
