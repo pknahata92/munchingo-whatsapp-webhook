@@ -137,6 +137,25 @@ async function sendSuggestionAlert({ phone, name, text, order_id: orderId }) {
   if (error) throw new Error(error.message);
 }
 
+// Meta or Google no longer matches the admin (utils/channelSync.js): one email per episode. problems: [{ slug, name, text }].
+async function sendChannelSyncAlert({ channel, problems }) {
+  const label = { meta: 'Meta', google: 'Google' }[channel] || String(channel || '');
+  const list = problems || [];
+  const names = [...new Set(list.map((p) => p.name || p.slug))];
+  const line = (p) => { const n = p.name || p.slug || ''; const t = String(p.text || ''); return t.startsWith(n) ? t : `${n}: ${t}`; };
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#B0413E;padding:22px 26px;"><h2 style="color:#fff;margin:0;font-size:20px;">${escapeHtml(label)} does not match the admin</h2></div>
+      <div style="padding:22px 26px;background:#fffaf6;font-size:14px;">
+        <ul style="margin:0 0 16px;padding-left:18px;">${list.map((p) => `<li style="margin:4px 0;">${escapeHtml(line(p))}</li>`).join('')}</ul>
+        <p style="margin:0;color:#8A7765;">Nothing is blocked; the website is unaffected. It retries every 15 minutes.</p>
+      </div>
+    </div>`;
+  const subject = `${label} does not match the admin: ${names.length === 1 ? names[0] : `${names.length} flavours`}`;
+  const { error } = await resend.emails.send({ from: 'Munchingo Orders <orders@munchingo.com>', to: [process.env.NOTIFY_EMAIL], subject, html });
+  if (error) throw new Error(error.message);
+}
+
 async function sendFeedbackAlert({ customerPhone, customerName, rating, comments }) {
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
@@ -414,4 +433,4 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendSuggestionAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+module.exports = { sendSuggestionAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };

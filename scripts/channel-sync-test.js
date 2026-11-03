@@ -339,5 +339,349 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     ok(offByEnv === false && onByEnv === true, 'google client() reads GOOGLE_MERCHANT_KEY and GOOGLE_MERCHANT_ID');
   }
 
+  // ---- engine: push on change, read-back, alerts, modes (fake clients, in-memory state, fake clock and timers; no network) ----
+  {
+    const sync = require(path.join(root, 'utils/channelSync.js'));
+    const { SLUGS, GOOGLE_OFFER_IDS, toMeta } = shape;
+    const MIN = 60000; const T0 = Date.UTC(2026, 10, 3, 5, 0);
+    const SOURCE = 'accounts/1/dataSources/77';
+    const NAMES = Object.fromEntries(SLUGS.map((s) => [s, `en~IN~${GOOGLE_OFFER_IDS[s]}`]));
+    const OWNER = { email: 'owner@example.test', name: 'Owner', role: 'owner' };
+    const settle = () => new Promise((r) => setImmediate(r));
+    const clone = (x) => JSON.parse(JSON.stringify(x));
+    const rejects = async (p) => { try { await p; return false; } catch (e) { return true; } };
+    const throwsMsg = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
+
+    // A fake channel: `shown` is what it holds (all four in stock at the built-in prices); a push lands there unless `lag` is on.
+    function fakeChannel(label) {
+      const ch = { on: true, lag: false, missing: new Set(), omit: new Set(), pushFails: 0, readFails: 0, reads: [], pushes: [], setups: 0,
+        shown: Object.fromEntries(SLUGS.map((s) => [s, { availability: 'in stock', price: P[s].price, mrp: P[s].mrp }])) };
+      ch.configured = () => ch.on;
+      ch.read = async (slugs, names) => {
+        ch.reads.push({ slugs: slugs.slice(), names });
+        if (ch.readFails > 0) { ch.readFails--; throw new Error(`${label}: read refused`); }
+        const o = {}; slugs.filter((s) => !ch.omit.has(s)).forEach((s) => { o[s] = ch.missing.has(s) ? null : { ...ch.shown[s] }; }); return o;
+      };
+      ch.push = async (items, opts) => {
+        ch.pushes.push({ items: clone(items), opts: opts && clone(opts) });
+        if (ch.pushFails > 0) { ch.pushFails--; throw new Error(`${label}: Invalid OAuth access token`); }
+        if (!ch.lag) items.forEach(({ slug, state }) => { ch.shown[slug] = { ...state }; });
+        return { ok: true };
+      };
+      ch.setup = async () => { ch.setups++; await settle(); return { registered: true, source: SOURCE, names: { ...NAMES }, missing: [], steps: ['Registered with Google'] }; };
+      return ch;
+    }
+    // One test world: both channels in `mode` (Google set up) unless `state` says otherwise; `deps` replaces any fake.
+    function world({ state, mode = 'all', out = [], deps = {} } = {}) {
+      const w = { t: T0, out: new Set(out), table: clone(P), pricesOn: true, stockOn: true, timers: [], logs: [], mails: [], saves: 0, mailFails: 0, meta: fakeChannel('meta'), google: fakeChannel('google') };
+      const initial = state !== undefined ? state : { meta: { mode, items: {} }, google: { mode, source: SOURCE, names: NAMES, items: {} } };
+      w.stored = initial == null ? null : JSON.stringify(initial);
+      sync.setDeps(Object.assign({
+        meta: w.meta, google: w.google,
+        load: async () => (w.stored == null ? null : JSON.parse(w.stored)),
+        save: async (s) => { w.saves++; w.stored = JSON.stringify(s); },
+        stock: { refresh: async () => {}, soldOutSlugs: () => (w.stockOn ? [...w.out] : null) },
+        prices: { refresh: async () => {}, isOn: () => w.pricesOn, current: () => (w.pricesOn ? w.table : null) },
+        isAvailable: (s) => !w.out.has(s),
+        mail: async (a) => { if (w.mailFails > 0) { w.mailFails--; throw new Error('Resend is down'); } w.mails.push(clone(a)); },
+        now: () => w.t,
+        setTimer: (fn, ms) => { w.timers.push({ fn, ms }); return w.timers.length; },
+        log: { info: (m) => w.logs.push(m), error: (m) => w.logs.push(m) },
+      }, deps));
+      w.fire = async () => { w.timers.splice(0).forEach((x) => x.fn()); await settle(); };
+      w.at = (min) => { w.t = T0 + min * MIN; };
+      w.item = (ch, slug) => (JSON.parse(w.stored)[ch].items[slug] || {});
+      w.pushed = (ch) => w[ch].pushes.map((p) => p.items.map((i) => i.slug));
+      return w;
+    }
+    let w; let s;
+
+    // no saved state: both channels start off, even with a token; nothing is read or pushed
+    w = world({ state: null });
+    s = await sync.status();
+    ok(s.meta.mode === 'off' && s.google.mode === 'off' && s.meta.on === false && s.google.on === false, 'engine: with no saved state both channels start off');
+    eq([s.meta.why, s.google.why], ['switched off', 'not set up'], 'engine: Meta switched off, Google not set up');
+    await sync.sweepOnce(); w.out.add('atta-kesari'); sync.nudge('pause'); await w.fire();
+    ok(w.meta.reads.length + w.meta.pushes.length + w.google.reads.length + w.google.pushes.length === 0, 'engine: nothing is read or pushed while off');
+
+    // a change pushes only that item; the same state again pushes nothing
+    w = world();
+    let r = await sync.sweepOnce();
+    ok(w.meta.reads.length === 1 && w.google.reads.length === 1 && w.meta.pushes.length === 0 && w.google.pushes.length === 0, 'engine: a sweep reads both channels and pushes nothing when they match');
+    eq(r, { meta: { pushed: [], errors: [] }, google: { pushed: [], errors: [] } }, 'engine: runOnce reports what it pushed per channel');
+    eq(w.google.reads[0].names, NAMES, 'engine: Google is read with the stored product names');
+    w.out.add('atta-kesari'); sync.nudge('pause');
+    eq(w.timers.map((x) => x.ms), [3000], 'engine: a nudge waits 3 s');
+    ok(w.meta.pushes.length === 0, 'engine: nothing is pushed before the 3 s are up');
+    await w.fire();
+    eq(w.pushed('meta'), [['atta-kesari']], 'engine: Kesari out of stock pushes only Kesari to Meta, once');
+    eq(w.pushed('google'), [['atta-kesari']], 'engine: and only Kesari to Google, once');
+    eq(w.meta.pushes[0].items[0].state, { availability: 'out of stock', price: 299, mrp: 350 }, 'engine: the pushed state is the public state');
+    eq(w.google.pushes[0].opts, { source: SOURCE, names: NAMES }, 'engine: Google pushes go to the stored source with the stored names');
+    ok(w.item('meta', 'atta-kesari').pushed.availability === 'out of stock' && w.item('meta', 'atta-kesari').pushedAt === T0, 'engine: pushed and pushedAt are saved');
+    sync.nudge('again'); await w.fire();
+    ok(w.meta.pushes.length === 1 && w.google.pushes.length === 1, 'engine: a second nudge with the same state pushes nothing');
+
+    // a burst: 20 nudges before the timer fires make exactly one run (and one push)
+    let runs = 0;
+    w = world({ deps: { runOnce: async () => { runs++; return {}; } } });
+    for (let i = 0; i < 20; i++) sync.nudge('take');
+    eq(w.timers.length, 1, 'engine: 20 nudges set one timer');
+    await w.fire();
+    eq(runs, 1, 'engine: 20 nudges inside the window make exactly one runOnce');
+    w = world(); await sync.sweepOnce(); w.out.add('atta-kesari');
+    for (let i = 0; i < 20; i++) sync.nudge('bulk-pack');
+    await w.fire();
+    eq(w.meta.pushes.length, 1, 'engine: a burst of 20 changes gives one Meta push');
+
+    // a nudge during a run schedules exactly one more run after it
+    runs = 0; const gates = [];
+    w = world({ deps: { runOnce: async () => { runs++; await new Promise((res) => gates.push(res)); return {}; } } });
+    sync.nudge('a'); await w.fire();
+    eq(runs, 1, 'engine: the first nudge starts a run');
+    sync.nudge('b'); await w.fire(); sync.nudge('c'); await w.fire();
+    eq(runs, 1, 'engine: nudges during a run wait for it');
+    gates.shift()(); await settle();
+    eq(runs, 2, 'engine: one more run starts when the first ends');
+    gates.shift()(); await settle();
+    ok(runs === 2 && gates.length === 0, 'engine: exactly one more run, not one per nudge');
+
+    // cold start or a database hiccup: nothing is pushed on a guess
+    w = world(); w.stockOn = false; w.out.add('atta-kesari');
+    eq(await sync.runOnce({ readBack: true, reason: 'test' }), { skipped: 'stock or prices not loaded' }, 'engine: stock not loaded skips the run');
+    sync.nudge('pause'); await w.fire();
+    w.stockOn = true; w.pricesOn = false;
+    eq(await sync.runOnce({ readBack: false, reason: 'test' }), { skipped: 'stock or prices not loaded' }, 'engine: prices not loaded skips the run');
+    ok(w.meta.reads.length + w.meta.pushes.length + w.google.reads.length + w.google.pushes.length === 0 && w.saves === 0, 'engine: a skipped run calls no client and saves nothing');
+
+    // modes: off (even with a token), test (Original only), token not set
+    w = world({ mode: 'off' }); w.out.add('atta-kesari');
+    await sync.sweepOnce(); sync.nudge('pause'); await w.fire();
+    ok(w.meta.reads.length + w.meta.pushes.length + w.google.reads.length + w.google.pushes.length === 0, 'engine: mode off with a token reads and pushes nothing');
+    eq((await sync.status()).meta.why, 'switched off', 'engine: mode off says switched off');
+    w = world({ mode: 'test' });
+    SLUGS.forEach((x) => { w.meta.shown[x].availability = 'out of stock'; w.google.shown[x].availability = 'out of stock'; });
+    await sync.sweepOnce();
+    eq([w.meta.reads[0].slugs, w.google.reads[0].slugs], [['atta-original'], ['atta-original']], 'engine: mode test reads only Original');
+    eq([w.pushed('meta'), w.pushed('google')], [[['atta-original']], [['atta-original']]], 'engine: mode test pushes only Original');
+    w.out.add('atta-kesari'); sync.nudge('pause'); await w.fire();
+    ok(w.meta.pushes.length === 1 && w.google.pushes.length === 1, 'engine: mode test ignores a Kesari change');
+    w = world(); w.meta.on = false; w.out.add('atta-kesari');
+    ok(!(await rejects(sync.sweepOnce())), 'engine: a channel with no token does not make the run fail');
+    ok(w.meta.reads.length === 0 && w.meta.pushes.length === 0, 'engine: no token, Meta is not called');
+    eq(w.pushed('google'), [['atta-kesari']], 'engine: no Meta token, Google still pushes');
+    s = await sync.status();
+    ok(s.meta.why === 'token not set' && s.meta.on === false && s.google.why === 'waiting for Google to update' && s.google.on === true, 'engine: status says token not set for Meta; Google, just pushed, is waiting for Google to update');
+
+    // retry after a failed push: the next sweep pushes again, fails resets once the read-back matches
+    w = world(); await sync.sweepOnce();
+    w.meta.pushFails = 1; w.out.add('atta-kesari'); sync.nudge('pause'); await w.fire();
+    ok(w.item('meta', 'atta-kesari').fails === 1 && /Invalid OAuth/.test(w.item('meta', 'atta-kesari').lastError) && w.item('meta', 'atta-kesari').pushed.availability === 'in stock', 'engine: a failed push counts a failure and keeps the old pushed state');
+    ok(w.logs.some((l) => /^\[CHANNELS\] meta: .*Invalid OAuth/.test(l)), 'engine: a failed push is logged with [CHANNELS]');
+    w.at(15); await sync.sweepOnce();
+    ok(w.meta.pushes.length === 2 && w.meta.pushes[1].items[0].slug === 'atta-kesari', 'engine: the next sweep pushes the failed item again');
+    eq(w.item('meta', 'atta-kesari').fails, 1, 'engine: a successful push keeps the failure count until the read-back matches');
+    w.at(30); await sync.sweepOnce();
+    ok(w.item('meta', 'atta-kesari').fails === 0 && w.meta.pushes.length === 2, 'engine: the matching read-back resets fails, with no further push');
+    const longErr = 'x'.repeat(500);
+    w.meta.push = async () => { throw new Error(`meta: ${longErr}`); }; w.out.delete('atta-kesari'); sync.nudge('receive'); await w.fire();
+    eq(w.item('meta', 'atta-kesari').lastError.length, 200, 'engine: lastError is cut to 200 characters');
+
+    // a hand edit in Commerce Manager is pushed back, but not within 20 min of our last push
+    w = world({ out: ['atta-kesari'] });
+    w.meta.shown['atta-kesari'].availability = 'out of stock'; w.google.shown['atta-kesari'].availability = 'out of stock';
+    await sync.sweepOnce();
+    w.out.delete('atta-kesari'); sync.nudge('receive'); await w.fire();
+    eq(w.pushed('meta'), [['atta-kesari']], 'engine: restocked Kesari pushed at t=0');
+    w.meta.shown['atta-kesari'].availability = 'out of stock';
+    w.at(10); await sync.sweepOnce();
+    eq(w.meta.pushes.length, 1, 'engine: a hand edit seen 10 min after our push is not pushed yet');
+    w.at(21); await sync.sweepOnce();
+    ok(w.meta.pushes.length === 2 && JSON.stringify(w.meta.pushes[1].items) === JSON.stringify([{ slug: 'atta-kesari', state: { availability: 'in stock', price: 299, mrp: 350 } }]), 'engine: at 21 min the hand edit is pushed back');
+    eq(w.mails.length, 0, 'engine: no alert for a hand edit fixed inside 30 min');
+
+    // Google lags behind a push: no re-push before 20 min, no alert before 30, one alert per episode
+    w = world(); await sync.sweepOnce();
+    w.google.lag = true; w.out.add('atta-kesari'); sync.nudge('pause'); await w.fire();
+    eq(w.google.pushes.length, 1, 'engine: Google push at t=0');
+    w.at(15); await sync.sweepOnce();
+    ok(w.google.pushes.length === 1 && w.mails.length === 0, 'engine: Google still shows the old value at 15 min: no push, no alert');
+    s = await sync.status();
+    ok(s.google.why === 'waiting for Google to update' && s.google.problems.length === 0 && s.meta.why === 'matches', 'engine: status says waiting for Google to update, Meta matches');
+    eq(s.google.checkedAt, new Date(T0 + 15 * MIN).toISOString(), 'engine: checkedAt is the time of the last read-back');
+    w.at(31); await sync.sweepOnce();
+    eq(w.mails.length, 1, 'engine: still mismatched at 31 min: one alert');
+    eq(w.mails[0], { channel: 'google', problems: [{ slug: 'atta-kesari', name: 'Atta Kesari', text: 'Atta Kesari shows in stock; the admin says out of stock' }] }, 'engine: the alert names the channel and the problem');
+    s = await sync.status();
+    ok(s.google.why === 'problem' && s.google.problems.length === 1, 'engine: a mismatch over 30 min is a problem');
+    w.at(46); await sync.sweepOnce();
+    eq(w.mails.length, 1, 'engine: still mismatched at 46 min: no second alert');
+    w.google.lag = false; w.google.shown['atta-kesari'] = { availability: 'out of stock', price: 299, mrp: 350 };
+    w.at(50); await sync.sweepOnce();
+    ok(!('alertedAt' in w.item('google', 'atta-kesari')) && !('mismatchSince' in w.item('google', 'atta-kesari')), 'engine: the matching read-back clears alertedAt and mismatchSince');
+    eq((await sync.status()).google.why, 'matches', 'engine: Google matches again');
+
+    // a revoked token: three failures in a row send one alert; a fourth sends none; the other channel carries on
+    w = world(); await sync.sweepOnce();
+    w.meta.pushFails = 99; w.out.add('atta-kesari'); sync.nudge('pause'); await w.fire();
+    w.at(1); await sync.sweepOnce();
+    eq(w.mails.length, 0, 'engine: two failures, no alert yet');
+    w.at(2); await sync.sweepOnce();
+    eq(w.mails.length, 1, 'engine: the third failure in a row sends one alert');
+    eq(w.mails[0].problems, [{ slug: 'atta-kesari', name: 'Atta Kesari', text: 'Meta did not accept the change: Invalid OAuth access token' }], 'engine: the alert says Meta did not accept the change');
+    s = await sync.status();
+    ok(s.meta.why === 'problem' && s.meta.problems.length === 1 && s.meta.items['atta-kesari'].fails === 3, 'engine: status shows the failing item as a problem');
+    w.at(3); await sync.sweepOnce();
+    ok(w.mails.length === 1 && w.item('meta', 'atta-kesari').fails === 4, 'engine: a fourth failure sends no second alert');
+    ok(w.google.pushes.length === 1 && w.item('google', 'atta-kesari').pushed.availability === 'out of stock', 'engine: Google is unaffected by Meta failing');
+    ok(w.logs.some((l) => l.startsWith('[CHANNELS] meta: alert sent')), 'engine: the alert is logged');
+
+    // a throwing mailer is logged and never rejects the run; the alert goes once mail works again
+    w = world(); await sync.sweepOnce();
+    w.meta.pushFails = 99; w.mailFails = 1; w.out.add('atta-kesari'); sync.nudge('pause'); await w.fire();
+    w.at(1); await sync.sweepOnce(); w.at(2);
+    ok(!(await rejects(sync.sweepOnce())), 'engine: a throwing mailer does not reject runOnce');
+    ok(w.mails.length === 0 && w.logs.some((l) => l.startsWith('[CHANNELS]') && l.includes('Resend is down')), 'engine: the mail failure is logged with [CHANNELS]');
+    w.at(3); await sync.sweepOnce();
+    eq(w.mails.length, 1, 'engine: the alert is sent on the next run once mail works');
+
+    // a product missing in a channel: reported, never pushed, the other three still sync
+    w = world();
+    w.google.missing.add('atta-lite-sugar'); w.meta.omit.add('atta-lite-sugar');
+    SLUGS.forEach((x) => { w.google.shown[x].availability = 'out of stock'; });
+    await sync.sweepOnce();
+    eq(w.pushed('google'), [['atta-original', 'atta-kesari', 'atta-ajwain']], 'engine: the other three are pushed to Google');
+    s = await sync.status();
+    eq(s.google.problems, [{ slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', text: 'not found in Google: MNG-LITE-250' }], 'engine: not found in Google: MNG-LITE-250');
+    eq(s.meta.problems, [{ slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', text: 'not found in Meta: vf5p90bcy5' }], 'engine: a key missing from the Meta read is not found too');
+    ok(s.google.why === 'problem' && s.meta.why === 'problem', 'engine: a missing product is a problem');
+    w.out.add('atta-lite-sugar'); sync.nudge('pause'); await w.fire();
+    w.at(31); await sync.sweepOnce();
+    ok([...w.meta.pushes, ...w.google.pushes].every((p) => p.items.every((i) => i.slug !== 'atta-lite-sugar')), 'engine: no push ever contains the missing product, not even after a change');
+    ok(w.mails.some((m) => m.channel === 'google' && m.problems.some((p) => p.text === 'not found in Google: MNG-LITE-250')), 'engine: a missing product is alerted once after 30 min');
+
+    // no MRP: availability only, and prices are not compared
+    w = world(); await sync.sweepOnce();
+    w.table['atta-original'] = { price: 259, mrp: null }; w.out.add('atta-original'); sync.nudge('price'); await w.fire();
+    eq(w.meta.pushes[0].items[0].state, { availability: 'out of stock', price: 259, mrp: null }, 'engine: Original with no MRP is pushed with mrp null');
+    eq(toMeta('atta-original', w.meta.pushes[0].items[0].state), { id: '91slwpjdqq', availability: 'out of stock' }, 'engine: so only availability goes to Meta');
+    ok(w.logs.includes('[CHANNELS] meta: price not synced: no MRP (atta-original)') && w.logs.includes('[CHANNELS] google: price not synced: no MRP (atta-original)'), 'engine: logs price not synced: no MRP');
+    w.meta.shown['atta-original'] = { availability: 'out of stock', price: 999, mrp: 1200 };
+    w.at(25); await sync.sweepOnce();
+    ok(w.meta.pushes.length === 1 && !('mismatchSince' in w.item('meta', 'atta-original')), 'engine: with no MRP the channel prices are ignored: it matches, no re-push');
+
+    // prices come from the same table as the website, and go out through the real Meta client
+    const wire = [];
+    const realMeta = require(path.join(root, 'utils/channels/meta.js')).makeMeta({ http: async (cfg) => { wire.push(cfg); return { data: { handles: ['h'] } }; }, token: 'test-token' });
+    const want0 = shape.publicState({ isAvailable: () => true, prices: P });
+    const seeded = (mode) => ({ meta: { mode, items: Object.fromEntries(SLUGS.map((x) => [x, { pushed: want0[x], pushedAt: T0 }])) }, google: { mode: 'off', source: null, names: {}, items: {} } });
+    w = world({ state: seeded('all'), deps: { meta: realMeta } });
+    w.table['atta-original'] = { price: 249, mrp: 300 }; sync.nudge('price'); await w.fire();
+    const reqs = wire.length === 1 ? JSON.parse(wire[0].data.requests) : [];
+    eq(reqs, [{ method: 'UPDATE', data: { id: '91slwpjdqq', availability: 'in stock', price: '300.00 INR', sale_price: '249.00 INR' } }], "engine: a price change pushes sale_price '249.00 INR' for Original only");
+
+    // nudge and every other call never throw into the caller
+    w = world({ deps: { runOnce: () => { throw new Error('boom'); } } });
+    eq(throwsMsg(() => sync.nudge('x')), null, 'engine: nudge returns even when the run throws');
+    await w.fire();
+    ok(w.logs.some((l) => l.startsWith('[CHANNELS]') && l.includes('boom')), 'engine: the run error is logged with [CHANNELS]');
+    w = world({ deps: { setTimer: () => { throw new Error('no timers'); } } });
+    ok(throwsMsg(() => sync.nudge('x')) === null && w.logs.some((l) => l.startsWith('[CHANNELS]') && l.includes('no timers')), 'engine: nudge returns even when the timer cannot be set');
+    w = world({ deps: { load: async () => { throw new Error('db down'); } } });
+    eq(await sync.runOnce({ readBack: true }), { skipped: 'state not loaded' }, 'engine: a state that cannot be read skips the run');
+    ok(w.meta.reads.length + w.meta.pushes.length === 0 && w.saves === 0, 'engine: and pushes and saves nothing (modes are never lost to a hiccup)');
+    ok(!(await rejects(sync.status())) && !(await rejects(sync.setMode('meta', 'all', OWNER))) && !(await rejects(sync.setupGoogle(OWNER))), 'engine: status, setMode and setupGoogle do not reject when the state cannot be read');
+    w = world({ deps: { save: async () => { throw new Error('write refused'); } } });
+    ok(!(await rejects(sync.sweepOnce())) && w.logs.some((l) => l.startsWith('[CHANNELS]') && l.includes('write refused')), 'engine: a save failure is logged, not thrown');
+    w = world(); w.meta.readFails = 1;
+    ok(!(await rejects(sync.sweepOnce())) && w.item('meta', 'atta-original').fails === 1 && w.google.reads.length === 1, 'engine: a failed read is counted, logged and the other channel still runs');
+    ok(w.logs.every((l) => l.startsWith('[CHANNELS] ')), 'engine: every log line starts with [CHANNELS]');
+
+    // setMode: validation, audit trail, an immediate read-back when switched on
+    w = world({ state: null });
+    const why = async (p) => { try { await p; return ''; } catch (e) { return e.message; } };
+    ok(/meta or google/.test(await why(sync.setMode('x', 'all', OWNER))), 'engine: setMode refuses a channel other than meta or google');
+    ok(/off, test or all/.test(await why(sync.setMode('meta', 'on', OWNER))), 'engine: setMode refuses a mode outside off, test or all');
+    ok(w.saves === 0 && w.meta.reads.length === 0, 'engine: a refused setMode changes nothing');
+    s = await sync.setMode('meta', 'test', OWNER);
+    ok(s.meta.mode === 'test' && s.meta.on === true && s.meta.why === 'matches', 'engine: setMode test returns the new status');
+    eq(w.meta.reads.map((x) => x.slugs), [['atta-original']], 'engine: switching to test reads Original back straight away');
+    ok(s.meta.items['atta-original'].shown.availability === 'in stock' && s.meta.items['atta-original'].pushed.availability === 'in stock', 'engine: the read-back is in the status');
+    const st0 = JSON.parse(w.stored);
+    ok(st0.meta.modeBy === 'owner@example.test' && typeof st0.meta.modeAt === 'string' && st0.google.mode === 'off', 'engine: setMode records who switched it, and leaves Google off');
+    s = await sync.setMode('meta', 'off', OWNER);
+    ok(s.meta.why === 'switched off' && w.meta.reads.length === 1, 'engine: switching off reads nothing');
+
+    // setupGoogle: one setup at a time, the result saved into the state
+    w = world({ state: null });
+    const [g1, g2] = await Promise.all([sync.setupGoogle(OWNER), sync.setupGoogle(OWNER)]);
+    ok(w.google.setups === 1 && g1 === g2 && g1.source === SOURCE, 'engine: two setupGoogle calls at once run one setup and share its result');
+    const st1 = JSON.parse(w.stored).google;
+    ok(st1.source === SOURCE && JSON.stringify(st1.names) === JSON.stringify(NAMES) && st1.mode === 'off', 'engine: the source and product names are saved, mode stays off');
+    eq((await sync.status()).google.why, 'switched off', 'engine: after setup Google is switched off, no longer not set up');
+    w.google.setup = async () => { throw new Error('google: The caller does not have permission'); };
+    const g3 = await sync.setupGoogle(OWNER);
+    ok(g3 && /permission/.test(g3.error) && JSON.parse(w.stored).google.source === SOURCE, 'engine: a failed setup returns the error and keeps the saved source');
+
+    // startSweep: first run at 3 min, then every 15 min; a second call does nothing
+    w = world();
+    sync.startSweep(); sync.startSweep();
+    eq(w.timers.map((x) => x.ms), [180000], 'engine: the first sweep is set for 3 min, once');
+    await w.fire();
+    ok(w.meta.reads.length === 1 && w.google.reads.length === 1, 'engine: the sweep reads both channels back');
+    eq(w.timers.map((x) => x.ms), [900000], 'engine: then every 15 min');
+    await w.fire();
+    ok(w.meta.reads.length === 2 && w.timers.length === 1, 'engine: and again');
+
+    // the real state store: stock_settings key channel_sync, a JSON string (database stubbed; no network)
+    {
+      const dbPath = require.resolve(path.join(root, 'utils/database.js')); const had = require.cache[dbPath];
+      const calls = []; const row = { value: null, error: null };
+      const q = {
+        select: (c) => { calls.push(['select', c]); return q; },
+        eq: (k, v) => { calls.push(['eq', k, v]); return q; },
+        maybeSingle: async () => ({ data: row.value == null ? null : { value: row.value }, error: row.error }),
+        upsert: async (x) => { calls.push(['upsert', x]); row.value = x.value; return { error: null }; },
+      };
+      require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { client: () => ({ from: (t) => { calls.push(['from', t]); return q; } }) } };
+      w = world();
+      const d = {}; ['meta', 'google', 'stock', 'prices', 'isAvailable', 'mail', 'now', 'setTimer', 'log'].forEach((k) => { d[k] = { meta: w.meta, google: w.google, stock: { refresh: async () => {}, soldOutSlugs: () => [] }, prices: { refresh: async () => {}, isOn: () => true, current: () => P }, isAvailable: () => true, mail: async () => {}, now: () => T0, setTimer: () => 0, log: { info: (m) => w.logs.push(m), error: (m) => w.logs.push(m) } }[k]; });
+      sync.setDeps(d);
+      await sync.setMode('meta', 'test', OWNER);
+      const up = calls.filter((c) => c[0] === 'upsert');
+      ok(calls.some((c) => c[0] === 'from' && c[1] === 'stock_settings') && calls.some((c) => c[0] === 'select' && c[1] === 'value') && calls.some((c) => c[0] === 'eq' && c[1] === 'key' && c[2] === 'channel_sync'), 'engine: the state is read from stock_settings key channel_sync');
+      ok(up.length >= 1 && up.every((c) => c[1].key === 'channel_sync' && typeof c[1].value === 'string') && JSON.parse(row.value).meta.mode === 'test', 'engine: the state is saved as a JSON string under channel_sync');
+      eq((await sync.status()).meta.mode, 'test', 'engine: status reads the saved state back');
+      row.error = { message: 'relation does not exist' };
+      eq(await sync.runOnce({ readBack: true }), { skipped: 'state not loaded' }, 'engine: a database error on load skips the run');
+      if (had) require.cache[dbPath] = had; else delete require.cache[dbPath];
+    }
+    sync.setDeps(null);
+
+    // the owner alert email (Resend stubbed; no network)
+    {
+      const resendPath = require.resolve('resend', { paths: [path.join(root, 'utils')] });
+      const mailerPath = require.resolve(path.join(root, 'utils/mailer.js'));
+      const keep = { resend: require.cache[resendPath], mailer: require.cache[mailerPath], to: process.env.NOTIFY_EMAIL };
+      const sent = []; let reply = { error: null };
+      require.cache[resendPath] = { id: resendPath, filename: resendPath, loaded: true, exports: { Resend: class { constructor() { this.emails = { send: async (p) => { sent.push(p); return reply; } }; } } } };
+      delete require.cache[mailerPath]; process.env.NOTIFY_EMAIL = 'owner@example.test';
+      const mailer = require(mailerPath);
+      ok(typeof mailer.sendChannelSyncAlert === 'function', 'mailer exports sendChannelSyncAlert');
+      await mailer.sendChannelSyncAlert({ channel: 'meta', problems: [{ slug: 'atta-kesari', name: 'Atta Kesari', text: 'Atta Kesari shows in stock; the admin says out of stock' }] });
+      eq(sent[0] && [sent[0].subject, sent[0].to], ['Meta does not match the admin: Atta Kesari', ['owner@example.test']], 'alert email: subject names the one flavour, sent to NOTIFY_EMAIL');
+      ok(sent[0] && sent[0].html.includes('Atta Kesari shows in stock; the admin says out of stock') && sent[0].html.includes('Nothing is blocked; the website is unaffected. It retries every 15 minutes.'), 'alert email: one line per problem, then the reassurance');
+      await mailer.sendChannelSyncAlert({ channel: 'google', problems: [{ slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', text: 'not found in Google: MNG-LITE-250' }, { slug: 'atta-kesari', name: 'Atta Kesari', text: 'Google did not accept the change: <b>quota</b> & "limits"' }] });
+      eq(sent[1] && sent[1].subject, 'Google does not match the admin: 2 flavours', 'alert email: two flavours in the subject');
+      ok(sent[1] && sent[1].html.includes('Atta Sugar-Lite: not found in Google: MNG-LITE-250'), 'alert email: a line that does not name the flavour gets the name in front');
+      ok(sent[1] && sent[1].html.includes('&lt;b&gt;quota&lt;/b&gt; &amp; &quot;limits&quot;') && !sent[1].html.includes('<b>quota'), 'alert email: every value is escaped');
+      reply = { error: { message: 'domain not verified' } };
+      ok(await rejects(mailer.sendChannelSyncAlert({ channel: 'meta', problems: [{ slug: 'atta-kesari', name: 'Atta Kesari', text: 'x' }] })), 'alert email: a Resend error rejects, for the engine to log');
+      if (keep.resend) require.cache[resendPath] = keep.resend; else delete require.cache[resendPath];
+      if (keep.mailer) require.cache[mailerPath] = keep.mailer; else delete require.cache[mailerPath];
+      if (keep.to === undefined) delete process.env.NOTIFY_EMAIL; else process.env.NOTIFY_EMAIL = keep.to;
+    }
+  }
+
   console.log(`channel-sync-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
