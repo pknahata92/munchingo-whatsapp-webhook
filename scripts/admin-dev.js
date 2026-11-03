@@ -154,8 +154,8 @@ app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body &&
   const seed = () => Object.fromEntries(SLUGS.map((slug) => { const r = priceRows.find((x) => x.slug === slug); return [slug, { availability: 'in stock', price: r.price, mrp: r.mrp != null && r.mrp > r.price ? r.mrp : null }]; }));
   const SOURCE = 'accounts/dev/dataSources/1';
   const NAMES = Object.fromEntries(SLUGS.map((slug) => [slug, 'en~IN~' + GOOGLE_OFFER_IDS[slug]]));
-  let shown, stuck, skew, saved, noKey;
-  const reset = () => { shown = { meta: seed(), google: seed() }; stuck = { meta: {}, google: {} }; skew = 0; noKey = {}; saved = { meta: { mode: 'off', items: {} }, google: { mode: 'off', source: SOURCE, names: copy(NAMES), items: {} } }; };
+  let shown, stuck, skew, saved, noKey, failSaves;
+  const reset = () => { shown = { meta: seed(), google: seed() }; stuck = { meta: {}, google: {} }; skew = 0; noKey = {}; failSaves = 0; saved = { meta: { mode: 'off', items: {} }, google: { mode: 'off', source: SOURCE, names: copy(NAMES), items: {} } }; };
   reset();
   const read = (ch) => async (slugs, names) => Object.fromEntries(slugs.map((slug) => [slug, shown[ch][slug] && (ch !== 'google' || (names && names[slug])) ? copy(shown[ch][slug]) : null]));
   const push = (ch) => async (items) => { items.forEach(({ slug, state }) => { if (shown[ch][slug] && !stuck[ch][slug]) shown[ch][slug] = copy(state); }); return { ok: true }; };
@@ -164,13 +164,14 @@ app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body &&
     google: { configured: () => !noKey.google, read: read('google'), push: push('google'),
       setup: async () => ({ registered: true, source: SOURCE, names: copy(NAMES), missing: [], steps: ['Already registered with Google', 'Found the source "Munchingo admin stock"', 'Already first', 'Found 4 of 4 products'] }) },
     load: async () => copy(saved),
-    save: async (s) => { saved = copy(s); },
+    save: async (s) => { if (failSaves > 0) { failSaves--; throw new Error('practice: the database refused the write'); } saved = copy(s); },
     mail: async (a) => console.log('[dev] channel sync alert ->', a.channel, a.problems.map((p) => p.text).join(' | ')),
     now: () => Date.now() + skew,
   });
   // { stuck: { google: { 'atta-kesari': 'out of stock' } } }: that channel keeps showing it, whatever is pushed;
   // { minutesLater: 31 }: the sync clock runs 31 minutes ahead (a mismatch becomes a problem after 30); { notSetUp: true }: Google forgets its set-up;
-  // { noKey: ['meta'] }: as if that key were not on Render; { broken: true }: a malformed saved row (status() then fails); { reset: true }: back to the start.
+  // { noKey: ['meta'] }: as if that key were not on Render; { broken: true }: a malformed saved row (status() then fails);
+  // { failSave: 1 }: the next save fails (a database hiccup); { reset: true }: back to the start.
   app.post('/dev/channels', (req, res) => {
     const b = req.body || {};
     if (b.reset) reset();
@@ -179,6 +180,7 @@ app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body &&
     if (b.notSetUp) Object.assign(saved.google, { source: null, names: {} });
     if (b.broken) saved.meta.items['atta-original'] = null;
     (b.noKey || []).forEach((ch) => { noKey[ch] = true; });
+    if (b.failSave != null) failSaves = Number(b.failSave) || 0;
     res.json({ ok: true });
   });
 }

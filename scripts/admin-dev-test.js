@@ -272,5 +272,13 @@ async function login(email) {
   const ib = await call('/inventory', s.token);
   ok(ib.j.ok && ib.j.items.length >= 4 && ib.j.channels === null, 'when the channel state cannot be read, the inventory still loads (channels: ' + JSON.stringify(ib.j.channels) + ')');
   await devCh({ reset: true });
+  // a database hiccup while switching: the owner is told it failed, never that it worked (above all for Switch off)
+  await setMode(o.token, { channel: 'meta', mode: 'test' });
+  await devCh({ failSave: 1 });
+  const fo = await setMode(o.token, { channel: 'meta', mode: 'off' });
+  ok(fo.s === 503 && /^Could not switch Meta/.test(fo.j.error || '') && !fo.j.channels, 'a switch whose save failed answers 503 "Could not switch Meta…" (' + fo.s + ' ' + fo.j.error + ')');
+  ok((await chans(o.token)).meta.mode === 'test', 'and Meta is still on test, as the line shows');
+  ok((await setMode(o.token, { channel: 'meta', mode: 'off' })).j.channels?.meta?.mode === 'off', 'trying again once the database is back switches it off');
+  await devCh({ reset: true });
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

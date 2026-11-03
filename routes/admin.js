@@ -101,8 +101,12 @@ router.post('/admin/api/channels/mode', owner, wrap(async (req) => {
   const { channel, mode } = req.body || {};
   // Fixed lists first: a key such as __proto__ or constructor must never reach the saved state.
   if (!['meta', 'google'].includes(channel) || !['off', 'test', 'all'].includes(mode)) throw new actions.AdminError(BAD_SWITCH, 400);
-  try { return { channels: await chan().setMode(channel, mode, req.admin) }; }
+  let channels;
+  try { channels = await chan().setMode(channel, mode, req.admin); }
   catch (e) { if (/^Choose /.test(e.message)) throw new actions.AdminError(BAD_SWITCH, 400); throw e; }
+  // setMode answers with the old state when it could not save: never report a switch (above all Switch off) that did not happen
+  if (!channels || !channels[channel] || channels[channel].mode !== mode) throw new actions.AdminError(`Could not switch ${channel === 'meta' ? 'Meta' : 'Google'} just now. Try again.`, 503);
+  return { channels };
 }));
 router.post('/admin/api/channels/check', owner, wrap(async () => { await chan().sweepOnce(); return { channels: await chan().status() }; }));
 router.post('/admin/api/channels/setup-google', owner, wrap(async (req) => {
