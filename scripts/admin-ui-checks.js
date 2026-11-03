@@ -544,10 +544,10 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(!!btnIn(o, 'Meta', /^Test with Original$/) && !!btnIn(o, 'Google', /^Test with Original$/), 'the owner sees Test with Original on each line');
     ok(!byText('#viewStock button', /^Switch on all four$/) && !byText('#viewStock button', /^Set up Google$/), 'no Switch on all four before a matching test, and no Set up Google once Google is set up');
     const tw = btnIn(o, 'Meta', /^Test with Original$/); if (tw) click(tw);
-    // Original may be sold out in the practice data by now (packed orders took its boxes): then Meta is told, and shows it at the next read
-    const tested = /^Meta: (matches, checked \d\d:\d\d|waiting for Meta to update \(pushed \d\d:\d\d\))$/;
+    // Test with Original pushes Original first, then reads it back (the practice Meta shows a push at once)
+    const tested = /^Meta: matches, checked \d\d:\d\d$/;
     await until(() => tested.test(lineOf(o, 'Meta')), 5000, 'the test result').catch(() => {});
-    ok(tested.test(lineOf(o, 'Meta')), 'after Test with Original the Meta line says matches or waiting, with a time (' + lineOf(o, 'Meta') + ')');
+    ok(tested.test(lineOf(o, 'Meta')) && !!btnIn(o, 'Meta', /^Switch on all four$/), 'after Test with Original (a push, then a matching read) the Meta line says matches, with a time, and offers Switch on all four (' + lineOf(o, 'Meta') + ')');
     ok(/^Testing with Original\. Meta: /.test(text(q('#toast'))), 'a toast gives the result (' + text(q('#toast')) + ')');
     const cn = btnIn(o, 'Meta', /^Check now$/); if (cn) click(cn);
     await until(() => /^Meta: matches, checked \d\d:\d\d$/.test(lineOf(o, 'Meta')) && /\. Google: /.test(text(q('#toast'))), 5000, 'Meta to match').catch(() => {});
@@ -608,12 +608,108 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(lines(k).join(' | ') === 'Meta sync off: token not set | Google: switched off' && row(k, 'Meta') && row(k, 'Meta').querySelectorAll('button').length === 0, 'no Meta token: "Meta sync off: token not set", with no buttons (' + lines(k).join(' | ') + ')');
     k.close();
 
-    // the channel state cannot be read: the Stock screen still shows the stock
+    // a malformed saved row: the bad entry is dropped, so both lines still show (T-a)
     await dev({ reset: true }); await dev({ broken: true });
+    const mb = await openAdmin('owner', { width: 375 });
+    mb.click(mb.byText('#tabs .tab', /^Stock$/)); await until(() => lines(mb).length === 2, 4000, 'the lines').catch(() => {});
+    ok(lines(mb).join(' | ') === 'Meta: switched off | Google: switched off' && mb.errors.length === 0, 'a malformed saved row still shows both lines (' + lines(mb).join(' | ') + ')');
+    mb.close();
+
+    // the channel status cannot be read at all: the Stock screen still shows the stock
+    await dev({ reset: true }); await dev({ statusFails: true });
     const b = await openAdmin('owner', { width: 375 });
     b.click(b.byText('#tabs .tab', /^Stock$/)); await until(() => b.qa('#viewStock .line').length >= 4, 4000, 'the stock list').catch(() => {});
     ok(b.qa('#viewStock .line').length >= 4 && b.qa('#viewStock .chan').length === 0 && /Could not read Meta and Google/.test(b.text(b.q('#viewStock'))) && b.errors.length === 0, 'when Meta and Google cannot be read, the Stock screen still lists the stock and says so');
     b.close();
+    await dev({ reset: true });
+  });
+
+  // Meta and Google: what the owner is told when a try fails, a set-up that misses a product, the switched-off copy, and other days
+  list.push(async () => {
+    const dev = async (b) => (await fetch(BASE + '/dev/channels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json().catch(() => ({}));
+    await dev({ reset: true });
+    const o = await openAdmin('owner', { width: 375 });
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const api = async (p, body) => (await fetch(BASE + p, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: body ? JSON.stringify(body) : undefined })).json().catch(() => ({}));
+    const lines = (w) => w.qa('#viewStock .chan .chantx').map((e) => w.text(e));
+    const row = (w, L) => w.qa('#viewStock .chan').find((r) => new RegExp('^' + L + '\\b').test(w.text(r.querySelector('.chantx'))));
+    const btnIn = (w, L, re) => { const r = row(w, L); return r ? Array.from(r.querySelectorAll('button')).find((b) => re.test(w.text(b))) : null; };
+    const lineOf = (w, L) => { const r = row(w, L); return r ? w.text(r.querySelector('.chantx')) : ''; };
+    const subOf = (w, L) => { const r = row(w, L); const m = r && r.querySelector('.muted'); return m ? w.text(m) : ''; };
+    const toastOf = (w) => w.text(w.q('#toast'));
+    const toStock = async (w) => { w.click(w.byText('#tabs .tab', /^Stock$/)); await until(() => lines(w).length === 2, 4000, 'the lines').catch(() => {}); };
+    const press = (w, L, re) => { const b = btnIn(w, L, re); if (b) w.click(b); return !!b; };
+
+    // switched off before anything was sent: Google shows the sheet (I7)
+    await toStock(o);
+    ok(subOf(o, 'Google') === 'Nothing is sent. Google shows the Google sheet.', 'Google switched off, nothing sent yet: it shows the Google sheet (' + subOf(o, 'Google') + ')');
+    // a refused test push: the line and the toast say so at once, and Switch on all four waits (I1, I2)
+    await dev({ failPush: { meta: 'Invalid OAuth access token' } });
+    press(o, 'Meta', /^Test with Original$/);
+    await until(() => /did not accept/.test(lineOf(o, 'Meta')), 5000, 'the refusal').catch(() => {});
+    const refused = row(o, 'Meta') && row(o, 'Meta').querySelector('.chantx');
+    ok(lineOf(o, 'Meta') === 'Meta did not accept the change: Invalid OAuth access token' && !!refused && refused.classList.contains('bad'), 'a refused test push shows at once, in red: ' + lineOf(o, 'Meta'));
+    ok(toastOf(o) === 'Testing with Original. Meta did not accept the change: Invalid OAuth access token', 'the toast says what failed: ' + toastOf(o));
+    ok(!btnIn(o, 'Meta', /^Switch on all four$/) && !!btnIn(o, 'Meta', /^Test with Original$/), 'no Switch on all four; Test with Original can be tried again');
+    await dev({ failPush: { meta: null } });
+    press(o, 'Meta', /^Test with Original$/);
+    await until(() => /^Meta: matches/.test(lineOf(o, 'Meta')), 5000, 'the retry').catch(() => {});
+    ok(/^Meta: matches, checked \d\d:\d\d$/.test(lineOf(o, 'Meta')) && !!btnIn(o, 'Meta', /^Switch on all four$/), 'tried again once Meta takes it: matches, and Switch on all four is offered (' + lineOf(o, 'Meta') + ')');
+    // switched off after a push: honest about what Google keeps (I7)
+    press(o, 'Google', /^Test with Original$/);
+    await until(() => /^Google: (matches|waiting)/.test(lineOf(o, 'Google')), 5000, 'the Google test').catch(() => {});
+    press(o, 'Google', /^Switch off$/);
+    await until(() => lineOf(o, 'Google') === 'Google: switched off', 5000, 'Google off').catch(() => {});
+    ok(subOf(o, 'Google') === 'Nothing is sent. Google keeps the last stock and prices sent from here, ahead of the Google sheet.', 'Google switched off after a push says what Google keeps (' + subOf(o, 'Google') + ')');
+    press(o, 'Meta', /^Switch off$/);
+    await until(() => lineOf(o, 'Meta') === 'Meta: switched off', 5000, 'Meta off').catch(() => {});
+    ok(/^Nothing is sent\. Meta keeps the last stock and prices sent from here/.test(subOf(o, 'Meta')), 'Meta switched off after a push says the same (' + subOf(o, 'Meta') + ')');
+    ok(o.errors.length === 0, 'no page errors (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+
+    // refused three times: the problem line keeps the message whole, even a first word with a colon (M3)
+    await dev({ reset: true }); await dev({ failPush: { meta: 'invalid: price field' } });
+    await api('/admin/api/channels/mode', { channel: 'meta', mode: 'all' });
+    await api('/admin/api/inventory/pause', { slug: 'atta-kesari', paused: true });
+    for (let i = 0; i < 3; i++) await api('/admin/api/channels/check', {});
+    const m = await openAdmin('owner', { width: 375 }); await toStock(m);
+    const reds = row(m, 'Meta') ? Array.from(row(m, 'Meta').querySelectorAll('.bad')).map((e) => m.text(e)) : [];
+    ok(reds.includes('Meta: did not accept the change to Atta Kesari: invalid: price field'), 'a refused change keeps the whole message: ' + JSON.stringify(reds));
+    m.close();
+    await api('/admin/api/inventory/pause', { slug: 'atta-kesari', paused: false });
+
+    // a set-up that misses an offer id says so, and offers Set up Google again until it is fixed (I3, M4)
+    await dev({ reset: true }); await dev({ notSetUp: true }); await dev({ setupMissing: ['MNG-LITE-250'] });
+    const g = await openAdmin('owner', { width: 375 }); await toStock(g);
+    press(g, 'Google', /^Set up Google$/);
+    await until(() => g.qa('#viewStock .setup li').length > 0, 5000, 'the set-up steps').catch(() => {});
+    ok(toastOf(g) === 'Google is set up, but 1 product was not found; see below.', 'the set-up toast says a product was not found: ' + toastOf(g));
+    ok(/Not found in Merchant Center: MNG-LITE-250/.test(g.q('#viewStock .setup') ? g.text(g.q('#viewStock .setup')) : ''), 'and the set-up panel names it');
+    ok(!!btnIn(g, 'Google', /^Set up Google again$/), 'the Google line offers Set up Google again while an offer id is missing');
+    ok(/^Not found in Merchant Center: MNG-LITE-250\. Fix the offer ID in the Google sheet, then tap Set up Google again\./.test(subOf(g, 'Google')), 'and says which one, and what to do (' + subOf(g, 'Google') + ')');
+    await dev({ setupMissing: [] });
+    press(g, 'Google', /^Set up Google again$/);
+    await until(() => /Found 4 of 4 products/.test(g.q('#viewStock .setup') ? g.text(g.q('#viewStock .setup')) : ''), 5000, 'the second set-up').catch(() => {});
+    ok(toastOf(g) === 'Google is set up. Now tap Test with Original.' && !btnIn(g, 'Google', /^Set up Google again$/), 'set up again once fixed: the usual toast, and no Set up Google again (' + toastOf(g) + ')');
+    ok(g.errors.length === 0, 'no page errors in set-up (' + g.errors.join(' | ').slice(0, 200) + ')');
+    g.close();
+
+    // a check from another day carries the day: "yesterday 10:42", then "1 Nov 10:42" (M1, Indian time)
+    const IST = 5.5 * 3600000, MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const ist = (iso) => new Date(Date.parse(iso) + IST).toISOString();
+    await dev({ reset: true }); await dev({ minutesLater: -1440 });
+    await api('/admin/api/channels/mode', { channel: 'meta', mode: 'test' });
+    await dev({ minutesLater: 0 });
+    const y = await openAdmin('owner', { width: 375 }); await toStock(y);
+    const yAt = (await api('/admin/api/channels')).channels?.meta?.checkedAt;
+    ok(!!yAt && lineOf(y, 'Meta') === 'Meta: matches, checked yesterday ' + ist(yAt).slice(11, 16), 'a check made yesterday reads "checked yesterday HH:MM": ' + lineOf(y, 'Meta'));
+    y.close();
+    await dev({ minutesLater: -2880 }); await api('/admin/api/channels/check', {}); await dev({ minutesLater: 0 });
+    const d2 = await openAdmin('owner', { width: 375 }); await toStock(d2);
+    const dAt = (await api('/admin/api/channels')).channels?.meta?.checkedAt;
+    const dl = dAt ? Number(ist(dAt).slice(8, 10)) + ' ' + MON[Number(ist(dAt).slice(5, 7)) - 1] + ' ' + ist(dAt).slice(11, 16) : 'no time';
+    ok(lineOf(d2, 'Meta') === 'Meta: matches, checked ' + dl, 'an older check gives the date (' + dl + '): ' + lineOf(d2, 'Meta'));
+    d2.close();
     await dev({ reset: true });
   });
 

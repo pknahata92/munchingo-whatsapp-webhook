@@ -238,15 +238,16 @@ async function login(email) {
   ok((await chans(s.token)).meta.mode === 'off', 'a refused staff switch changes nothing');
   const mt = await setMode(o.token, { channel: 'meta', mode: 'test' });
   const orig = mt.j.channels?.meta?.items?.['atta-original'];
-  ok(mt.j.ok && mt.j.channels?.meta?.mode === 'test' && !!orig && !!orig.shown && orig.shown.availability === 'in stock', 'owner: Test with Original reads Original back from Meta as in stock (' + JSON.stringify(orig) + ')');
-  // the practice data has Original sold out by now (packed orders took its boxes), so Meta was told; it shows that at the next read
-  ok(!!orig && mt.j.channels.meta.why === (orig.want.availability === orig.shown.availability ? 'matches' : 'waiting for Meta to update') && !!mt.j.channels.meta.checkedAt, 'and the line says matches or waiting, with the time it was checked (' + mt.j.channels?.meta?.why + ')');
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  ok(mt.j.ok && mt.j.channels?.meta?.mode === 'test' && !!orig && !!orig.pushedAt && same(orig.pushed, orig.want) && same(orig.shown, orig.want), 'owner: Test with Original pushes Original (even when Meta already shows it), then reads it back (' + JSON.stringify(orig) + ')');
+  ok(mt.j.channels?.meta?.why === 'matches' && mt.j.channels.meta.testPassed === true && !!mt.j.channels.meta.checkedAt && Array.isArray(mt.j.errors) && mt.j.errors.length === 0, 'and the line says matches, with the time it was checked; Switch on all four is offered (' + JSON.stringify([mt.j.channels?.meta?.why, mt.j.channels?.meta?.testPassed, mt.j.errors]) + ')');
   ok((await setMode(o.token, { channel: 'meta', mode: 'all' })).j.channels?.meta?.mode === 'all', 'owner switches Meta on for all four');
   const kesariPushed = async (want) => { const t0 = Date.now(); while (Date.now() - t0 < 6000) { const it = ((await chans(o.token)).meta.items || {})['atta-kesari']; if (it && it.pushed && it.pushed.availability === want) return true; await new Promise((r) => setTimeout(r, 200)); } return false; };
   ok((await call('/inventory/pause', o.token, { slug: 'atta-kesari', paused: true })).j.ok && await kesariPushed('out of stock'), 'pausing Kesari reaches Meta within 6 s as out of stock');
   ok((await call('/inventory/pause', o.token, { slug: 'atta-kesari', paused: false })).j.ok && await kesariPushed('in stock'), 'resuming Kesari sends it back as in stock');
   const chk = await call('/channels/check', o.token, {});
   ok(chk.j.ok && chk.j.channels?.meta?.why === 'matches' && chk.j.channels?.google?.why === 'switched off', 'Check now reads Meta back: matches; Google stays off (' + JSON.stringify([chk.j.channels?.meta?.why, chk.j.channels?.google?.why]) + ')');
+  ok(Array.isArray(chk.j.errors) && chk.j.errors.length === 0 && !('errors' in (chk.j.channels || {})), 'Check now answers with what failed (nothing), apart from the lines (' + JSON.stringify(chk.j.errors) + ')');
   for (const b of [{ channel: 'x', mode: 'all' }, { channel: 'meta', mode: 'on' }, { channel: '__proto__', mode: 'all' }, { channel: 'constructor', mode: 'test' }, {}]) {
     const r = await setMode(o.token, b); ok(r.s === 400 && r.j.error === 'Choose Meta or Google, and off, test or all.', 'a bad switch is refused with 400: ' + JSON.stringify(b) + ' -> ' + r.s + ' ' + r.j.error);
   }
@@ -255,11 +256,31 @@ async function login(email) {
   ok(iv.j.ok && iv.j.items.length >= 4 && iv.j.channels?.meta?.mode === 'all' && iv.j.channels?.google?.why === 'switched off', 'the inventory carries the channel lines too, for staff as well');
   await setMode(o.token, { channel: 'meta', mode: 'off' });
   ok((await chans(o.token)).meta.why === 'switched off', 'owner switches Meta off');
+  // a refused push shows at once, and the switch answer says what failed (practice: Meta refuses every push until told otherwise)
+  await devCh({ failPush: { meta: 'Invalid OAuth access token' } });
+  const tf = await setMode(o.token, { channel: 'meta', mode: 'test' });
+  ok(tf.j.ok && tf.j.channels?.meta?.why === 'last try failed' && tf.j.channels.meta.error === 'Meta did not accept the change: Invalid OAuth access token' && tf.j.channels.meta.testPassed === false, 'a refused test push shows at once: ' + JSON.stringify([tf.j.channels?.meta?.why, tf.j.channels?.meta?.error, tf.j.channels?.meta?.testPassed]));
+  ok(JSON.stringify(tf.j.errors) === '["Meta did not accept the change: Invalid OAuth access token"]', 'and the answer says what failed, in plain words: ' + JSON.stringify(tf.j.errors));
+  await devCh({ failPush: { meta: null } });
+  const tq = await setMode(o.token, { channel: 'meta', mode: 'test' });
+  ok(tq.j.channels?.meta?.why === 'matches' && tq.j.channels.meta.testPassed === true && tq.j.errors?.length === 0, 'Test with Original again, once Meta takes it: matches, and Switch on all four is offered (' + JSON.stringify([tq.j.channels?.meta?.why, tq.j.errors]) + ')');
+  await setMode(o.token, { channel: 'meta', mode: 'off' });
   // Set up Google (the fake answers like an account that is already linked)
   await devCh({ notSetUp: true });
   ok((await chans(o.token)).google.why === 'not set up', 'Google without its set-up reads: not set up');
   const su = await call('/channels/setup-google', o.token, {});
   ok(su.j.ok && su.j.steps?.length === 4 && Array.isArray(su.j.missing) && su.j.missing.length === 0 && su.j.channels?.google?.why === 'switched off', 'owner sets up Google: the steps come back and Google is now just switched off (' + JSON.stringify(su.j.steps) + ')');
+  // set-up that misses an offer id says so and the status carries it; set up again once fixed, and the product starts syncing (I3, M4)
+  await devCh({ setupMissing: ['MNG-LITE-250'] });
+  const sm = await call('/channels/setup-google', o.token, {});
+  ok(sm.j.ok && JSON.stringify(sm.j.missing) === '["MNG-LITE-250"]' && JSON.stringify(sm.j.channels?.google?.missing) === '["MNG-LITE-250"]' && /Found 3 of 4 products/.test((sm.j.steps || []).join(' ')), 'set-up that does not find an offer id reports it, and the status carries it (' + JSON.stringify([sm.j.missing, sm.j.channels?.google?.missing, sm.j.steps]) + ')');
+  const gm = await setMode(o.token, { channel: 'google', mode: 'all' });
+  ok((gm.j.channels?.google?.problems || []).some((p) => p.text === 'not found in Google: MNG-LITE-250'), 'with Google on, Sugar-Lite reads as not found (' + JSON.stringify(gm.j.channels?.google?.problems) + ')');
+  await devCh({ setupMissing: [] });
+  const sa = await call('/channels/setup-google', o.token, {});
+  const lite = sa.j.channels?.google?.items?.['atta-lite-sugar'];
+  ok(sa.j.ok && sa.j.missing?.length === 0 && sa.j.channels?.google?.missing?.length === 0 && !(sa.j.channels?.google?.problems || []).some((p) => /^not found/.test(p.text)) && !!(lite && lite.shown && lite.shown.availability), 'set up again once fixed: nothing missing, and Sugar-Lite is read straight away (' + JSON.stringify([sa.j.channels?.google?.problems, lite]) + ')');
+  await setMode(o.token, { channel: 'google', mode: 'off' });
   // a problem: Google keeps showing Kesari out of stock while the admin says in stock
   await devCh({ stuck: { google: { 'atta-kesari': 'out of stock' } } });
   const ga = await setMode(o.token, { channel: 'google', mode: 'all' });
@@ -267,10 +288,16 @@ async function login(email) {
   await devCh({ minutesLater: 31 });
   const gp = (await call('/channels/check', o.token, {})).j.channels?.google || {};   // read back: what took the push now matches
   ok(gp.why === 'problem' && gp.problems?.length === 1 && gp.problems[0].slug === 'atta-kesari' && /Kesari shows out of stock; the admin says in stock$/.test(gp.problems[0].text), 'over 30 minutes later it is a problem: ' + JSON.stringify(gp.problems));
-  // a malformed saved row: the stock screen still loads, with no channel lines
+  // a malformed saved row: the bad entry is dropped and the lines still show (T-a)
   await devCh({ reset: true }); await devCh({ broken: true });
   const ib = await call('/inventory', s.token);
-  ok(ib.j.ok && ib.j.items.length >= 4 && ib.j.channels === null, 'when the channel state cannot be read, the inventory still loads (channels: ' + JSON.stringify(ib.j.channels) + ')');
+  ok(ib.j.ok && ib.j.items.length >= 4 && ib.j.channels?.meta?.why === 'switched off' && !('atta-original' in (ib.j.channels?.meta?.items || {})), 'a malformed saved row no longer hides the lines: the bad entry is dropped (meta: ' + JSON.stringify(ib.j.channels && ib.j.channels.meta) + ')');
+  // the channel status cannot be read at all: the stock screen still loads, and the channel route answers in plain words (T-d)
+  await devCh({ reset: true }); await devCh({ statusFails: true });
+  const ib2 = await call('/inventory', s.token);
+  ok(ib2.j.ok && ib2.j.items.length >= 4 && ib2.j.channels === null, 'when the channel status cannot be read, the inventory still loads (channels: ' + JSON.stringify(ib2.j.channels) + ')');
+  const gc = await call('/channels', s.token);
+  ok(gc.s === 503 && gc.j.error === 'Could not read the Meta and Google status just now. Try again.', 'and GET channels answers 503 in plain words, not a raw error (' + gc.s + ' ' + gc.j.error + ')');
   await devCh({ reset: true });
   // a database hiccup while switching: the owner is told it failed, never that it worked (above all for Switch off)
   await setMode(o.token, { channel: 'meta', mode: 'test' });

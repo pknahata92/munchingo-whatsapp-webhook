@@ -154,24 +154,34 @@ app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body &&
   const seed = () => Object.fromEntries(SLUGS.map((slug) => { const r = priceRows.find((x) => x.slug === slug); return [slug, { availability: 'in stock', price: r.price, mrp: r.mrp != null && r.mrp > r.price ? r.mrp : null }]; }));
   const SOURCE = 'accounts/dev/dataSources/1';
   const NAMES = Object.fromEntries(SLUGS.map((slug) => [slug, 'en~IN~' + GOOGLE_OFFER_IDS[slug]]));
-  let shown, stuck, skew, saved, noKey, failSaves;
-  const reset = () => { shown = { meta: seed(), google: seed() }; stuck = { meta: {}, google: {} }; skew = 0; noKey = {}; failSaves = 0; saved = { meta: { mode: 'off', items: {} }, google: { mode: 'off', source: SOURCE, names: copy(NAMES), items: {} } }; };
+  let shown, stuck, skew, saved, noKey, failSaves, failPush, setupMissing, statusFails;
+  const reset = () => { shown = { meta: seed(), google: seed() }; stuck = { meta: {}, google: {} }; skew = 0; noKey = {}; failSaves = 0; failPush = {}; setupMissing = []; statusFails = false; saved = { meta: { mode: 'off', items: {} }, google: { mode: 'off', source: SOURCE, names: copy(NAMES), items: {} } }; };
   reset();
   const read = (ch) => async (slugs, names) => Object.fromEntries(slugs.map((slug) => [slug, shown[ch][slug] && (ch !== 'google' || (names && names[slug])) ? copy(shown[ch][slug]) : null]));
-  const push = (ch) => async (items) => { items.forEach(({ slug, state }) => { if (shown[ch][slug] && !stuck[ch][slug]) shown[ch][slug] = copy(state); }); return { ok: true }; };
+  const push = (ch) => async (items) => {
+    if (failPush[ch]) throw new Error(`${ch}: ${failPush[ch]}`);   // worded like the real clients' errors
+    items.forEach(({ slug, state }) => { if (shown[ch][slug] && !stuck[ch][slug]) shown[ch][slug] = copy(state); }); return { ok: true };
+  };
+  // Set-up finds every offer id except those in setupMissing (as when the Google sheet has a different id).
+  const setup = async () => {
+    const names = Object.fromEntries(Object.entries(NAMES).filter(([slug]) => !setupMissing.includes(GOOGLE_OFFER_IDS[slug])));
+    return { registered: true, source: SOURCE, names, missing: SLUGS.map((slug) => GOOGLE_OFFER_IDS[slug]).filter((id) => setupMissing.includes(id)),
+      steps: ['Already registered with Google', 'Found the source "Munchingo admin stock"', 'Already first', `Found ${Object.keys(names).length} of ${SLUGS.length} products`] };
+  };
   sync.setDeps({
     meta: { configured: () => !noKey.meta, read: read('meta'), push: push('meta') },
-    google: { configured: () => !noKey.google, read: read('google'), push: push('google'),
-      setup: async () => ({ registered: true, source: SOURCE, names: copy(NAMES), missing: [], steps: ['Already registered with Google', 'Found the source "Munchingo admin stock"', 'Already first', 'Found 4 of 4 products'] }) },
+    google: { configured: () => !noKey.google, read: read('google'), push: push('google'), setup },
     load: async () => copy(saved),
     save: async (s) => { if (failSaves > 0) { failSaves--; throw new Error('practice: the database refused the write'); } saved = copy(s); },
     mail: async (a) => console.log('[dev] channel sync alert ->', a.channel, a.problems.map((p) => p.text).join(' | ')),
-    now: () => Date.now() + skew,
+    now: () => { if (statusFails) throw new Error('practice: the sync clock is broken'); return Date.now() + skew; },
   });
   // { stuck: { google: { 'atta-kesari': 'out of stock' } } }: that channel keeps showing it, whatever is pushed;
-  // { minutesLater: 31 }: the sync clock runs 31 minutes ahead (a mismatch becomes a problem after 30); { notSetUp: true }: Google forgets its set-up;
-  // { noKey: ['meta'] }: as if that key were not on Render; { broken: true }: a malformed saved row (status() then fails);
-  // { failSave: 1 }: the next save fails (a database hiccup); { reset: true }: back to the start.
+  // { minutesLater: 31 }: the sync clock runs 31 minutes ahead (a mismatch becomes a problem after 30; negative: the past); { notSetUp: true }: Google forgets its set-up;
+  // { noKey: ['meta'] }: as if that key were not on Render; { broken: true }: a malformed saved row (the bad entry is dropped);
+  // { failSave: 1 }: the next save fails (a database hiccup); { failPush: { meta: 'Invalid OAuth access token' } }: every Meta push is refused with that
+  // message until { failPush: { meta: null } }; { setupMissing: ['MNG-LITE-250'] }: set-up does not find that offer id;
+  // { statusFails: true }: the sync's clock throws, so status() rejects (as a bug would); { reset: true }: back to the start.
   app.post('/dev/channels', (req, res) => {
     const b = req.body || {};
     if (b.reset) reset();
@@ -181,6 +191,9 @@ app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body &&
     if (b.broken) saved.meta.items['atta-original'] = null;
     (b.noKey || []).forEach((ch) => { noKey[ch] = true; });
     if (b.failSave != null) failSaves = Number(b.failSave) || 0;
+    Object.keys(b.failPush || {}).forEach((ch) => { if (ch === 'meta' || ch === 'google') failPush[ch] = b.failPush[ch] ? String(b.failPush[ch]) : null; });
+    if (Array.isArray(b.setupMissing)) setupMissing = b.setupMissing.map(String);
+    if (b.statusFails != null) statusFails = !!b.statusFails;
     res.json({ ok: true });
   });
 }

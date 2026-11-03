@@ -95,23 +95,29 @@ router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.b
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
 router.post('/admin/api/inventory/reverse', sw((req, inv) => inv.reverse({ id: Number((req.body || {}).id), reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));
 // Meta and Google follow the admin (utils/channelSync.js). Staff and owner see the lines; only the owner switches, checks or sets up.
+// errors: what the run after Test with Original, Switch on all four or Check now could not do, in plain words, apart from the lines.
 const BAD_SWITCH = 'Choose Meta or Google, and off, test or all.';
-router.get('/admin/api/channels', wrap(async () => ({ channels: await chan().status() })));
+const READ_FAIL = 'Could not read the Meta and Google status just now. Try again.';
+const chanFail = (e) => { console.error('[CHANNELS] could not answer the admin:', e && e.message); return new actions.AdminError(READ_FAIL, 503); };
+// A status that cannot be built (a bug) reaches the owner as plain words, never as a raw TypeError; the detail stays in the log.
+const chanCall = async (fn) => { try { return await fn(); } catch (e) { throw chanFail(e); } };
+router.get('/admin/api/channels', wrap(async () => ({ channels: await chanCall(() => chan().status()) })));
 router.post('/admin/api/channels/mode', owner, wrap(async (req) => {
   const { channel, mode } = req.body || {};
   // Fixed lists first: a key such as __proto__ or constructor must never reach the saved state.
   if (!['meta', 'google'].includes(channel) || !['off', 'test', 'all'].includes(mode)) throw new actions.AdminError(BAD_SWITCH, 400);
-  let channels;
-  try { channels = await chan().setMode(channel, mode, req.admin); }
-  catch (e) { if (/^Choose /.test(e.message)) throw new actions.AdminError(BAD_SWITCH, 400); throw e; }
+  let out;
+  try { out = await chan().setMode(channel, mode, req.admin); }
+  catch (e) { if (/^Choose /.test(e.message)) throw new actions.AdminError(BAD_SWITCH, 400); throw chanFail(e); }
+  const { errors = [], ...channels } = out || {};
   // setMode answers with the old state when it could not save: never report a switch (above all Switch off) that did not happen
-  if (!channels || !channels[channel] || channels[channel].mode !== mode) throw new actions.AdminError(`Could not switch ${channel === 'meta' ? 'Meta' : 'Google'} just now. Try again.`, 503);
-  return { channels };
+  if (!channels[channel] || channels[channel].mode !== mode) throw new actions.AdminError(`Could not switch ${channel === 'meta' ? 'Meta' : 'Google'} just now. Try again.`, 503);
+  return { channels, errors };
 }));
-router.post('/admin/api/channels/check', owner, wrap(async () => { await chan().sweepOnce(); return { channels: await chan().status() }; }));
+router.post('/admin/api/channels/check', owner, wrap(async () => { const { errors = [], ...channels } = await chanCall(() => chan().checkNow()); return { channels, errors }; }));
 router.post('/admin/api/channels/setup-google', owner, wrap(async (req) => {
   const r = await chan().setupGoogle(req.admin);   // never rejects: a failure comes back as r.error, with the steps done so far
-  return { ok: !r.error, steps: r.steps || [], missing: r.missing || [], error: r.error ? String(r.error).replace(/^google: /i, '') : undefined, channels: await chan().status() };
+  return { ok: !r.error, steps: r.steps || [], missing: r.missing || [], error: r.error ? String(r.error).replace(/^google: /i, '') : undefined, channels: await chanCall(() => chan().status()) };
 }));
 // Reviews and founding tasters (owner only). See utils/adminReviews.js.
 const rv = () => require('../utils/adminReviews');

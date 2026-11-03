@@ -845,7 +845,12 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     const stub = (p, exp) => { const f = abs(p); require.cache[f] = { id: f, filename: f, loaded: true, exports: exp }; };
     const nudges = []; let nudgeThrows = false; let saveThrows = false; const saved = [];
     const CHAN = { meta: { why: 'switched off' }, google: { why: 'switched off' } }; let statusThrows = false;   // the Stock screen also carries the channel lines (Task 6)
-    stub('utils/channelSync.js', { nudge: (r) => { if (nudgeThrows) throw new Error('boom'); nudges.push(r); }, startSweep: () => {}, status: async () => { if (statusThrows) throw new Error('bad saved row'); return CHAN; } });
+    const SWITCHED = { meta: { why: 'last try failed', mode: 'test' }, google: { why: 'switched off', mode: 'off' } }; let chanThrows = false;
+    const RAW = "Cannot read properties of undefined (reading 'items')";   // what a bug in the engine would throw
+    stub('utils/channelSync.js', { nudge: (r) => { if (nudgeThrows) throw new Error('boom'); nudges.push(r); }, startSweep: () => {}, status: async () => { if (statusThrows) throw new TypeError(RAW); return CHAN; },
+      setMode: async () => { if (chanThrows) throw new TypeError(RAW); return { ...SWITCHED, errors: ['Meta did not accept the change: Invalid OAuth access token'] }; },
+      checkNow: async () => { if (chanThrows) throw new TypeError(RAW); return { ...CHAN, errors: ['Meta could not be read: read refused'] }; },
+      setupGoogle: async () => ({ steps: ['Registered with Google'], missing: [] }) });
     // refunds: a fully refunded paid order is closed (status cancelled), which frees its unpacked boxes
     let closeFails = false; const closed = []; let paymentsAtRazorpay = [];
     const paidOrder = { order_id: 'MNG-TEST-0001', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), status: 'paid', payment_id: 'pay_1', customer_name: 'C', customer_phone: '919810000001', customer_email: 'c@example.test', total: 259, discount_amount: 0, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 1, item_price: 259, unit: '250g' }], delivery_address: { raw: 'Delhi - 110001', state: 'Delhi' } };
@@ -926,6 +931,22 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
       nudgeThrows = true;
       eq(await hit('post', '/admin/api/inventory/receive'), { ok: true, id: 1 }, 'hooks: a nudge that throws never breaks a stock action');
       nudgeThrows = false;
+
+      // the channel routes (T-d): the run's failures come back apart from the lines; a status() that rejects reaches the owner in plain
+      // words (503) and is logged with [CHANNELS], never shown as a raw TypeError
+      const hit2 = async (method, p, body) => { const res = { code: 200, body: null, status(c) { this.code = c; return this; }, json(x) { this.body = x; } }; await handler(method, p)({ method: method.toUpperCase(), body: body || {}, query: {}, admin: { email: 'a@b', role: 'owner' } }, res); return res; };
+      const READ_FAIL = 'Could not read the Meta and Google status just now. Try again.';
+      eq((await hit2('get', '/admin/api/channels')).body, { ok: true, channels: CHAN }, 'routes: GET channels answers with the lines');
+      eq((await hit2('post', '/admin/api/channels/check')).body, { ok: true, channels: CHAN, errors: ['Meta could not be read: read refused'] }, 'routes: Check now answers with the lines and, apart from them, what failed');
+      eq((await hit2('post', '/admin/api/channels/mode', { channel: 'meta', mode: 'test' })).body, { ok: true, channels: SWITCHED, errors: ['Meta did not accept the change: Invalid OAuth access token'] }, 'routes: a switch answers with the lines and, apart from them, what failed');
+      const logged = []; console.error = (...a) => logged.push(a.join(' '));
+      statusThrows = true; chanThrows = true;
+      for (const [m, p, b] of [['get', '/admin/api/channels'], ['post', '/admin/api/channels/check'], ['post', '/admin/api/channels/mode', { channel: 'meta', mode: 'off' }], ['post', '/admin/api/channels/setup-google']]) {
+        const r = await hit2(m, p, b);
+        ok(r.code === 503 && r.body && r.body.ok === false && r.body.error === READ_FAIL, `routes: ${m.toUpperCase()} ${p} with a broken status answers 503 in plain words: ` + JSON.stringify([r.code, r.body]));
+      }
+      console.error = quietErr; statusThrows = false; chanThrows = false;
+      ok(logged.length === 4 && logged.every((l) => l.startsWith('[CHANNELS]') && l.includes(RAW)), 'routes: each is logged with [CHANNELS], the detail kept in the log: ' + JSON.stringify(logged));
     } finally {
       console.log = quiet; console.error = quietErr;
       if (keepNotify === undefined) delete process.env.NOTIFY_EMAIL; else process.env.NOTIFY_EMAIL = keepNotify;

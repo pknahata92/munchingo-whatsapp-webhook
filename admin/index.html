@@ -817,34 +817,57 @@ header small{color:var(--ink2);opacity:1}
 
   // ── Meta and Google: one line each at the top of the Stock screen. Everyone sees the lines; only the owner gets the buttons. ──
   var CH = { meta: 'Meta', google: 'Google' };
-  var hhmm = function (iso) { return iso ? new Date(Date.parse(iso) + IST).toISOString().slice(11, 16) : ''; };   // Indian time, HH:MM
+  var DAY_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // Indian time: HH:MM today, "yesterday HH:MM", else "2 Nov HH:MM"
+  var hhmm = function (iso) {
+    if (!iso) return '';
+    var d = new Date(Date.parse(iso) + IST).toISOString(), day = d.slice(0, 10), t = d.slice(11, 16);
+    return day === dayShift(0) ? t : day === dayShift(1) ? 'yesterday ' + t : Number(d.slice(8, 10)) + ' ' + DAY_MON[Number(d.slice(5, 7)) - 1] + ' ' + t;
+  };
   function lastPush(c) {
     var items = c.items || {}, slugs = c.mode === 'test' ? ['atta-original'] : Object.keys(items);
     return slugs.map(function (s) { return (items[s] || {}).pushedAt; }).filter(Boolean).sort().pop() || null;
   }
-  // A problem in plain words, e.g. "Google: Atta Kesari shows out of stock; the admin says in stock".
+  // A problem in plain words, e.g. "Google: Atta Kesari shows out of stock; the admin says in stock". The server's message is shown whole.
   function problemLine(L, p) {
-    var t = String(p.text || ''), nf = /^not found in \w+: (.+)$/.exec(t), na = L + ' did not accept the change: ';
+    var t = String(p.text || ''), nf = /^not found in \w+: (.+)$/.exec(t), na = L + ' did not accept the change: ', nr = L + ' could not be read: ';
     if (nf) return L + ': ' + p.name + ' not found (' + nf[1] + ')';
-    if (t.indexOf(na) === 0) return L + ': did not accept the change to ' + p.name + ': ' + t.slice(na.length).replace(/^[a-z-]+: /, '');
+    if (t.indexOf(na) === 0) return L + ': did not accept the change to ' + p.name + ': ' + t.slice(na.length);
+    if (t.indexOf(nr) === 0) return L + ': could not read ' + p.name + ': ' + t.slice(nr.length);
     return L + ': ' + t;
   }
-  function chanLine(ch, c) {
+  var notFound = function (p) { return /^not found in /.test(String(p.text || '')); };
+  function chanBase(ch, c) {
     var L = CH[ch], why = c.why || '', probs = c.problems || [], off = c.mode === 'off' ? [] : ['off'], place = ch === 'meta' ? 'Commerce Manager' : 'Merchant Center';
     var testing = c.mode === 'test' ? 'Only Original follows the admin. Check it in ' + place + ', then switch on all four.' : '';
+    // Switched off, the channel keeps what it last had: our last values if anything was sent (for Google, still ahead of the sheet).
+    var kept = ch === 'google' ? (lastPush(c) ? 'Google keeps the last stock and prices sent from here, ahead of the Google sheet.' : 'Google shows the Google sheet.')
+      : (lastPush(c) ? 'Meta keeps the last stock and prices sent from here until they are changed by hand in Commerce Manager.' : 'Meta shows what was typed there by hand.');
     if (why === 'token not set') return { cls: 'off', text: L + ' sync off: token not set', sub: 'Add ' + (ch === 'meta' ? 'META_CATALOG_TOKEN' : 'GOOGLE_MERCHANT_KEY and GOOGLE_MERCHANT_ID') + ' on Render to turn this on.', btns: off };
     if (why === 'not set up') return { cls: 'off', text: L + ': not set up', sub: 'Set up once: it links the admin to Merchant Center.', btns: ['setup'].concat(off) };
-    if (why === 'switched off') return { cls: 'off', text: L + ': switched off', sub: 'Nothing is sent. ' + L + ' shows what was typed there by hand.', btns: ['test'] };
+    if (why === 'switched off') return { cls: 'off', text: L + ': switched off', sub: 'Nothing is sent. ' + kept, btns: ['test'] };
     if (why === 'problem' && probs.length) return { cls: 'bad', text: problemLine(L, probs[0]), more: probs.slice(1).map(function (p) { return problemLine(L, p); }), sub: 'Look at it in ' + place + ', then tap Check now.' + (testing ? ' ' + testing : ''), btns: ['check', 'off'] };
-    if (why === 'matches') return { cls: 'ok', text: L + ': matches' + (c.checkedAt ? ', checked ' + hhmm(c.checkedAt) : ''), sub: testing, btns: (c.mode === 'test' ? ['all'] : []).concat(['check', 'off']) };
+    // the latest try failed (fewer than 3 times, so no email yet): say so at once, never "matches" from an older check
+    if (why === 'last try failed') return { cls: 'bad', text: c.error || L + ': the last try failed', sub: 'It tries again at the next check, within 15 minutes; you get an email if it keeps failing.' + (testing ? ' ' + testing : ''), btns: (c.mode === 'test' ? ['test'] : []).concat(['check', 'off']) };
+    // Switch on all four only once a test push went through and a later read matched; otherwise the test can be run again
+    if (why === 'matches') return { cls: 'ok', text: L + ': matches' + (c.checkedAt ? ', checked ' + hhmm(c.checkedAt) : ''), sub: testing, btns: (c.mode === 'test' ? [c.testPassed ? 'all' : 'test'] : []).concat(['check', 'off']) };
     if (/^waiting/.test(why)) { var at = lastPush(c); return { cls: 'wait', text: L + ': ' + why + (at ? ' (pushed ' + hhmm(at) + ')' : ''), sub: ch === 'google' ? 'Google takes a few minutes to show a change. Tap Check now later.' : testing, btns: ['check', 'off'] }; }
     return { cls: 'off', text: L + ': ' + why, btns: ['check'].concat(off) };
   }
-  var CH_BTN = { test: ['Test with Original', 'btn small'], all: ['Switch on all four', 'btn small'], setup: ['Set up Google', 'btn small'], check: ['Check now', 'btn ghost small'], off: ['Switch off', 'btn ghost red small'] };
+  // Google set-up can be run again (it is safe to repeat) whenever a product was not found: it finds the offer ids afresh.
+  function chanLine(ch, c) {
+    var out = chanBase(ch, c), missing = c.missing || [], probs = c.problems || [];
+    if (ch !== 'google' || /^(token not set|not set up)$/.test(c.why || '') || !(missing.length || probs.some(notFound))) return out;
+    out.btns = ['resetup'].concat(out.btns);
+    if (missing.length && !probs.some(notFound)) out.sub = 'Not found in Merchant Center: ' + missing.join(', ') + '. Fix the offer ID in the Google sheet, then tap Set up Google again.' + (out.sub ? ' ' + out.sub : '');
+    return out;
+  }
+  var CH_BTN = { test: ['Test with Original', 'btn small'], all: ['Switch on all four', 'btn small'], setup: ['Set up Google', 'btn small'], resetup: ['Set up Google again', 'btn ghost small'], check: ['Check now', 'btn ghost small'], off: ['Switch off', 'btn ghost red small'] };
   var CH_ASK = {
     test: function (L) { return 'Test with Original on ' + L + '? The admin\'s stock and price for Original are sent to ' + L + '; the other three stay as they are.'; },
     all: function (L) { return 'Switch on all four on ' + L + '? From now on ' + L + ' shows the admin\'s stock and prices for all four flavours.'; },
     setup: function () { return 'Set up Google now? This adds the admin as a source in Merchant Center, ahead of the Google sheet. No product is changed.'; },
+    resetup: function () { return 'Set up Google again? It looks for the four products in Merchant Center again and keeps the admin ahead of the Google sheet.'; },
   };
   function chanRow(box, ch, c) {
     var L = chanLine(ch, c), own = state.role === 'owner';
@@ -870,18 +893,20 @@ header small{color:var(--ink2);opacity:1}
     if (setup) box.appendChild(setupPanel(box, setup));
   }
   function chanAct(box, ch, b) {
-    var L = CH[ch];
+    var L = CH[ch], setup = b === 'setup' || b === 'resetup';
     if (CH_ASK[b] && !confirm(CH_ASK[b](L))) return;
     [].forEach.call(box.querySelectorAll('button'), function (x) { x.disabled = true; });
-    if (b !== 'off') toast(b === 'check' ? 'Checking Meta and Google…' : b === 'setup' ? 'Setting up Google…' : 'Asking ' + L + '…', 30000);
-    var path = '/admin/api/channels/' + (b === 'check' ? 'check' : b === 'setup' ? 'setup-google' : 'mode');
-    api(path, { method: 'POST', body: b === 'check' || b === 'setup' ? {} : { channel: ch, mode: b } }).then(function (j) {
+    if (b !== 'off') toast(b === 'check' ? 'Checking Meta and Google…' : setup ? 'Setting up Google…' : 'Asking ' + L + '…', 30000);
+    var path = '/admin/api/channels/' + (b === 'check' ? 'check' : setup ? 'setup-google' : 'mode');
+    api(path, { method: 'POST', body: b === 'check' || setup ? {} : { channel: ch, mode: b } }).then(function (j) {
       if (!j.channels) { drawChannels(box, state.channels); return toast(j.error || 'Something went wrong', 6000); }
       state.channels = j.channels; renderNeeds();
-      drawChannels(box, j.channels, b === 'setup' ? { steps: j.steps || [], missing: j.missing || [], error: j.error } : null);
+      drawChannels(box, j.channels, setup ? { steps: j.steps || [], missing: j.missing || [], error: j.error } : null);
       var line = function (c) { return j.channels[c] ? chanLine(c, j.channels[c]).text : ''; };
-      toast(b === 'test' ? 'Testing with Original. ' + line(ch) : b === 'all' ? 'All four flavours now follow the admin. ' + line(ch) : b === 'off' ? L + ' switched off. Nothing more is sent.'
-        : b === 'setup' ? (j.error ? 'Google set-up stopped. See the steps.' : 'Google is set up. Now tap Test with Original.') : line('meta') + '. ' + line('google'), 7000);
+      var said = (j.errors || []).join('. '), miss = (j.missing || []).length, gOn = j.channels.google && j.channels.google.mode !== 'off';   // said: what the run could not do
+      toast(b === 'test' ? 'Testing with Original. ' + (said || line(ch)) : b === 'all' ? (said ? 'All four are switched on, but: ' + said : 'All four flavours now follow the admin. ' + line(ch)) : b === 'off' ? L + ' switched off. Nothing more is sent.'
+        : setup ? (j.error ? 'Google set-up stopped. See the steps.' : miss ? 'Google is set up, but ' + miss + (miss === 1 ? ' product was' : ' products were') + ' not found; see below.' : gOn ? 'Google is set up again. ' + line('google') : 'Google is set up. Now tap Test with Original.')
+        : said || line('meta') + '. ' + line('google'), 7000);
     }).catch(function () { drawChannels(box, state.channels); toast('Could not reach the server', 6000); });
   }
   // A stock change reaches Meta and Google about 3 s later: redraw the lines once it has gone out (not over an open set-up or a running action).
