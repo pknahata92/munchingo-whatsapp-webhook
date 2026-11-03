@@ -251,8 +251,23 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     const hEmpty = merchant({ sources: [Object.assign(sheet(5), { primaryProductDataSource: {} })], products: three() });
     await make(hEmpty).setup();
     eq(hits(hEmpty, 'PATCH', `${DS}/5`)[0].data.primaryProductDataSource.defaultRule.takeFromDataSources, [{ supplementalDataSourceName: OURS }, { self: true }], 'google setup: a missing rule becomes ours then the sheet');
+    const hBlank = merchant({ sources: [Object.assign(sheet(5), { primaryProductDataSource: { defaultRule: { takeFromDataSources: [] } } })], products: three() });
+    await make(hBlank).setup();
+    eq(hits(hBlank, 'PATCH', `${DS}/5`)[0].data.primaryProductDataSource.defaultRule.takeFromDataSources, [{ supplementalDataSourceName: OURS }, { self: true }], 'google setup: an empty rule [] becomes ours then the sheet');
 
-    // the sheet primary is the one primary whose input is not API
+    // which primary gets ours first: any primary that already has ours first is enough; otherwise the one FILE primary (a Google Sheet if there are several)
+    const primary = (id, input, extra) => Object.assign({ name: `accounts/1/dataSources/${id}`, displayName: `Primary ${id}`, input, primaryProductDataSource: { defaultRule: { takeFromDataSources: [{ self: true }] } } }, extra);
+    const gsheet = (id) => primary(id, 'FILE', { fileInput: { fileInputType: 'GOOGLE_SHEETS' } });
+    const hAuto = merchant({ sources: [primary(4, 'AUTOFEED'), gsheet(5)], products: three() });
+    const rAuto = await make(hAuto).setup();
+    ok(rAuto.source === OURS && hits(hAuto, 'PATCH', `${DS}/5`).length === 1 && hits(hAuto, 'PATCH', `${DS}/4`).length === 0, 'google setup: an AUTOFEED primary beside one Google Sheet: the Sheet gets ours first, the autofeed is left alone');
+    const hFiles = merchant({ sources: [primary(6, 'FILE', { fileInput: { fileInputType: 'FETCH' } }), gsheet(5)], products: three() });
+    await make(hFiles).setup();
+    ok(hits(hFiles, 'PATCH', `${DS}/5`).length === 1 && hits(hFiles, 'PATCH', `${DS}/6`).length === 0, 'google setup: two FILE primaries, one a Google Sheet: the Sheet is used');
+    const oursFirst = primary(5, 'FILE', { primaryProductDataSource: { defaultRule: { takeFromDataSources: [{ supplementalDataSourceName: OURS }, { self: true }] } } });
+    const hFirst = merchant({ sources: [{ name: OURS, displayName: 'Munchingo admin stock', supplementalProductDataSource: {} }, oursFirst, primary(6, 'FILE')], products: three() });
+    const rFirst = await make(hFirst).setup();
+    ok(rFirst.steps.includes('Already first') && hFirst.calls.filter((c) => c.method === 'PATCH').length === 0, 'google setup: two primaries, one already has ours first: "Already first", no PATCH (' + JSON.stringify(rFirst.steps) + ')');
     const hApi = merchant({ sources: [sheet(5), { name: 'accounts/1/dataSources/6', displayName: 'Api primary', input: 'API', primaryProductDataSource: {} }], products: three() });
     ok((await make(hApi).setup()).source === OURS && hits(hApi, 'PATCH', `${DS}/5`).length === 1, 'google setup: an API primary is not counted as a sheet');
     const hTwo = merchant({ sources: [sheet(5), sheet(6)], products: three() });
@@ -260,6 +275,10 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     ok(/found 2 sheet data sources, expected 1; link "Munchingo admin stock" by hand in Merchant Center/.test(twoMsg), 'google setup: two sheets stop with the by-hand message');
     eq(hits(hTwo, 'PATCH', `${DS}/5`).length + hits(hTwo, 'PATCH', `${DS}/6`).length, 0, 'google setup: two sheets patch nothing');
     ok(/found 0 sheet data sources/.test(await caught(make(merchant({ sources: [], products: three() })).setup())), 'google setup: no sheet stops too');
+    ok(/found 0 sheet data sources/.test(await caught(make(merchant({ sources: [primary(4, 'AUTOFEED')], products: three() })).setup())), 'google setup: an autofeed alone is not a sheet');
+    // a failure brings back the steps done before it, for the owner's set-up panel
+    let stopped = null; try { await make(merchant({ sources: [sheet(5), sheet(6)], products: three() })).setup(); } catch (e) { stopped = e; }
+    eq(stopped && stopped.steps, ['Registered with Google', 'Created the source "Munchingo admin stock"'], 'google setup: the error carries the steps done before it stopped');
 
     // "already registered" is success, anything else is not
     const hReg = merchant({ sources: [sheet(5)], products: three() }); hReg.registerError = httpErr(409, 'Conflict');

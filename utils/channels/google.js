@@ -86,10 +86,24 @@ function makeGoogle({ http = require('axios'), keyJson = process.env.GOOGLE_MERC
     return out;
   }
 
+  // The primary whose rule must take ours first: the one FILE primary (a Google Sheet when there are several FILE primaries).
+  // An autofeed or API primary is never it. Anything but exactly one stops set-up with the by-hand message.
+  function sheetOf(primaries) {
+    const files = primaries.filter((s) => s.input === 'FILE');
+    const sheets = files.length > 1 ? files.filter((s) => (s.fileInput || {}).fileInputType === 'GOOGLE_SHEETS') : files;
+    const pick = sheets.length ? sheets : files;
+    if (pick.length !== 1) throw new Error(`Google: found ${pick.length} sheet data sources, expected 1; link "${SOURCE_NAME}" by hand in Merchant Center`);
+    return pick[0];
+  }
+
   // One-time (and safe to repeat): register, make our supplemental source, put it ahead of the sheet, find the four products.
+  // A failure carries the steps done before it (error.steps), for the owner's set-up panel.
   async function setup() {
     ready();
     const steps = [];
+    try { return await setupSteps(steps); } catch (e) { if (e && typeof e === 'object') e.steps = steps.slice(); throw e; }
+  }
+  async function setupSteps(steps) {
     try {
       await call({ method: 'POST', url: `${acct('accounts')}/developerRegistration:registerGcp`, data: {} });
       steps.push('Registered with Google');
@@ -108,15 +122,15 @@ function makeGoogle({ http = require('axios'), keyJson = process.env.GOOGLE_MERC
     }
 
     // Ours must come first in the sheet's rule so its availability and price win. The PATCH replaces the whole rule, so existing entries are kept.
-    const sheets = sources.filter((s) => s.primaryProductDataSource && s.input !== 'API');
-    if (sheets.length !== 1) throw new Error(`Google: found ${sheets.length} sheet data sources, expected 1; link "${SOURCE_NAME}" by hand in Merchant Center`);
-    const existing = (sheets[0].primaryProductDataSource.defaultRule || {}).takeFromDataSources || [];
-    if (existing[0] && existing[0].supplementalDataSourceName === ours.name) steps.push('Already first');
+    const ruleOf = (src) => (src.primaryProductDataSource.defaultRule || {}).takeFromDataSources || [];
+    const primaries = sources.filter((s) => s.primaryProductDataSource);
+    if (primaries.some((p) => { const r = ruleOf(p); return r[0] && r[0].supplementalDataSourceName === ours.name; })) steps.push('Already first');
     else {
+      const sheet = sheetOf(primaries); const existing = ruleOf(sheet);
       const takeFromDataSources = existing.length
         ? [{ supplementalDataSourceName: ours.name }, ...existing.filter((e) => e.supplementalDataSourceName !== ours.name)]
         : [{ supplementalDataSourceName: ours.name }, { self: true }];
-      await call({ method: 'PATCH', url: `${API}/datasources/v1/${sheets[0].name}`, params: { updateMask: 'primaryProductDataSource.defaultRule' }, data: { primaryProductDataSource: { defaultRule: { takeFromDataSources } } } });
+      await call({ method: 'PATCH', url: `${API}/datasources/v1/${sheet.name}`, params: { updateMask: 'primaryProductDataSource.defaultRule' }, data: { primaryProductDataSource: { defaultRule: { takeFromDataSources } } } });
       steps.push('Put it first, ahead of the Google sheet');
     }
 
