@@ -525,5 +525,97 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     s2.close();
   });
 
+  // Meta and Google on the Stock screen (channel sync): a line each, owner-only buttons, a problem in Needs you now. Phone width 375 px.
+  list.push(async () => {
+    const dev = async (b) => (await fetch(BASE + '/dev/channels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json().catch(() => ({}));
+    await dev({ reset: true });
+    const o = await openAdmin('owner', { width: 375 }); const { q, qa, text, click, byText } = o;
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const api = async (p, body) => (await fetch(BASE + p, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: body ? JSON.stringify(body) : undefined })).json().catch(() => ({}));
+    const lines = (w) => w.qa('#viewStock .chan .chantx').map((e) => w.text(e));
+    const row = (w, L) => w.qa('#viewStock .chan').find((r) => new RegExp('^' + L + '\\b').test(w.text(r.querySelector('.chantx'))));
+    const btnIn = (w, L, re) => { const r = row(w, L); return r ? Array.from(r.querySelectorAll('button')).find((b) => re.test(w.text(b))) : null; };
+    const lineOf = (w, L) => { const r = row(w, L); return r ? w.text(r.querySelector('.chantx')) : ''; };
+    click(byText('#tabs .tab', /^Stock$/)); await until(() => lines(o).length === 2 && qa('#viewStock .line').length >= 4, 4000, 'the Meta and Google lines').catch(() => {});
+    ok(lines(o).some((t) => /^Meta: /.test(t)) && lines(o).some((t) => /^Google: /.test(t)), 'the Stock screen has a line starting Meta: and one starting Google: (' + lines(o).join(' | ') + ')');
+    ok(lines(o).join(' | ') === 'Meta: switched off | Google: switched off', 'both start switched off');
+    const chanBox = q('#viewStock .chan') && q('#viewStock .chan').closest('.sec'), firstProduct = qa('#viewStock .line')[0];
+    ok(!!chanBox && !!firstProduct && !!(chanBox.compareDocumentPosition(firstProduct) & o.win.Node.DOCUMENT_POSITION_FOLLOWING), 'the Meta and Google block sits above the item rows');
+    ok(!!btnIn(o, 'Meta', /^Test with Original$/) && !!btnIn(o, 'Google', /^Test with Original$/), 'the owner sees Test with Original on each line');
+    ok(!byText('#viewStock button', /^Switch on all four$/) && !byText('#viewStock button', /^Set up Google$/), 'no Switch on all four before a matching test, and no Set up Google once Google is set up');
+    const tw = btnIn(o, 'Meta', /^Test with Original$/); if (tw) click(tw);
+    // Original may be sold out in the practice data by now (packed orders took its boxes): then Meta is told, and shows it at the next read
+    const tested = /^Meta: (matches, checked \d\d:\d\d|waiting for Meta to update \(pushed \d\d:\d\d\))$/;
+    await until(() => tested.test(lineOf(o, 'Meta')), 5000, 'the test result').catch(() => {});
+    ok(tested.test(lineOf(o, 'Meta')), 'after Test with Original the Meta line says matches or waiting, with a time (' + lineOf(o, 'Meta') + ')');
+    ok(/^Testing with Original\. Meta: /.test(text(q('#toast'))), 'a toast gives the result (' + text(q('#toast')) + ')');
+    const cn = btnIn(o, 'Meta', /^Check now$/); if (cn) click(cn);
+    await until(() => /^Meta: matches, checked \d\d:\d\d$/.test(lineOf(o, 'Meta')) && /\. Google: /.test(text(q('#toast'))), 5000, 'Meta to match').catch(() => {});
+    ok(/^Meta: matches, checked \d\d:\d\d$/.test(lineOf(o, 'Meta')), 'Check now reads it back: Meta: matches, checked HH:MM (' + lineOf(o, 'Meta') + ')');
+    ok(/^Meta: matches, checked \d\d:\d\d\. Google: switched off$/.test(text(q('#toast'))), 'Check now toasts both lines (' + text(q('#toast')) + ')');
+    const st = await api('/admin/api/channels');
+    const ist = st.channels?.meta?.checkedAt ? new Date(Date.parse(st.channels.meta.checkedAt) + 5.5 * 3600000).toISOString().slice(11, 16) : 'no time';
+    ok(lineOf(o, 'Meta').endsWith(ist), 'the time is Indian time, HH:MM (' + ist + ')');
+    ok(!!btnIn(o, 'Meta', /^Switch on all four$/) && !!btnIn(o, 'Meta', /^Check now$/) && !!btnIn(o, 'Meta', /^Switch off$/) && !btnIn(o, 'Meta', /^Test with Original$/), 'once the test matches: Switch on all four, Check now and Switch off');
+    const so = btnIn(o, 'Meta', /^Switch off$/); if (so) click(so); await until(() => lineOf(o, 'Meta') === 'Meta: switched off', 4000, 'Meta off').catch(() => {});
+    ok(lineOf(o, 'Meta') === 'Meta: switched off' && (await api('/admin/api/channels')).channels?.meta?.mode === 'off', 'Switch off puts Meta back to off');
+    // a stock change goes out about 3 s later: the line redraws by itself, so it never keeps saying "matches" after a Pause
+    await api('/admin/api/channels/mode', { channel: 'meta', mode: 'all' }); await api('/admin/api/channels/check', {});   // all four read back and matching
+    click(byText('#tabs .tab', /^Orders$/)); click(byText('#tabs .tab', /^Stock$/));
+    await until(() => /^Meta: matches/.test(lineOf(o, 'Meta')), 4000, 'Meta on').catch(() => {});
+    const before = lineOf(o, 'Meta');
+    const kes = qa('#viewStock .line').find((l) => /^Atta Kesari/.test(text(l))), pause = kes && Array.from(kes.querySelectorAll('button')).find((b) => /^Pause selling$/.test(text(b)));
+    if (pause) click(pause);
+    await until(() => /^Meta: waiting for Meta to update \(pushed \d\d:\d\d\)$/.test(lineOf(o, 'Meta')), 9000, 'the line to redraw').catch(() => {});
+    ok(/^Meta: matches/.test(before) && /^Meta: waiting for Meta to update \(pushed \d\d:\d\d\)$/.test(lineOf(o, 'Meta')), 'after Pause selling the Meta line redraws from matches to waiting, with the push time (' + before + ' -> ' + lineOf(o, 'Meta') + ')');
+    await api('/admin/api/inventory/pause', { slug: 'atta-kesari', paused: false }); await api('/admin/api/channels/mode', { channel: 'meta', mode: 'off' });
+    ok(o.errors.length === 0, 'no page errors on the channel lines (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+
+    const s = await openAdmin('staff', { width: 375 });
+    s.click(s.byText('#tabs .tab', /^Stock$/)); await until(() => lines(s).length === 2, 4000, 'the lines for staff').catch(() => {});
+    ok(lines(s).length === 2 && s.qa('#viewStock .chan button').length === 0 && !s.byText('#viewStock button', /^Test with Original$/), 'staff see both lines but no buttons (' + lines(s).join(' | ') + ')');
+    s.close();
+
+    // Set up Google: the button shows only while Google is not set up, and opens the steps
+    await dev({ notSetUp: true });
+    const g = await openAdmin('owner', { width: 375 });
+    g.click(g.byText('#tabs .tab', /^Stock$/)); await until(() => lines(g).length === 2, 4000, 'the lines').catch(() => {});
+    ok(lineOf(g, 'Google') === 'Google: not set up' && !!btnIn(g, 'Google', /^Set up Google$/) && !btnIn(g, 'Meta', /^Set up Google$/), 'Google not set up: the owner gets Set up Google on the Google line only');
+    const sg = btnIn(g, 'Google', /^Set up Google$/); if (sg) g.click(sg); await until(() => g.qa('#viewStock .setup li').length > 0, 5000, 'the set-up steps').catch(() => {});
+    ok(g.qa('#viewStock .setup li').length === 4 && /Found 4 of 4 products/.test(g.text(g.q('#viewStock .setup'))) && lineOf(g, 'Google') === 'Google: switched off', 'the set-up panel lists the steps, and Google is now just switched off');
+    g.close();
+
+    // a fake problem: Google keeps showing Kesari out of stock for over 30 minutes while the admin says in stock
+    await dev({ stuck: { google: { 'atta-kesari': 'out of stock' } } });
+    await api('/admin/api/channels/mode', { channel: 'google', mode: 'all' });
+    await dev({ minutesLater: 31 });
+    await api('/admin/api/channels/check', {});   // read back: what took the push now matches; Kesari still does not
+    const p = await openAdmin('owner', { width: 375 });
+    await until(() => p.qa('#needs .need').some((c) => /does not match the admin/.test(p.text(c))), 5000, 'the Needs card').catch(() => {});
+    const need = p.qa('#needs .need').find((c) => /does not match the admin/.test(p.text(c)));
+    ok(!!need && /Google does not match the admin: tap to see/.test(p.text(need)) && need.classList.contains('hot') && !p.qa('#needs .need').some((c) => /Meta does not match/.test(p.text(c))), 'a problem on Google makes a red Needs card: ' + (need ? p.text(need) : p.qa('#needs .need').map((c) => p.text(c)).join(' | ')));
+    if (need) { p.click(need); await until(() => lines(p).length === 2, 4000, 'the Stock screen').catch(() => {}); }
+    const red = row(p, 'Google') && row(p, 'Google').querySelector('.chantx');
+    ok(!p.q('#viewStock').hidden && /^Google: Atta Kesari shows out of stock; the admin says in stock$/.test(lineOf(p, 'Google')) && !!red && red.classList.contains('bad'), 'tapping it opens Stock, where the Google line is red: ' + lineOf(p, 'Google'));
+    ok(p.errors.length === 0, 'no page errors with a channel problem (' + p.errors.join(' | ').slice(0, 200) + ')');
+    p.close();
+
+    // a key not on Render: the line says so, and there is nothing to press
+    await dev({ reset: true }); await dev({ noKey: ['meta'] });
+    const k = await openAdmin('owner', { width: 375 });
+    k.click(k.byText('#tabs .tab', /^Stock$/)); await until(() => lines(k).length === 2, 4000, 'the lines').catch(() => {});
+    ok(lines(k).join(' | ') === 'Meta sync off: token not set | Google: switched off' && row(k, 'Meta') && row(k, 'Meta').querySelectorAll('button').length === 0, 'no Meta token: "Meta sync off: token not set", with no buttons (' + lines(k).join(' | ') + ')');
+    k.close();
+
+    // the channel state cannot be read: the Stock screen still shows the stock
+    await dev({ reset: true }); await dev({ broken: true });
+    const b = await openAdmin('owner', { width: 375 });
+    b.click(b.byText('#tabs .tab', /^Stock$/)); await until(() => b.qa('#viewStock .line').length >= 4, 4000, 'the stock list').catch(() => {});
+    ok(b.qa('#viewStock .line').length >= 4 && b.qa('#viewStock .chan').length === 0 && /Could not read Meta and Google/.test(b.text(b.q('#viewStock'))) && b.errors.length === 0, 'when Meta and Google cannot be read, the Stock screen still lists the stock and says so');
+    b.close();
+    await dev({ reset: true });
+  });
+
   return list;
 };

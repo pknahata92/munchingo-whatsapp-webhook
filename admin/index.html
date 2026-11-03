@@ -110,6 +110,14 @@ header small{color:var(--ink2);opacity:1}
 .guide{background:var(--band);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:2px 0 12px}
 .guide b{display:block;font-size:16px;margin-bottom:6px}.guide ol{margin:0 0 10px;padding-left:20px;line-height:1.6;font-size:14px}.guide li b{display:inline;font-size:14px;margin:0}
 .b-gift{background:#FBE3D6;color:#7A3512}
+
+/* ── Meta and Google lines (Stock screen) ── */
+.chan{display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}.chan:last-child{border-bottom:0}
+.chan .cb{flex:1;min-width:0;overflow-wrap:anywhere}.chan .muted{margin-top:2px}
+.chan .dot{width:9px;height:9px;border-radius:50%;margin-top:7px;flex:none;background:var(--ink2)}
+.dot.ok{background:var(--tx-green)}.dot.wait{background:var(--tx-amber)}.dot.bad{background:var(--tx-red)}
+.chan .bad,.setup .bad{color:var(--tx-red);font-weight:600}
+.setup{background:var(--band);border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px;overflow-wrap:anywhere}.setup ol{margin:6px 0 8px;padding-left:18px}.setup p{margin:6px 0}
 </style>
 </head>
 <body>
@@ -291,7 +299,7 @@ header small{color:var(--ink2);opacity:1}
       h('p', { class: 'muted' }, 'Stock tab: Receive when boxes arrive, Count when you check the shelf, Mark low when something runs short. Packing an order takes its boxes off stock for you.')]);
   }
   function refreshLow() {
-    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; renderNeeds(); }).catch(function () {});
+    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; renderNeeds(); }).catch(function () {});
   }
   function load() {
     refreshLow();
@@ -326,6 +334,8 @@ header small{color:var(--ink2);opacity:1}
     add(lateN, 'late order: past its delivery date, check with Delhivery', 'late orders: past their delivery date, check with Delhivery', go('late'), true);
     var low = state.low || [];
     add(low.length, 'running low: ' + low.map(function (x) { return x.name; }).join(', '), 'running low: ' + low.map(function (x) { return x.name; }).join(', '), function () { showTab('stock'); }, low.some(function (x) { return x.status === 'out'; }));
+    var chs = state.channels || {};   // Meta or Google showing something other than the admin (not found, refusing, or different for over 30 min)
+    ['meta', 'google'].forEach(function (ch) { var n = chs[ch] && chs[ch].problems ? chs[ch].problems.length : 0, msg = CH[ch] + ' does not match the admin: tap to see'; add(n, msg, msg, function () { showTab('stock'); }, true); });
     if (state.role === 'owner') { var att = state.orders.filter(function (o) { return o.needs_attention && o.state !== 'test'; }).length; add(att, 'order needs attention (invoice or accounting)', 'orders need attention (invoice or accounting)', go('attention'), true); }
     if (!box.children.length) box.appendChild(h('div', { class: 'need calm' }, h('b', {}, '✓'), h('span', {}, 'Nothing needs you right now.')));
   }
@@ -804,10 +814,94 @@ header small{color:var(--ink2);opacity:1}
       h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))]);
   }
   var STATUS = { ok: ['OK', 'b-delivered'], low: ['LOW', 'b-topack'], out: ['OUT', 'b-refunded'], 'new': ['Not counted yet', 'b-unpaid'] };
+
+  // ── Meta and Google: one line each at the top of the Stock screen. Everyone sees the lines; only the owner gets the buttons. ──
+  var CH = { meta: 'Meta', google: 'Google' };
+  var hhmm = function (iso) { return iso ? new Date(Date.parse(iso) + IST).toISOString().slice(11, 16) : ''; };   // Indian time, HH:MM
+  function lastPush(c) {
+    var items = c.items || {}, slugs = c.mode === 'test' ? ['atta-original'] : Object.keys(items);
+    return slugs.map(function (s) { return (items[s] || {}).pushedAt; }).filter(Boolean).sort().pop() || null;
+  }
+  // A problem in plain words, e.g. "Google: Atta Kesari shows out of stock; the admin says in stock".
+  function problemLine(L, p) {
+    var t = String(p.text || ''), nf = /^not found in \w+: (.+)$/.exec(t), na = L + ' did not accept the change: ';
+    if (nf) return L + ': ' + p.name + ' not found (' + nf[1] + ')';
+    if (t.indexOf(na) === 0) return L + ': did not accept the change to ' + p.name + ': ' + t.slice(na.length).replace(/^[a-z-]+: /, '');
+    return L + ': ' + t;
+  }
+  function chanLine(ch, c) {
+    var L = CH[ch], why = c.why || '', probs = c.problems || [], off = c.mode === 'off' ? [] : ['off'], place = ch === 'meta' ? 'Commerce Manager' : 'Merchant Center';
+    var testing = c.mode === 'test' ? 'Only Original follows the admin. Check it in ' + place + ', then switch on all four.' : '';
+    if (why === 'token not set') return { cls: 'off', text: L + ' sync off: token not set', sub: 'Add ' + (ch === 'meta' ? 'META_CATALOG_TOKEN' : 'GOOGLE_MERCHANT_KEY and GOOGLE_MERCHANT_ID') + ' on Render to turn this on.', btns: off };
+    if (why === 'not set up') return { cls: 'off', text: L + ': not set up', sub: 'Set up once: it links the admin to Merchant Center.', btns: ['setup'].concat(off) };
+    if (why === 'switched off') return { cls: 'off', text: L + ': switched off', sub: 'Nothing is sent. ' + L + ' shows what was typed there by hand.', btns: ['test'] };
+    if (why === 'problem' && probs.length) return { cls: 'bad', text: problemLine(L, probs[0]), more: probs.slice(1).map(function (p) { return problemLine(L, p); }), sub: 'Look at it in ' + place + ', then tap Check now.' + (testing ? ' ' + testing : ''), btns: ['check', 'off'] };
+    if (why === 'matches') return { cls: 'ok', text: L + ': matches' + (c.checkedAt ? ', checked ' + hhmm(c.checkedAt) : ''), sub: testing, btns: (c.mode === 'test' ? ['all'] : []).concat(['check', 'off']) };
+    if (/^waiting/.test(why)) { var at = lastPush(c); return { cls: 'wait', text: L + ': ' + why + (at ? ' (pushed ' + hhmm(at) + ')' : ''), sub: ch === 'google' ? 'Google takes a few minutes to show a change. Tap Check now later.' : testing, btns: ['check', 'off'] }; }
+    return { cls: 'off', text: L + ': ' + why, btns: ['check'].concat(off) };
+  }
+  var CH_BTN = { test: ['Test with Original', 'btn small'], all: ['Switch on all four', 'btn small'], setup: ['Set up Google', 'btn small'], check: ['Check now', 'btn ghost small'], off: ['Switch off', 'btn ghost red small'] };
+  var CH_ASK = {
+    test: function (L) { return 'Test with Original on ' + L + '? The admin\'s stock and price for Original are sent to ' + L + '; the other three stay as they are.'; },
+    all: function (L) { return 'Switch on all four on ' + L + '? From now on ' + L + ' shows the admin\'s stock and prices for all four flavours.'; },
+    setup: function () { return 'Set up Google now? This adds the admin as a source in Merchant Center, ahead of the Google sheet. No product is changed.'; },
+  };
+  function chanRow(box, ch, c) {
+    var L = chanLine(ch, c), own = state.role === 'owner';
+    return h('div', { class: 'chan' }, h('i', { class: 'dot ' + L.cls, 'aria-hidden': 'true' }),
+      h('div', { class: 'cb' }, h('div', { class: 'chantx' + (L.cls === 'bad' ? ' bad' : '') }, L.text),
+        (L.more || []).map(function (t) { return h('div', { class: 'bad' }, t); }),
+        own && L.sub ? h('div', { class: 'muted' }, L.sub) : null,
+        own && L.btns.length ? h('div', { class: 'acts' }, L.btns.map(function (b) { return h('button', { class: CH_BTN[b][1], type: 'button', onclick: function () { chanAct(box, ch, b); } }, CH_BTN[b][0]); })) : null));
+  }
+  function setupPanel(box, r) {
+    return h('div', { class: 'setup' }, h('b', {}, 'Google set-up'),
+      r.steps.length ? h('ol', {}, r.steps.map(function (s) { return h('li', {}, s); })) : null,
+      r.missing.length ? h('p', { class: 'bad' }, 'Not found in Merchant Center: ' + r.missing.join(', ') + '. Check these offer IDs in the Google sheet.') : null,
+      r.error ? h('p', { class: 'bad' }, 'Stopped: ' + r.error) : null,
+      h('button', { class: 'btn ghost small', type: 'button', onclick: function () { drawChannels(box, state.channels); } }, 'Close'));
+  }
+  // channels null = the server could not read them: say so, and the stock below still shows.
+  function drawChannels(box, channels, setup) {
+    box.textContent = '';
+    box.appendChild(h('h3', {}, 'Meta and Google'));
+    if (!channels) { box.appendChild(h('p', { class: 'muted' }, 'Could not read Meta and Google just now. The stock below is up to date.')); return; }
+    ['meta', 'google'].forEach(function (ch) { if (channels[ch]) box.appendChild(chanRow(box, ch, channels[ch])); });
+    if (setup) box.appendChild(setupPanel(box, setup));
+  }
+  function chanAct(box, ch, b) {
+    var L = CH[ch];
+    if (CH_ASK[b] && !confirm(CH_ASK[b](L))) return;
+    [].forEach.call(box.querySelectorAll('button'), function (x) { x.disabled = true; });
+    if (b !== 'off') toast(b === 'check' ? 'Checking Meta and Google…' : b === 'setup' ? 'Setting up Google…' : 'Asking ' + L + '…', 30000);
+    var path = '/admin/api/channels/' + (b === 'check' ? 'check' : b === 'setup' ? 'setup-google' : 'mode');
+    api(path, { method: 'POST', body: b === 'check' || b === 'setup' ? {} : { channel: ch, mode: b } }).then(function (j) {
+      if (!j.channels) { drawChannels(box, state.channels); return toast(j.error || 'Something went wrong', 6000); }
+      state.channels = j.channels; renderNeeds();
+      drawChannels(box, j.channels, b === 'setup' ? { steps: j.steps || [], missing: j.missing || [], error: j.error } : null);
+      var line = function (c) { return j.channels[c] ? chanLine(c, j.channels[c]).text : ''; };
+      toast(b === 'test' ? 'Testing with Original. ' + line(ch) : b === 'all' ? 'All four flavours now follow the admin. ' + line(ch) : b === 'off' ? L + ' switched off. Nothing more is sent.'
+        : b === 'setup' ? (j.error ? 'Google set-up stopped. See the steps.' : 'Google is set up. Now tap Test with Original.') : line('meta') + '. ' + line('google'), 7000);
+    }).catch(function () { drawChannels(box, state.channels); toast('Could not reach the server', 6000); });
+  }
+  // A stock change reaches Meta and Google about 3 s later: redraw the lines once it has gone out (not over an open set-up or a running action).
+  function chanLater() {
+    clearTimeout(chanLater.t);
+    chanLater.t = setTimeout(function () {
+      api('/admin/api/channels').then(function (j) {
+        if (!j.ok) return;
+        state.channels = j.channels; renderNeeds();
+        var box = $('chanBox'); if (box && !box.querySelector('.setup') && !box.querySelector('button:disabled')) drawChannels(box, j.channels);
+      }).catch(function () {});
+    }, 5000);
+  }
+
   function openInventory() {
     api('/admin/api/inventory').then(function (j) {
       if (!j.ok) return toast(j.error || 'Could not load stock', 6000);
       state.inv = j;
+      var chanBox = null;
+      if ('channels' in j) { state.channels = j.channels; renderNeeds(); chanBox = h('div', { class: 'sec', id: 'chanBox' }); drawChannels(chanBox, j.channels); }
       var row = function (it) {
         var st = (it.paused || (it.sellable != null && it.sellable <= 0 && it.kind === 'product')) ? ['SOLD OUT ONLINE', 'b-refunded'] : (STATUS[it.status] || STATUS['new']);
         var lots = it.lots.length ? it.lots.map(function (l) { return (l.lot_code || 'no lot') + ': ' + l.qty + (l.best_before ? ' (best before ' + new Date(l.best_before + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ')' : ''); }).join(' · ') : '';
@@ -822,12 +916,12 @@ header small{color:var(--ink2);opacity:1}
             h('button', { class: 'btn small', onclick: function () { invReceive(it); } }, 'Receive'),
             it.kind === 'product' ? null : h('button', { class: 'btn ghost small', onclick: function () { invTake(it); } }, 'Take out'),   // flavours use Take out: several flavours
             h('button', { class: 'btn ghost small', onclick: function () { invCount(it); } }, 'Count'),
-            it.kind === 'product' ? h('button', { class: 'btn ghost small' + (it.paused ? '' : ' red'), onclick: function (e) { if (!it.paused && !confirm('Pause ' + it.name + ' on the website? Customers will not be able to order it (or any gift set that contains it) until you resume.')) return; e.target.disabled = true; api('/admin/api/inventory/pause', { method: 'POST', body: { slug: it.slug, paused: !it.paused } }).then(function (r) { toast(r.ok ? (it.paused ? it.name + ' is on sale again' : it.name + ' paused on the website') : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); }); } }, it.paused ? 'Resume selling' : 'Pause selling') : null,
+            it.kind === 'product' ? h('button', { class: 'btn ghost small' + (it.paused ? '' : ' red'), onclick: function (e) { if (!it.paused && !confirm('Pause ' + it.name + ' on the website? Customers will not be able to order it (or any gift set that contains it) until you resume.')) return; e.target.disabled = true; api('/admin/api/inventory/pause', { method: 'POST', body: { slug: it.slug, paused: !it.paused } }).then(function (r) { toast(r.ok ? (it.paused ? it.name + ' is on sale again' : it.name + ' paused on the website') : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); if (r.ok) chanLater(); }); } }, it.paused ? 'Resume selling' : 'Pause selling') : null,
             h('button', { class: 'btn ghost small' + (it.manual_low ? ' red' : ''), onclick: function (e) { e.target.disabled = true; api('/admin/api/inventory/low', { method: 'POST', body: { slug: it.slug, low: !it.manual_low } }).then(function (r) { toast(r.ok ? (it.manual_low ? 'Low flag cleared' : 'Marked as running low') : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, it.manual_low ? 'Clear low flag' : 'Mark low'),
             state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Show LOW when ' + it.name + ' is at or below how many ' + it.unit + '? (0 = only the manual Low flag)', it.low_level); if (v === null) return; api('/admin/api/inventory/level', { method: 'POST', body: { slug: it.slug, lowLevel: v } }).then(function (r) { toast(r.ok ? 'Saved' : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, 'Low level: ' + it.low_level) : null));
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
-      var body = [h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
+      var body = [chanBox, h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null,
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { invPick('Rename lot', invRenameLot); } }, 'Rename lot') : null),
@@ -854,7 +948,7 @@ header small{color:var(--ink2);opacity:1}
         return done();
       }
       if (!r.ok) { toast(r.error || 'Failed', 7000); return done(); }
-      toast(okMsg(r), 5000); refreshLow(); openInventory();
+      toast(okMsg(r), 5000); refreshLow(); openInventory(); chanLater();
     }).catch(function () { toast('Could not reach the server', 6000); done(); });
   }
   // The lot is the day a batch was prepared. Pick it on the calendar; the code (15OCT26) and best-before (90 days later) fill in.

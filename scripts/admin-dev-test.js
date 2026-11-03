@@ -225,5 +225,52 @@ async function login(email) {
   const ft2 = await call('/founding-tasters', o.token);
   ok(ft2.j.rows.some((r) => r.phone === '919810000777' && r.ticked === false), 'after a save, a removed 11-17 Oct buyer is listed unticked, not re-added');
   ok((await call('/reviews', o.token)).j.reviews.find((r) => r.id === 1).founding_taster === false, 'and their review loses the founding taster label');
+
+  // ── Meta and Google follow the admin (fake catalogues in admin-dev.js: both keys set, Google set up, all four in stock, both off) ──
+  const devCh = async (b) => (await fetch('http://localhost:8430/dev/channels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
+  const chans = async (tok) => { const c = (await call('/channels', tok)).j.channels || {}; return { meta: c.meta || {}, google: c.google || {} }; };
+  const setMode = (tok, b) => call('/channels/mode', tok, b);
+  const sc = await call('/channels', s.token);
+  ok(sc.s === 200 && sc.j.channels?.meta?.why === 'switched off' && sc.j.channels?.google?.why === 'switched off', 'staff read the channel lines: both switched off (' + JSON.stringify([sc.j.channels?.meta?.why, sc.j.channels?.google?.why]) + ')');
+  ok((await setMode(s.token, { channel: 'meta', mode: 'test' })).s === 403, 'staff cannot switch a channel');
+  ok((await call('/channels/check', s.token, {})).s === 403, 'staff cannot use Check now');
+  ok((await call('/channels/setup-google', s.token, {})).s === 403, 'staff cannot set up Google');
+  ok((await chans(s.token)).meta.mode === 'off', 'a refused staff switch changes nothing');
+  const mt = await setMode(o.token, { channel: 'meta', mode: 'test' });
+  const orig = mt.j.channels?.meta?.items?.['atta-original'];
+  ok(mt.j.ok && mt.j.channels?.meta?.mode === 'test' && !!orig && !!orig.shown && orig.shown.availability === 'in stock', 'owner: Test with Original reads Original back from Meta as in stock (' + JSON.stringify(orig) + ')');
+  // the practice data has Original sold out by now (packed orders took its boxes), so Meta was told; it shows that at the next read
+  ok(!!orig && mt.j.channels.meta.why === (orig.want.availability === orig.shown.availability ? 'matches' : 'waiting for Meta to update') && !!mt.j.channels.meta.checkedAt, 'and the line says matches or waiting, with the time it was checked (' + mt.j.channels?.meta?.why + ')');
+  ok((await setMode(o.token, { channel: 'meta', mode: 'all' })).j.channels?.meta?.mode === 'all', 'owner switches Meta on for all four');
+  const kesariPushed = async (want) => { const t0 = Date.now(); while (Date.now() - t0 < 6000) { const it = ((await chans(o.token)).meta.items || {})['atta-kesari']; if (it && it.pushed && it.pushed.availability === want) return true; await new Promise((r) => setTimeout(r, 200)); } return false; };
+  ok((await call('/inventory/pause', o.token, { slug: 'atta-kesari', paused: true })).j.ok && await kesariPushed('out of stock'), 'pausing Kesari reaches Meta within 6 s as out of stock');
+  ok((await call('/inventory/pause', o.token, { slug: 'atta-kesari', paused: false })).j.ok && await kesariPushed('in stock'), 'resuming Kesari sends it back as in stock');
+  const chk = await call('/channels/check', o.token, {});
+  ok(chk.j.ok && chk.j.channels?.meta?.why === 'matches' && chk.j.channels?.google?.why === 'switched off', 'Check now reads Meta back: matches; Google stays off (' + JSON.stringify([chk.j.channels?.meta?.why, chk.j.channels?.google?.why]) + ')');
+  for (const b of [{ channel: 'x', mode: 'all' }, { channel: 'meta', mode: 'on' }, { channel: '__proto__', mode: 'all' }, { channel: 'constructor', mode: 'test' }, {}]) {
+    const r = await setMode(o.token, b); ok(r.s === 400 && r.j.error === 'Choose Meta or Google, and off, test or all.', 'a bad switch is refused with 400: ' + JSON.stringify(b) + ' -> ' + r.s + ' ' + r.j.error);
+  }
+  ok((await chans(o.token)).meta.mode === 'all', 'a refused switch leaves Meta as it was');
+  const iv = await call('/inventory', s.token);
+  ok(iv.j.ok && iv.j.items.length >= 4 && iv.j.channels?.meta?.mode === 'all' && iv.j.channels?.google?.why === 'switched off', 'the inventory carries the channel lines too, for staff as well');
+  await setMode(o.token, { channel: 'meta', mode: 'off' });
+  ok((await chans(o.token)).meta.why === 'switched off', 'owner switches Meta off');
+  // Set up Google (the fake answers like an account that is already linked)
+  await devCh({ notSetUp: true });
+  ok((await chans(o.token)).google.why === 'not set up', 'Google without its set-up reads: not set up');
+  const su = await call('/channels/setup-google', o.token, {});
+  ok(su.j.ok && su.j.steps?.length === 4 && Array.isArray(su.j.missing) && su.j.missing.length === 0 && su.j.channels?.google?.why === 'switched off', 'owner sets up Google: the steps come back and Google is now just switched off (' + JSON.stringify(su.j.steps) + ')');
+  // a problem: Google keeps showing Kesari out of stock while the admin says in stock
+  await devCh({ stuck: { google: { 'atta-kesari': 'out of stock' } } });
+  const ga = await setMode(o.token, { channel: 'google', mode: 'all' });
+  ok(ga.j.ok && ga.j.channels?.google?.why === 'waiting for Google to update' && ga.j.channels?.google?.problems?.length === 0, 'a fresh difference is "waiting for Google to update", not yet a problem (' + ga.j.channels?.google?.why + ')');
+  await devCh({ minutesLater: 31 });
+  const gp = (await call('/channels/check', o.token, {})).j.channels?.google || {};   // read back: what took the push now matches
+  ok(gp.why === 'problem' && gp.problems?.length === 1 && gp.problems[0].slug === 'atta-kesari' && /Kesari shows out of stock; the admin says in stock$/.test(gp.problems[0].text), 'over 30 minutes later it is a problem: ' + JSON.stringify(gp.problems));
+  // a malformed saved row: the stock screen still loads, with no channel lines
+  await devCh({ reset: true }); await devCh({ broken: true });
+  const ib = await call('/inventory', s.token);
+  ok(ib.j.ok && ib.j.items.length >= 4 && ib.j.channels === null, 'when the channel state cannot be read, the inventory still loads (channels: ' + JSON.stringify(ib.j.channels) + ')');
+  await devCh({ reset: true });
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

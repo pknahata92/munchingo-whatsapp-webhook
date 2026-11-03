@@ -144,6 +144,44 @@ app.use(express.json());
 app.post('/dev/track', (req, res) => { global.__trackStatus = (req.body && req.body.status) || 'Manifested'; res.json({ ok: true }); });   // practice copy only: what the stand-in Delhivery tracking says
 app.post('/dev/sweep', async (req, res) => res.json(await require('../utils/orderUpdates').sweepOnce()));
 app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body && req.body.ready); res.json({ ok: true }); });   // practice copy only: pretend the coupons migration has / has not run
+// Meta and Google on fake data (no network, no database): both have their keys, Google is already set up, and both start switched off,
+// like a fresh deploy. Each fake catalogue starts with the four flavours in stock at the practice prices, like the live ones, and shows a
+// push at the next read. POST /dev/channels changes what they show, for the practice checks (see the comment on the route).
+{
+  const sync = require(path.join(root, 'utils/channelSync.js'));
+  const { SLUGS, GOOGLE_OFFER_IDS } = require(path.join(root, 'utils/channels/shape.js'));
+  const copy = (v) => JSON.parse(JSON.stringify(v));
+  const seed = () => Object.fromEntries(SLUGS.map((slug) => { const r = priceRows.find((x) => x.slug === slug); return [slug, { availability: 'in stock', price: r.price, mrp: r.mrp != null && r.mrp > r.price ? r.mrp : null }]; }));
+  const SOURCE = 'accounts/dev/dataSources/1';
+  const NAMES = Object.fromEntries(SLUGS.map((slug) => [slug, 'en~IN~' + GOOGLE_OFFER_IDS[slug]]));
+  let shown, stuck, skew, saved, noKey;
+  const reset = () => { shown = { meta: seed(), google: seed() }; stuck = { meta: {}, google: {} }; skew = 0; noKey = {}; saved = { meta: { mode: 'off', items: {} }, google: { mode: 'off', source: SOURCE, names: copy(NAMES), items: {} } }; };
+  reset();
+  const read = (ch) => async (slugs, names) => Object.fromEntries(slugs.map((slug) => [slug, shown[ch][slug] && (ch !== 'google' || (names && names[slug])) ? copy(shown[ch][slug]) : null]));
+  const push = (ch) => async (items) => { items.forEach(({ slug, state }) => { if (shown[ch][slug] && !stuck[ch][slug]) shown[ch][slug] = copy(state); }); return { ok: true }; };
+  sync.setDeps({
+    meta: { configured: () => !noKey.meta, read: read('meta'), push: push('meta') },
+    google: { configured: () => !noKey.google, read: read('google'), push: push('google'),
+      setup: async () => ({ registered: true, source: SOURCE, names: copy(NAMES), missing: [], steps: ['Already registered with Google', 'Found the source "Munchingo admin stock"', 'Already first', 'Found 4 of 4 products'] }) },
+    load: async () => copy(saved),
+    save: async (s) => { saved = copy(s); },
+    mail: async (a) => console.log('[dev] channel sync alert ->', a.channel, a.problems.map((p) => p.text).join(' | ')),
+    now: () => Date.now() + skew,
+  });
+  // { stuck: { google: { 'atta-kesari': 'out of stock' } } }: that channel keeps showing it, whatever is pushed;
+  // { minutesLater: 31 }: the sync clock runs 31 minutes ahead (a mismatch becomes a problem after 30); { notSetUp: true }: Google forgets its set-up;
+  // { noKey: ['meta'] }: as if that key were not on Render; { broken: true }: a malformed saved row (status() then fails); { reset: true }: back to the start.
+  app.post('/dev/channels', (req, res) => {
+    const b = req.body || {};
+    if (b.reset) reset();
+    Object.keys(b.stuck || {}).forEach((ch) => Object.keys(b.stuck[ch]).forEach((slug) => { stuck[ch][slug] = true; shown[ch][slug] = { ...shown[ch][slug], availability: b.stuck[ch][slug] }; }));
+    if (b.minutesLater != null) skew = Number(b.minutesLater) * 60000;
+    if (b.notSetUp) Object.assign(saved.google, { source: null, names: {} });
+    if (b.broken) saved.meta.items['atta-original'] = null;
+    (b.noKey || []).forEach((ch) => { noKey[ch] = true; });
+    res.json({ ok: true });
+  });
+}
 app.use(require('../routes/admin'));
 // Practice-only stand-in for Delhivery's API (shipment creation and labels) so the ship and label buttons can be clicked through.
 process.env.DELHIVERY_API_TOKEN = 'tok_dev';

@@ -694,7 +694,8 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     keys.forEach((k) => { delete require.cache[k]; });
     const stub = (p, exp) => { const f = abs(p); require.cache[f] = { id: f, filename: f, loaded: true, exports: exp }; };
     const nudges = []; let nudgeThrows = false; let saveThrows = false; const saved = [];
-    stub('utils/channelSync.js', { nudge: (r) => { if (nudgeThrows) throw new Error('boom'); nudges.push(r); }, startSweep: () => {} });
+    const CHAN = { meta: { why: 'switched off' }, google: { why: 'switched off' } }; let statusThrows = false;   // the Stock screen also carries the channel lines (Task 6)
+    stub('utils/channelSync.js', { nudge: (r) => { if (nudgeThrows) throw new Error('boom'); nudges.push(r); }, startSweep: () => {}, status: async () => { if (statusThrows) throw new Error('bad saved row'); return CHAN; } });
     // refunds: a fully refunded paid order is closed (status cancelled), which frees its unpacked boxes
     let closeFails = false; const closed = []; let paymentsAtRazorpay = [];
     const paidOrder = { order_id: 'MNG-TEST-0001', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), status: 'paid', payment_id: 'pay_1', customer_name: 'C', customer_phone: '919810000001', customer_email: 'c@example.test', total: 259, discount_amount: 0, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 1, item_price: 259, unit: '250g' }], delivery_address: { raw: 'Delhi - 110001', state: 'Delhi' } };
@@ -759,7 +760,10 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
       const handler = (method, p) => router.stack.find((l) => l.route && l.route.path === p && l.route.methods[method]).route.stack.slice(-1)[0].handle;
       const hit = async (method, p) => { let out; await handler(method, p)({ method: method.toUpperCase(), body: {}, query: {}, admin: { email: 'a@b', role: 'owner' } }, { json: (x) => { out = x; }, status() { return this; } }); return out; };
       nudges.length = 0;
-      eq(await hit('get', '/admin/api/inventory'), { ok: true, items: [] }, 'hooks: a stock screen read answers as before');
+      eq(await hit('get', '/admin/api/inventory'), { ok: true, items: [], channels: CHAN }, 'hooks: a stock screen read answers as before, with the channel lines');
+      statusThrows = true; console.error = () => {};
+      eq(await hit('get', '/admin/api/inventory'), { ok: true, items: [], channels: null }, 'hooks: a stock screen read still answers when the channel lines cannot be read');
+      console.error = quietErr; statusThrows = false;
       eq(nudges, [], 'hooks: a stock GET sends no nudge');
       eq(await hit('post', '/admin/api/inventory/receive'), { ok: true, id: 1 }, 'hooks: a stock POST answers as before');
       eq(nudges, ['stock'], 'hooks: a successful stock POST sends one nudge, reason stock');

@@ -73,7 +73,10 @@ router.post('/admin/api/labels', wrap(async (req) => actions.shippingLabels((req
 // Stock ledger (staff and owner can receive, take out, count and flag; owner adds items and sets levels). See utils/inventory.js.
 const stock = () => require('../utils/inventory');
 const sw = (fn) => wrap(async (req) => { try { const out = await fn(req, stock().instance()); if (req.method === 'POST') { try { require('../utils/channelSync').nudge('stock'); } catch (_) {} } return out; } catch (e) { if (e instanceof stock().StockError) throw new actions.AdminError(e.message, e.status, e.extra); throw e; } });
-router.get('/admin/api/inventory', sw((req, inv) => inv.overview()));
+// Meta and Google lines ride along with the stock, so the Stock screen and Needs you now get them in one call. Never blocks the stock.
+const chan = () => require('../utils/channelSync');
+const channelsOrNull = async () => { try { return await chan().status(); } catch (e) { console.error('[CHANNELS] could not read the channel lines for the admin:', e.message); return null; } };
+router.get('/admin/api/inventory', sw(async (req, inv) => { const [overview, channels] = await Promise.all([inv.overview(), channelsOrNull()]); return { ...overview, channels }; }));
 router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: req.query.slug, limit: Number(req.query.limit) || 40, types: req.query.types ? String(req.query.types).split(',') : null })));
 router.get('/admin/api/inventory/receipt', sw((req, inv) => inv.receipt({ id: Number(req.query.id) })));
 router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin, isOwner: req.admin.role === 'owner' })));   // isOwner after the spread: a client can never claim it
@@ -91,6 +94,21 @@ router.post('/admin/api/inventory/hamper', sw((req, inv) => inv.offlineHamper({ 
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
 router.post('/admin/api/inventory/reverse', sw((req, inv) => inv.reverse({ id: Number((req.body || {}).id), reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));
+// Meta and Google follow the admin (utils/channelSync.js). Staff and owner see the lines; only the owner switches, checks or sets up.
+const BAD_SWITCH = 'Choose Meta or Google, and off, test or all.';
+router.get('/admin/api/channels', wrap(async () => ({ channels: await chan().status() })));
+router.post('/admin/api/channels/mode', owner, wrap(async (req) => {
+  const { channel, mode } = req.body || {};
+  // Fixed lists first: a key such as __proto__ or constructor must never reach the saved state.
+  if (!['meta', 'google'].includes(channel) || !['off', 'test', 'all'].includes(mode)) throw new actions.AdminError(BAD_SWITCH, 400);
+  try { return { channels: await chan().setMode(channel, mode, req.admin) }; }
+  catch (e) { if (/^Choose /.test(e.message)) throw new actions.AdminError(BAD_SWITCH, 400); throw e; }
+}));
+router.post('/admin/api/channels/check', owner, wrap(async () => { await chan().sweepOnce(); return { channels: await chan().status() }; }));
+router.post('/admin/api/channels/setup-google', owner, wrap(async (req) => {
+  const r = await chan().setupGoogle(req.admin);   // never rejects: a failure comes back as r.error, with the steps done so far
+  return { ok: !r.error, steps: r.steps || [], missing: r.missing || [], error: r.error ? String(r.error).replace(/^google: /i, '') : undefined, channels: await chan().status() };
+}));
 // Reviews and founding tasters (owner only). See utils/adminReviews.js.
 const rv = () => require('../utils/adminReviews');
 const rw = (fn) => wrap(async (req) => { try { return await fn(req); } catch (e) { if (e instanceof rv().ReviewError) throw new actions.AdminError(e.message, e.status); throw e; } });
