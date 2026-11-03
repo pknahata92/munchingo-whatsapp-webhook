@@ -122,7 +122,7 @@ async function loadOrders() {
   // not at all). Same call the refund flow uses; the credit note still comes from that flow.
   if (money && money.live) {
     orders.filter((o) => o.status === 'paid' && o.payment_id && money.refundedFull.has(o.payment_id)).forEach((o) => {
-      db.markOrderRefunded(o.order_id).then(() => { o.status = 'cancelled'; logEvent(o.order_id, 'auto_cancelled', null, { meta: { reason: 'fully refunded at Razorpay' } }); })
+      db.markOrderRefunded(o.order_id).then(() => { o.status = 'cancelled'; try { require('./channelSync').nudge('refund'); } catch (_) {} logEvent(o.order_id, 'auto_cancelled', null, { meta: { reason: 'fully refunded at Razorpay' } }); })
         .catch((e) => console.error('[ADMIN] could not close refunded order', o.order_id, e.message));
     });
   }
@@ -613,6 +613,7 @@ async function stockList() {
 async function setStock({ slug, available, actor }) {
   if (!BASE_SLUGS.includes(slug)) throw new AdminError('Unknown flavour.');
   await stock.setAvailable(slug, !!available, actor.email);
+  try { require('./channelSync').nudge('stock'); } catch (_) {}
   console.log(`[ADMIN] ${actor.email} marked ${slug} ${available ? 'available' : 'SOLD OUT'}`);
   return {};
 }

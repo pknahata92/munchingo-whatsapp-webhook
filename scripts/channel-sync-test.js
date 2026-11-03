@@ -689,19 +689,31 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     const rejects = async (p) => { try { await p; return false; } catch (e) { return true; } };
     const abs = (p) => require.resolve(path.join(root, p));
     // earlier sections may already hold the real engine; set those cache entries aside, stub, and put everything back afterwards
-    const keys = ['utils/channelSync.js', 'utils/adminActions.js', 'utils/adminAuth.js', 'utils/stock.js', 'utils/inventory.js', 'utils/database.js', 'utils/prices.js', 'routes/admin.js'].map(abs);
+    const keys = ['utils/channelSync.js', 'utils/adminActions.js', 'utils/adminAuth.js', 'utils/stock.js', 'utils/inventory.js', 'utils/database.js', 'utils/prices.js', 'utils/razorpay.js', 'utils/creditNote.js', 'utils/refunds.js', 'utils/refundFlow.js', 'routes/admin.js'].map(abs);
     const kept = keys.map((k) => require.cache[k]);
     keys.forEach((k) => { delete require.cache[k]; });
     const stub = (p, exp) => { const f = abs(p); require.cache[f] = { id: f, filename: f, loaded: true, exports: exp }; };
     const nudges = []; let nudgeThrows = false; let saveThrows = false; const saved = [];
     stub('utils/channelSync.js', { nudge: (r) => { if (nudgeThrows) throw new Error('boom'); nudges.push(r); }, startSweep: () => {} });
-    stub('utils/database.js', { listStock: async () => [], setStock: async () => {} });
+    // refunds: a fully refunded paid order is closed (status cancelled), which frees its unpacked boxes
+    let closeFails = false; const closed = []; let paymentsAtRazorpay = [];
+    const paidOrder = { order_id: 'MNG-TEST-0001', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), status: 'paid', payment_id: 'pay_1', customer_name: 'C', customer_phone: '919810000001', customer_email: 'c@example.test', total: 259, discount_amount: 0, items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 1, item_price: 259, unit: '250g' }], delivery_address: { raw: 'Delhi - 110001', state: 'Delhi' } };
+    stub('utils/database.js', {
+      listStock: async () => [], setStock: async () => {},
+      listRecentOrders: async () => [paidOrder], getInvoicesByOrderIds: async () => ({}), getCreditNotesByOrderIds: async () => [], listOrderEventsByName: async () => [], logOrderEvent: async () => {},
+      markOrderRefunded: async (id) => { if (closeFails) throw new Error('db down'); closed.push(id); },
+      getCreditNoteByRefund: async () => null, getInvoiceByOrder: async () => null, getCreditNotesByOrder: async () => [],
+    });
+    stub('utils/razorpay.js', { listPayments: async () => paymentsAtRazorpay });
+    stub('utils/creditNote.js', { issueCreditNote: async () => null });
+    stub('utils/refunds.js', { notifyRefund: async () => {} });
     const table = { 'atta-original': { price: 300, mrp: 300 } };
     stub('utils/prices.js', { refresh: async () => {}, ensureFresh: async () => {}, isOn: () => true, current: () => table, save: async (x) => { if (saveThrows) throw new Error('write refused'); saved.push(x); } });
     class StockError extends Error { constructor(m) { super(m); this.status = 400; this.extra = {}; } }
     let invMode = 'ok';
-    stub('utils/inventory.js', { StockError, instance: () => ({ overview: async () => ({ items: [] }), receive: async () => { if (invMode === 'refuse') throw new StockError('Refused.'); if (invMode === 'crash') throw new Error('db down'); return { id: 1 }; } }) });
+    stub('utils/inventory.js', { StockError, instance: () => ({ sellable: async () => ({}), overview: async () => ({ items: [] }), receive: async () => { if (invMode === 'refuse') throw new StockError('Refused.'); if (invMode === 'crash') throw new Error('db down'); return { id: 1 }; } }) });
     const quiet = console.log; const quietErr = console.error;
+    const keepNotify = process.env.NOTIFY_EMAIL; delete process.env.NOTIFY_EMAIL;   // the refund flow must not reach the owner-email step
     try {
       const actions = require(abs('utils/adminActions.js'));
       const actor = { email: 't@x' };
@@ -717,6 +729,30 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
       eq(await setPrice({ slug: 'atta-original', price: 249, mrp: 300 }), {}, 'hooks: a nudge that throws never breaks the price change');
       nudgeThrows = false;
       eq(saved.length, 2, 'hooks: the price was still saved when the nudge threw');
+
+      // the owner's sold-out switch (POST /admin/api/stock -> setStock): one nudge after the change, none when refused
+      nudges.length = 0;
+      console.log = () => {}; await actions.setStock({ slug: 'atta-original', available: false, actor }); console.log = quiet;
+      eq(nudges, ['stock'], 'hooks: the owner sold-out switch sends one nudge, reason stock');
+      ok(await rejects(actions.setStock({ slug: 'trio-gift-set', available: false, actor })) && nudges.length === 1, 'hooks: an unknown flavour on the switch sends no nudge');
+
+      // a refund that closes an order: the admin list closes orders Razorpay shows fully refunded; the refund.processed flow closes them too
+      nudges.length = 0;
+      paymentsAtRazorpay = [{ id: 'pay_1', status: 'refunded', amount: 25900, amount_refunded: 25900, created_at: Math.floor(Date.now() / 1000) }];
+      await actions.listOrders(); await new Promise((r) => setImmediate(r));
+      eq([closed, nudges], [['MNG-TEST-0001'], ['refund']], 'hooks: the admin list closes a fully refunded order and sends one nudge, reason refund');
+      const refunds = require(abs('utils/refundFlow.js'));
+      const refundOf = (amount) => refunds.processRefund({ order: { order_id: 'MNG-TEST-0002', status: 'paid', total: 259, customer_phone: '919810000002' }, refund: { id: 'rfnd_' + amount, payment_id: 'pay_2', amount, notes: {} } });
+      const quietWarn = console.warn;
+      const quietly = async (fn) => { console.log = () => {}; console.warn = () => {}; console.error = () => {}; try { return await fn(); } finally { console.log = quiet; console.warn = quietWarn; console.error = quietErr; } };   // the flow logs; a FAIL line must still show
+      nudges.length = 0; closed.length = 0;
+      await quietly(() => refundOf(25900));
+      eq([closed, nudges], [['MNG-TEST-0002'], ['refund']], 'hooks: a full refund (refund.processed) closes the order and sends one nudge, reason refund');
+      nudges.length = 0; closed.length = 0;
+      await quietly(() => refundOf(10000));
+      eq([closed, nudges], [[], []], 'hooks: a part refund closes nothing and sends no nudge');
+      closeFails = true; await quietly(() => refundOf(25900)); closeFails = false;
+      eq(nudges, [], 'hooks: a full refund whose close failed sends no nudge (and the flow carries on)');
 
       // the stock wrapper in routes/admin.js, run for real with a fake inventory: POST nudges once after success, GET and failures do not
       const router = require(abs('routes/admin.js'));
@@ -738,12 +774,13 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
       nudgeThrows = false;
     } finally {
       console.log = quiet; console.error = quietErr;
+      if (keepNotify === undefined) delete process.env.NOTIFY_EMAIL; else process.env.NOTIFY_EMAIL = keepNotify;
       keys.forEach((k, i) => { if (kept[i]) require.cache[k] = kept[i]; else delete require.cache[k]; });
     }
 
     // the other hook points, found in the source text (a later edit that loses one fails here and names it)
     const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
-    const admin = read('routes/admin.js'), server = read('server.js'), act = read('utils/adminActions.js');
+    const admin = read('routes/admin.js'), server = read('server.js'), act = read('utils/adminActions.js'), refundFlow = read('utils/refundFlow.js');
     const slice = (src, from, to) => { const a = src.indexOf(from); if (a < 0) return ''; const b = src.indexOf(to, a + from.length); return src.slice(a, b < 0 ? undefined : b); };
     const fnBody = (src, name) => slice(src, `async function ${name}(`, '\n}\n');
     const safe = (reason) => `try\\s*\\{\\s*require\\('[^']*channelSync'\\)\\.nudge\\('${reason}'\\);\\s*\\}\\s*catch\\s*\\(_\\)\\s*\\{\\s*\\}`;   // the nudge can never throw into the action
@@ -756,6 +793,9 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     if (!after(fnBody(act, 'setPrice'), "prices').save", new RegExp(safe('price')))) missing.push("utils/adminActions.js: price change (setPrice: nudge('price') after prices.save)");
     if (!new RegExp(`\\[RAZORPAY\\] Order \\$\\{orderId\\} paid[^\\n]*\\n\\s*${safe('paid')}`).test(server)) missing.push("server.js: paid order (nudge('paid') straight after the [RAZORPAY] Order paid log)");
     if (!/require\('\.\/utils\/channelSync'\)\.startSweep\(\)/.test(slice(server, 'app.listen(PORT', '\n});'))) missing.push('server.js: the 15-minute check (startSweep in the app.listen callback)');
+    if (!after(fnBody(act, 'setStock'), 'stock.setAvailable', new RegExp(safe('stock')))) missing.push("utils/adminActions.js: owner sold-out switch (setStock: nudge('stock') after stock.setAvailable)");
+    if (!after(fnBody(act, 'loadOrders'), 'markOrderRefunded', new RegExp(`o\\.status = 'cancelled';\\s*${safe('refund')}`))) missing.push("utils/adminActions.js: refund closes an order (loadOrders auto-close: nudge('refund') after markOrderRefunded)");
+    if (!after(fnBody(refundFlow, 'processRefund'), 'markOrderRefunded', new RegExp(safe('refund')))) missing.push("utils/refundFlow.js: refund.processed closes an order (processRefund: nudge('refund') after markOrderRefunded)");
     ok(missing.length === 0, `hooks missing: ${missing.join(' | ')}`);
   }
 

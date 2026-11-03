@@ -39,7 +39,7 @@ async function processRefund({ order, refund }) {
   const isFull = refundedBefore + amountPaise >= orderTotalPaise;
 
   if (isFull && order.status === 'cancelled' && !invoice) { console.log(`[REFUND] ${order.order_id} already closed - ignoring duplicate`); return { duplicate: true }; }
-  if (isFull) await step('close order', () => db.markOrderRefunded(order.order_id));
+  if (isFull) await step('close order', async () => { await db.markOrderRefunded(order.order_id); try { require('./channelSync').nudge('refund'); } catch (_) {} });   // a refunded unpacked order frees its boxes
   console.log(`[REFUND] ${order.order_id}: Rs ${amountRupees} (${isFull ? 'completes full refund' : 'partial'}), reason ${reasonCode}, ${refundId}`);
 
   // 3 + 4: tax paperwork (needs invoices_migration.sql + credit_notes_migration.sql; skipped cleanly otherwise)
