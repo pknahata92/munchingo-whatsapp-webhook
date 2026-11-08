@@ -69,8 +69,12 @@ insert into stock_settings (key, value) values
   ('dispatch_days', '2'),
   ('old_bake_days', '7'),
   ('sticker_flags', '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test'),
-  ('lots_from', now()::text)
+  ('lots_from', now()::text),
+  ('packaging_count_from', now()::text)   -- packaging counts restart here (8 Nov 2026): a packaging count is the sum of ledger rows on or after this time; nothing is deleted
 on conflict (key) do nothing;
+
+-- 4b. The trade case is 24 boxes now. Renames the old default name once; a name set by hand is left alone. Slug and case maths unchanged.
+update stock_items set name = '24-box case carton' where slug = 'case-carton' and name = '20-box case carton';
 
 -- 5. A private bucket for bill and carton photos (guarded and dynamic, so it also parses where there is no storage schema).
 do $$
@@ -159,10 +163,10 @@ on conflict (item_slug, lot_code) do nothing;
 
 drop function if exists stock_lot_bake_date(text);
 
--- Read-back: expect 19 deliveries columns (incl. gst_paise), 16 lots columns, the type check listing 17 types, 6 settings, and the
+-- Read-back: expect 19 deliveries columns (incl. gst_paise), 16 lots columns, the type check listing 17 types, 7 settings, and the
 -- number of lots filled in from the ledger (lots with no delivery).
 select (select count(*) from information_schema.columns where table_name = 'stock_deliveries') as deliveries_columns,
        (select count(*) from information_schema.columns where table_name = 'stock_lots') as lots_columns,
        (select pg_get_constraintdef(oid) from pg_constraint where conname = 'stock_movements_type_check') as type_check,
-       (select count(*) from stock_settings where key in ('shelf_days', 'ship_floor_days', 'dispatch_days', 'old_bake_days', 'sticker_flags', 'lots_from')) as settings,
+       (select count(*) from stock_settings where key in ('shelf_days', 'ship_floor_days', 'dispatch_days', 'old_bake_days', 'sticker_flags', 'lots_from', 'packaging_count_from')) as settings,
        (select count(*) from stock_lots where delivery_id is null) as backfilled_lots;

@@ -149,6 +149,7 @@ router.get('/admin/api/founding-tasters', owner, rw(async () => ({ rows: await r
 router.post('/admin/api/founding-tasters', owner, rw((req) => rv().saveTasters((req.body || {}).rows, req.admin)));
 router.post('/admin/api/orders/:id/known', owner, rw((req) => rv().setKnown(req.params.id, (req.body || {}).known)));
 router.post('/admin/api/inventory/item', owner, sw((req, inv) => inv.addItem(req.body || {})));
+router.post('/admin/api/inventory/item/remove', owner, sw((req, inv) => inv.removeItem({ slug: (req.body || {}).slug, isOwner: req.admin.role === 'owner' })));   // packaging only; archives, never deletes
 router.post('/admin/api/inventory/rename-lot', owner, sw((req, inv) => inv.renameLot({ ...(req.body || {}), actor: req.admin, isOwner: true })));
 router.post('/admin/api/inventory/level', owner, sw((req, inv) => inv.setLevel({ slug: (req.body || {}).slug, lowLevel: (req.body || {}).lowLevel })));
 router.post('/admin/api/orders/:id/assign-lot', owner, sw((req, inv) => inv.assignLot({ ...(req.body || {}), orderId: req.params.id, actor: req.admin, isOwner: req.admin.role === 'owner' })));   // { slug, lot }; isOwner after the spread

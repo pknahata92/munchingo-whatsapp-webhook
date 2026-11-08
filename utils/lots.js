@@ -10,6 +10,7 @@ const DEFAULTS = {
   shelf_days: 90, ship_floor_days: 50, dispatch_days: 2, old_bake_days: 7,
   sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test',
   lots_from: null,
+  packaging_count_from: null,   // packaging counts restart here (null = no reset)
 };
 
 function readSettings(raw) {
@@ -21,6 +22,7 @@ function readSettings(raw) {
   }
   if (r.sticker_flags != null) out.sticker_flags = String(r.sticker_flags);
   out.lots_from = r.lots_from != null ? String(r.lots_from) : null;
+  out.packaging_count_from = r.packaging_count_from != null ? String(r.packaging_count_from) : null;
   return out;
 }
 

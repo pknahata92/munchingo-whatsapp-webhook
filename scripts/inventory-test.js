@@ -671,5 +671,99 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     }
   }
 
+  // ── Task 6b: packaging is a hand-kept list (8 Nov 2026) ──
+  {
+    const OLD = '2020-01-01T00:00:00.000Z', RESET = '2021-01-01T00:00:00.000Z';   // calendar-proof: rows written now are always after RESET
+    const mkP = async () => {
+      const st = memStore('2026-10-16T00:00:00.000Z'); const inv = makeInventory(st);
+      await inv.receive({ slug: 'packing-tape', received: 30, actor: A });          // an old, pre-reset count
+      await inv.receive({ slug: 'atta-kesari', received: 100, lot: 'L1', bestBefore: '2027-01-13', actor: A });
+      st.mv.forEach((m) => { m.created_at = OLD; });
+      st.setSetting('packaging_count_from', RESET);
+      return { st, inv };
+    };
+    const row = async (inv, slug) => (await inv.overview()).items.find((i) => i.slug === slug);
+    // the setting
+    ok(typeof (await memStore('2026-10-16T00:00:00.000Z').settingsAll()).packaging_count_from === 'string', 'memstore has packaging_count_from (its creation time)');
+    const mig = require('fs').readFileSync(require('path').join(__dirname, '..', 'batch_receiving_migration.sql'), 'utf8');
+    ok(/\('packaging_count_from',\s*now\(\)::text\)/.test(mig) && /on conflict \(key\) do nothing/.test(mig), 'migration inserts packaging_count_from once (on conflict do nothing)');
+    ok(/update stock_items set name = '24-box case carton' where slug = 'case-carton' and name = '20-box case carton'/.test(mig), 'migration renames the case carton only when it still has the old name');
+    {
+      const { st, inv } = await mkP();
+      let t = await row(inv, 'packing-tape');
+      ok(t.counted === false && t.on_hand === 0 && t.status === 'new' && t.last_counted === null, 'packaging with only old rows has no count (' + JSON.stringify([t.counted, t.on_hand, t.status]) + ')');
+      ok(!(await inv.overview()).low.some((x) => x.slug === 'packing-tape'), 'no count is not in the low list');
+      await inv.setLevel({ slug: 'packing-tape', lowLevel: 50 });
+      t = await row(inv, 'packing-tape'); ok(t.status === 'new' && !(await inv.overview()).low.some((x) => x.slug === 'packing-tape'), 'a low level with no count is still no alert');
+      const k = await row(inv, 'atta-kesari'); ok(k.on_hand === 100 && k.counted === true && k.status === 'ok', 'biscuit counts are untouched by the reset');
+      // typing a count
+      const before = st.mv.length;
+      const c = await inv.count({ slug: 'packing-tape', counted: 40, note: 'counted the shelf', actor: A });
+      ok(c.diff === 40 && c.onHand === 40 && st.mv.length === before + 1 && st.mv[st.mv.length - 1].type === 'COUNT_FIX' && st.mv[st.mv.length - 1].qty === 40, 'count writes one COUNT_FIX of +40 from the since-reset count');
+      t = await row(inv, 'packing-tape'); ok(t.counted === true && t.on_hand === 40 && /^\d{4}-\d\d-\d\dT/.test(t.last_counted), 'the item now shows 40 and when it was counted');
+      ok(t.status === 'low' && (await inv.overview()).low.some((x) => x.slug === 'packing-tape'), 'low_level 50 and a count of 40: low');
+      await inv.setLevel({ slug: 'packing-tape', lowLevel: 0 });
+      ok((await row(inv, 'packing-tape')).status === 'ok', 'low level 0 and a count: ok');
+      await inv.count({ slug: 'packing-tape', counted: 0, note: 'used all', actor: A });
+      t = await row(inv, 'packing-tape'); ok(t.on_hand === 0 && t.counted === true && t.status === 'ok' && !(await inv.overview()).low.some((x) => x.slug === 'packing-tape'), 'a count of 0 with low level 0 is not an alert');
+      await inv.setLevel({ slug: 'packing-tape', lowLevel: 5 });
+      ok((await row(inv, 'packing-tape')).status === 'out', 'a count of 0 under a low level is out');
+      await inv.setLevel({ slug: 'packing-tape', lowLevel: 0 });
+      await inv.setLow({ slug: 'packing-tape', low: true }); ok((await row(inv, 'packing-tape')).status === 'low', 'the manual Low flag still raises an alert');
+      await inv.setLow({ slug: 'packing-tape', low: false });
+      ok(st.mv.filter((m) => m.item_slug === 'packing-tape').length === 3 && st.mv[0].created_at === OLD, 'old lines stay in the ledger');
+      const h = await inv.history({ slug: 'packing-tape' }); ok(h.movements.length === 3 && h.movements.some((m) => m.created_at === OLD && m.qty === 30), 'history still lists the old line');
+      // taking out uses the since-reset count
+      await inv.count({ slug: 'packing-tape', counted: 40, note: 'recount', actor: A });
+      await inv.take({ slug: 'packing-tape', qty: 5, type: 'USE', actor: A }); ok((await row(inv, 'packing-tape')).on_hand === 35, 'a take-out comes off the since-reset count');
+      await rejects(inv.take({ slug: 'packing-tape', qty: 36, type: 'USE', actor: A }), /Only 35/, 'a take-out is checked against the since-reset count, not the old total');
+      // removing the setting brings the old counts back
+      st.setSetting('packaging_count_from', null);
+      t = await row(inv, 'packing-tape'); ok(t.on_hand === 65 && t.counted === true, 'without the setting every ledger line counts again (' + t.on_hand + ')');
+    }
+    {
+      // a biscuit count is the same with or without a reset; no row since the reset for a biscuit changes nothing
+      const { inv } = await mkP();
+      ok((await row(inv, 'atta-kesari')).on_hand === 100, 'biscuit rows before the reset still count');
+    }
+    {
+      // remove = archive
+      const { st, inv } = await mkP();
+      await inv.count({ slug: 'packing-tape', counted: 12, note: 'x', actor: A });
+      const rowsBefore = st.mv.length, itemsBefore = (await st.items()).length;
+      await rejects(inv.removeItem({ slug: 'packing-tape', isOwner: false }), /Only the owner/, 'staff cannot remove an item');
+      try { await inv.removeItem({ slug: 'packing-tape' }); ok(false, 'no isOwner must refuse'); } catch (e) { ok(e.status === 403, 'removeItem defaults to refusing (403)'); }
+      try { await inv.removeItem({ slug: 'packing-tape', isOwner: false }); } catch (e) { ok(e.status === 403, 'staff removeItem is 403'); }
+      await rejects(inv.removeItem({ slug: 'atta-kesari', isOwner: true }), /Only packaging items can be removed\. Biscuits stay\./, 'a biscuit cannot be removed');
+      ok((await st.item('atta-kesari')).active === true, 'the biscuit is still active');
+      await rejects(inv.removeItem({ slug: 'no-such', isOwner: true }), /No such item/, 'unknown item');
+      const r = await inv.removeItem({ slug: 'packing-tape', isOwner: true }); ok(r.ok === true, 'owner removes a packaging item');
+      ok(!(await inv.overview()).items.some((i) => i.slug === 'packing-tape') && !(await inv.overview()).low.some((x) => x.slug === 'packing-tape'), 'the removed item leaves the overview');
+      ok((await st.item('packing-tape')).active === false && st.mv.length === rowsBefore && (await st.items()).length === itemsBefore, 'nothing is deleted: the item is archived and its rows stay');
+      await rejects(inv.count({ slug: 'packing-tape', counted: 5, note: 'x', actor: A }), /No such item/, 'an archived item cannot be counted');
+      await rejects(inv.removeItem({ slug: 'packing-tape', isOwner: true }), /No such item/, 'removing twice is refused');
+      // add the same name again: reactivated, same slug, history kept
+      const back = await inv.addItem({ name: 'Packing tape', kind: 'packaging', unit: 'reels' });
+      ok(back.slug === 'packing-tape', 'adding an archived name brings it back with the same slug');
+      const t = await row(inv, 'packing-tape'); ok(t && t.on_hand === 12 && t.counted === true && t.unit === 'reels' && t.name === 'Packing tape', 'the returned item keeps its count and history, with the new unit (' + JSON.stringify([t && t.on_hand, t && t.unit]) + ')');
+      ok((await st.items()).length === itemsBefore, 'no second item row was made');
+      await rejects(inv.addItem({ name: 'Packing tape', kind: 'packaging' }), /already exists/, 'an active item still cannot be added twice');
+      await rejects(inv.addItem({ name: 'Atta Kesari', kind: 'packaging' }), /already exists/, 'a biscuit name is never reused');
+    }
+    {
+      // the real store sums the ledger since the reset, through the database client
+      const dbPath = require.resolve('../utils/database'); const seen = []; const saved = require.cache[dbPath];
+      const q = (t) => { const o = { t, ops: [] }; const chain = new Proxy(o, { get: (target, k) => (k === 'then' ? (res) => { seen.push(target); res({ data: [{ item_slug: 'packing-tape', qty: 40, created_at: '2026-11-08T12:00:00+00:00' }, { item_slug: 'packing-tape', qty: -5, created_at: '2026-11-09T12:00:00+00:00' }, { item_slug: 'label-stamp', qty: 0 + 7, created_at: '2026-11-08T13:00:00+00:00' }], error: null }); } : (...a) => { target.ops.push([k, ...a]); return chain; }) }); return chain; };
+      require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { client: () => ({ from: (t) => q(t) }) } };
+      const real = require('../utils/inventory').supabaseStore();
+      const got = typeof real.totalsSince === 'function' ? await real.totalsSince('2026-11-08T10:00:00.000Z', ['packing-tape', 'label-stamp']) : null;
+      const c0 = seen[0] || { ops: [] }; const has = (...want) => c0.ops.some((o) => JSON.stringify(o) === JSON.stringify(want));
+      ok(got && c0.t === 'stock_movements' && has('gte', 'created_at', '2026-11-08T10:00:00.000Z') && has('in', 'item_slug', ['packing-tape', 'label-stamp']), 'the real store reads stock_movements since the reset for the packaging slugs');
+      const byS = Object.fromEntries((got || []).map((x) => [x.item_slug, x]));
+      ok(byS['packing-tape'] && byS['packing-tape'].qty === 35 && byS['packing-tape'].last === '2026-11-09T12:00:00+00:00' && byS['label-stamp'].qty === 7, 'the real store sums per item and keeps the newest time (' + JSON.stringify(got) + ')');
+      require.cache[dbPath] = saved;
+    }
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

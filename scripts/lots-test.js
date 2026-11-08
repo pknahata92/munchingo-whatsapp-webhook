@@ -7,10 +7,11 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), m + ' (got '
 const D = L.DEFAULTS;
 
 // settings
-eq(L.DEFAULTS, { shelf_days: 90, ship_floor_days: 50, dispatch_days: 2, old_bake_days: 7, sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test', lots_from: null }, 'defaults');
+eq(L.DEFAULTS, { shelf_days: 90, ship_floor_days: 50, dispatch_days: 2, old_bake_days: 7, sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test', lots_from: null, packaging_count_from: null }, 'defaults');
 eq(L.readSettings({}), D, 'empty raw gives defaults');
-const rs = L.readSettings({ shelf_days: '60', ship_floor_days: 'abc', dispatch_days: '-1', old_bake_days: '3.5', sticker_flags: '--x', lots_from: '2026-11-08T00:00:00Z' });
+const rs = L.readSettings({ packaging_count_from: '2026-11-08 15:10:00+00', shelf_days: '60', ship_floor_days: 'abc', dispatch_days: '-1', old_bake_days: '3.5', sticker_flags: '--x', lots_from: '2026-11-08T00:00:00Z' });
 eq([rs.shelf_days, rs.ship_floor_days, rs.dispatch_days, rs.old_bake_days, rs.sticker_flags, rs.lots_from], [60, 50, 2, 7, '--x', '2026-11-08T00:00:00Z'], 'readSettings parses and falls back');
+eq([rs.packaging_count_from, L.readSettings({}).packaging_count_from], ['2026-11-08 15:10:00+00', null], 'packaging_count_from is read as text, null when absent');
 eq(L.LETTERS, { 'atta-original': 'O', 'atta-kesari': 'K', 'atta-ajwain': 'A', 'atta-lite-sugar': 'L' }, 'letters');
 eq(L.SLUG_OF_LETTER.K, 'atta-kesari', 'slug of letter');
 

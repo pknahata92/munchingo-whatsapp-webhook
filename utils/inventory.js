@@ -21,6 +21,8 @@ const DUP_WINDOW_MS = 15 * 60_000;
 const DAMAGED_ON_RECEIPT = 'Damaged or not okay on receipt';
 const HISTORY_TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']);
 const REVERSE_FREE_MS = 24 * 3_600_000;       // anyone can reverse their own slip within a day; later needs the owner
+// A stock_settings time (the database writes now()::text, e.g. '2026-11-08 15:10:00+00') as milliseconds; null when it is missing or unreadable.
+const tsMs = (v) => { if (v == null || v === '') return null; const n = Date.parse(v); return Number.isNaN(n) ? null : n; };
 const slugOfToken = (token) => `atta-${token}`;
 const int = (v) => (typeof v === 'number' ? v : Number(String(v == null ? '' : v).trim()));
 const cleanText = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
@@ -124,16 +126,25 @@ function firstShortage(cartItems, sellable) {
 }
 
 function makeInventory(store, { now = () => Date.now() } = {}) {
+  // Biscuits: the sum of the whole ledger. Packaging is hand-kept: its count is the sum of the lines on or after packaging_count_from
+  // (nothing is deleted; earlier lines stay in History), and an item with no line since then has no count (`any` false). No setting = no reset.
   async function onHandMap() {
-    const rows = await store.byLot();   // [{item_slug, lot_code, best_before, qty}]
+    const [rows, items, raw] = await Promise.all([store.byLot(), store.items(), store.settingsAll()]);   // rows: [{item_slug, lot_code, best_before, qty}]
+    const from = tsMs(lotRules.readSettings(raw).packaging_count_from);
+    const pack = new Set(from == null ? [] : items.filter((i) => i.kind === 'packaging').map((i) => i.slug));
     const map = {};
-    for (const r of rows) { const m = map[r.item_slug] || (map[r.item_slug] = { total: 0, lots: [], any: false }); m.total += r.qty; m.any = true; m.lots.push({ lot_code: r.lot_code, best_before: r.best_before, qty: r.qty }); }
+    for (const r of rows) { if (pack.has(r.item_slug)) continue; const m = map[r.item_slug] || (map[r.item_slug] = { total: 0, lots: [], any: false }); m.total += r.qty; m.any = true; m.lots.push({ lot_code: r.lot_code, best_before: r.best_before, qty: r.qty }); }
+    if (pack.size) for (const t of await store.totalsSince(new Date(from).toISOString(), [...pack])) map[t.item_slug] = { total: t.qty, lots: [{ lot_code: null, best_before: null, qty: t.qty }], any: true, last: t.last || null };
     return map;
   }
 
   function statusOf(item, m) {
     if (item.manual_low) return 'low';
     if (!m || !m.any) return 'new';
+    if (item.kind === 'packaging') {   // alerts only when a low level is set; "no count" (above) is never an alert, and 0 with no low level is fine
+      if (!(item.low_level > 0)) return 'ok';
+      return m.total <= 0 ? 'out' : m.total <= item.low_level ? 'low' : 'ok';
+    }
     if (m.total <= 0) return 'out';
     if (item.low_level > 0 && m.total <= item.low_level) return 'low';
     return 'ok';
@@ -152,7 +163,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       const elig = (purpose) => (m ? m.lots.filter((l) => eligibleRow(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }, purpose)).reduce((n, l) => n + l.qty, 0) : 0);
       const usable = i.kind === 'product' ? (m ? Math.min(m.total, elig('other')) : 0) : null;
       const webBoxes = i.kind === 'product' && m && m.any ? Math.min(m.total, elig('web')) : null;
-      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, committed: committed[i.slug] || 0, sellable: webBoxes == null ? null : webBoxes - (committed[i.slug] || 0), paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots: lotList };
+      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, committed: committed[i.slug] || 0, sellable: webBoxes == null ? null : webBoxes - (committed[i.slug] || 0), paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), last_counted: i.kind === 'packaging' && m && m.last ? m.last : null, status: statusOf(i, m), lots: lotList };
     });
     const nameOf = Object.fromEntries(items.map((i) => [i.slug, i.name]));
     const open = Object.keys(events).map((ref) => ({ ref, items: events[ref].map((x) => ({ ...x, name: nameOf[x.slug] || x.slug })) }));
@@ -168,9 +179,9 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Boxes a take-out may use: on hand, less what is on hold or past best before. Packaging has no lots, so all of it counts.
   // `held` is how many more boxes are on the shelf but not usable (never negative: a lot-less shortfall row is not "held").
   async function usableOf(item, ctx, purpose = 'other') {
+    if (item.kind !== 'product') { const t = await onHand(item.slug); return { have: t, usable: t, held: 0 }; }   // packaging: the since-reset count
     const rows = (await store.byLot()).filter((r) => r.item_slug === item.slug);
     const total = rows.reduce((n, r) => n + r.qty, 0);
-    if (item.kind !== 'product') return { have: total, usable: total, held: 0 };
     const eligibleSum = rows.filter((r) => eligibleRow(ctx, r, purpose)).reduce((n, r) => n + r.qty, 0);
     const usable = Math.min(total, eligibleSum);
     return { have: total, usable, held: total - usable };
@@ -383,9 +394,25 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (!['product', 'packaging'].includes(kind)) throw new StockError('Choose product or packaging.');
     const slug = nm.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
     if (!slug) throw new StockError('Use letters or numbers in the name.');
-    if (await store.item(slug)) throw new StockError('That item already exists.', 409);
+    const had = await store.item(slug);
+    if (had) {
+      // an archived packaging item comes back with the same slug and history
+      if (had.active || had.kind !== 'packaging') throw new StockError('That item already exists.', 409);
+      const back = { active: true, name: nm, unit: cleanText(unit, 20) || had.unit };
+      if (lowLevel != null && lowLevel !== '') back.low_level = Math.max(0, int(lowLevel) || 0);
+      await store.updateItem(slug, back);
+      return { slug, restored: true };
+    }
     await store.insertItem({ slug, name: nm, kind, unit: cleanText(unit, 20) || 'pcs', low_level: Math.max(0, int(lowLevel) || 0), sort: 90 });
     return { slug };
+  }
+  // Remove = archive (owner only): a packaging item leaves the screen and the pickers, its ledger lines stay, and adding the same name brings it back.
+  async function removeItem({ slug, isOwner = false }) {
+    if (!isOwner) throw new StockError('Only the owner can remove an item.', 403);
+    const item = await need(slug);
+    if (item.kind !== 'packaging') throw new StockError('Only packaging items can be removed. Biscuits stay.', 400);
+    await store.updateItem(slug, { active: false });
+    return { ok: true };
   }
   async function setLevel({ slug, lowLevel }) {
     await need(slug); const n = int(lowLevel);
@@ -577,7 +604,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Only boxes the website may sell count (released or legacy lots, before their website stop date).
   async function sellable() { const [items, rows, committed, ctx] = await Promise.all([store.items(), store.byLot(), store.committed(), lotContext(store, now())]); return computeSellable(items, rows, committed, ctx); }
 
-  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, planForOrder, deductForOrder, restoreForOrder, needsLot, assignLot };
+  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, removeItem, setLevel, reverse, history, planForOrder, deductForOrder, restoreForOrder, needsLot, assignLot };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────
@@ -615,6 +642,17 @@ function supabaseStore() {
     },
     paused: async () => (ok(await c().from('product_stock').select('slug').eq('available', false)) || []).map((r) => r.slug),
     totals: async () => ok(await c().from('stock_totals').select('*')) || [],
+    // Packaging counts: per slug with at least one line on or after `ts`, the sum of those lines and the newest time. Paged, so the 1000-row cap never cuts a sum short.
+    totalsSince: async (ts, slugs) => {
+      if (!slugs.length) return [];
+      const m = {};
+      for (let from = 0; ; from += 1000) {
+        const page = ok(await c().from('stock_movements').select('item_slug, qty, created_at').gte('created_at', ts).in('item_slug', slugs).order('id', { ascending: true }).range(from, from + 999)) || [];
+        for (const r of page) { const e = m[r.item_slug] || (m[r.item_slug] = { item_slug: r.item_slug, qty: 0, last: r.created_at }); e.qty += r.qty; if (Date.parse(r.created_at) > Date.parse(e.last)) e.last = r.created_at; }
+        if (page.length < 1000) break;
+      }
+      return Object.values(m);
+    },
     events: async () => ok(await c().from('stock_events').select('*')) || [],
     eventRows: async (ref, slug) => ok(await c().from('stock_movements').select('*').eq('ref', ref).eq('item_slug', slug).in('type', ['EXHIBITION', 'EXHIBITION_RETURN'])) || [],
     salesOf: async (orderId) => ok(await c().from('stock_movements').select('*').like('ref', `${orderId}@%`).in('type', ['SALE', 'SALE_UNDO'])) || [],
@@ -634,7 +672,6 @@ function supabaseStore() {
     updateDelivery: async (id, fields) => { ok(await c().from('stock_deliveries').update(fields).eq('id', id)); },
     movementsByLots: async (codes) => (codes.length ? ok(await c().from('stock_movements').select('*').in('lot_code', codes)) || [] : []),
     movementsByDelivery: async (id) => ok(await c().from('stock_movements').select('*').eq('delivery_id', id)) || [],
-    movementsByRef: async (ref) => ok(await c().from('stock_movements').select('*').eq('ref', ref)) || [],
     saveDelivery: async ({ d, lots, moves }) => ok(await c().rpc('stock_save_delivery', { d, lots: lots || [], moves: moves || [] })),
   };
 }

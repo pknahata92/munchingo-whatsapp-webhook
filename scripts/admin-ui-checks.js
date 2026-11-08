@@ -91,7 +91,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(o.errors.length === 0, 'no page errors on the stock page (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
     const s = await openAdmin('staff'); click(s.byText('#tabs .tab', /^Stock$/)); await until(() => s.qa('#viewStock .line').length >= 4, 4000, 'the stock page for staff');
-    ok(!s.byText('#viewStock button', /^Add item$/) && !s.byText('#viewStock button', /Low level/), 'staff do not see owner-only stock controls');
+    ok(!s.byText('#viewStock button', /^Add packaging item$/) && !s.byText('#viewStock button', /Low level/) && !s.byText('#viewStock button', /^Remove$/), 'staff do not see owner-only stock controls');
     s.close();
   });
 
@@ -165,14 +165,14 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(/Expected delivery/.test(text(q('#sheet'))) && /LATE/.test(text(q('#sheet'))), 'the order sheet shows the expected delivery date and LATE');
     o.close();
 
-    // stock page: no per-flavour Take out; packaging keeps its own; the several-flavours form title reads right
+    // stock page: no per-flavour Take out; packaging is hand-kept (Set count only, no Receive or Take out); the several-flavours form title reads right
     const s = await openAdmin('owner');
     click(s.byText('#tabs .tab', /^Stock$/)); await until(() => s.qa('#viewStock .line').length >= 4, 4000, 'the stock page');
     const rows = s.qa('#viewStock .line');
     const btns = (re) => rows.filter((l) => re.test(s.text(l))).map((l) => Array.from(l.querySelectorAll('button')).map((b) => s.text(b)));
     const kes = btns(/Atta Kesari/)[0] || [], tape = btns(/Packing tape/)[0] || [];
     ok(kes.length && !kes.includes('Take out') && kes.includes('Count') && kes.includes('Receive'), 'a flavour has no Take out of its own any more (' + kes.join(',') + ')');
-    ok(tape.includes('Take out'), 'packaging (tape) keeps its Take out (' + tape.join(',') + ')');
+    ok(tape.includes('Set count') && !tape.includes('Take out') && !tape.includes('Receive'), 'packaging (tape) offers Set count, and no Receive or Take out (' + tape.join(',') + ')');
     s.click(s.byText('#viewStock button', /Take out: several/)); await until(() => /Take out/.test(s.text(s.q('#viewStock'))), 4000, 'the form');
     ok(/Take out: several flavours/.test(s.text(s.q('#viewStock'))) && !/Take out several: flavours/.test(s.text(s.q('#viewStock'))), 'the form title reads Take out: several flavours');
     ok(o.errors.length === 0 && s.errors.length === 0, 'no page errors (' + o.errors.concat(s.errors).join(' | ').slice(0, 200) + ')');
@@ -713,6 +713,64 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(lineOf(d2, 'Meta') === 'Meta: matches, checked ' + dl, 'an older check gives the date (' + dl + '): ' + lineOf(d2, 'Meta'));
     d2.close();
     await dev({ reset: true });
+  });
+
+
+  // Task 6b: packaging is a hand-kept list (8 Nov 2026)
+  list.push(async () => {
+    const IST = 5.5 * 3600000, MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const todayWords = () => { const d = new Date(Date.now() + IST); return d.getUTCDate() + ' ' + MON[d.getUTCMonth()]; };
+    const o = await openAdmin('owner', { width: 375 }); const { q, qa, text, click } = o;
+    click(o.byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock page');
+    const view = () => text(q('#viewStock'));
+    const rowOf = (re) => qa('#viewStock .line').find((l) => re.test(text(l)));
+    const btnsOf = (re) => Array.from((rowOf(re) || o.doc.createElement('i')).querySelectorAll('button')).map((b) => text(b));
+    ok(!!o.byText('#viewStock h3', /^Packaging \(counted by hand\)$/), 'Stock has a section "Packaging (counted by hand)"');
+    ok(!o.byText('#viewStock h3', /Packaging and supplies/), 'the old "Packaging and supplies" section is gone');
+    const sec = o.byText('#viewStock .sec', /^Packaging \(counted by hand\)/);
+    const packRows = sec ? Array.from(sec.querySelectorAll('.line')) : [];
+    ok(packRows.length >= 3 && packRows.every((l) => /no count/.test(text(l))), 'every packaging row says "no count" at the start (' + packRows.map((l) => text(l).slice(0, 40)).join(' | ') + ')');
+    ok(packRows.every((l) => !/Not counted yet|OK|LOW|OUT/.test(Array.from(l.querySelectorAll('.badge')).map((b) => text(b)).join('|'))), 'no alert badge on a packaging row with no count');
+    const tape = btnsOf(/Packing tape/);
+    ok(tape.includes('Set count') && tape.includes('Remove') && tape.some((b) => /^Low level/.test(b)) && !tape.includes('Receive') && !tape.includes('Take out'), 'the owner sees Set count, Low level and Remove on a packaging row (' + tape.join(',') + ')');
+    ok(!!o.byText('#viewStock button', /^Add packaging item$/) && !o.byText('#viewStock button', /^Add item$/), 'the owner has Add packaging item');
+    const prods = btnsOf(/Atta Kesari/);
+    ok(prods.includes('Receive') && prods.includes('Count'), 'a biscuit row is unchanged (' + prods.join(',') + ')');
+    // pickers list biscuits only
+    click(o.byText('#viewStock button', /^Receive stock$/)); await until(() => /Which item/.test(view()), 3000, 'the receive picker');
+    const picks = qa('#viewStock .moregrid button').map((b) => text(b));
+    ok(picks.length === 4 && picks.every((t) => /^Atta /.test(t)) && !/Packing tape|Mono carton|Stamp/.test(picks.join('|')), 'the Receive picker lists the four biscuits only (' + picks.join(' | ') + ')');
+    click(o.byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back');
+    // Set count
+    click(Array.from(rowOf(/Packing tape/).querySelectorAll('button')).find((b) => /^Set count$/.test(text(b))));
+    await until(() => /Count: Packing tape/.test(view()), 3000, 'the count form');
+    ok(/No count yet/.test(view()), 'the count form says there is no count yet');
+    const inp = qa('#viewStock input')[0]; o.set(inp, '40');
+    click(o.byText('#viewStock button', /^Save count$/));
+    await until(() => /40/.test(text(rowOf(/Packing tape/) || o.doc.createElement('i'))) && /counted/.test(text(rowOf(/Packing tape/) || o.doc.createElement('i'))), 4000, 'the new count on the row');
+    ok(new RegExp('40.*counted ' + todayWords()).test(text(rowOf(/Packing tape/))), 'the row shows the count and the IST day it was counted: ' + text(rowOf(/Packing tape/)).slice(0, 80));
+    ok(!/no count/.test(text(rowOf(/Packing tape/))) && /no count/.test(text(rowOf(/Mono carton: Original/))), 'only the counted row lost "no count"');
+    // Remove (confirm first)
+    let asked = ''; o.win.confirm = (m) => { asked = m; return true; };
+    click(Array.from(rowOf(/Packing tape/).querySelectorAll('button')).find((b) => /^Remove$/.test(text(b))));
+    await until(() => !rowOf(/Packing tape/), 4000, 'the removed row to go');
+    ok(asked === 'Remove Packing tape from the list? Its history is kept.', 'Remove asks first, in plain words (' + asked + ')');
+    ok(!/Packing tape/.test(view()), 'the removed item is off the screen');
+    // add it back
+    const answers = ['Packing tape', 'rolls']; o.win.prompt = () => answers.shift();
+    click(o.byText('#viewStock button', /^Add packaging item$/));
+    await until(() => !!rowOf(/Packing tape/), 4000, 'the item to come back');
+    ok(/40/.test(text(rowOf(/Packing tape/))) && /counted/.test(text(rowOf(/Packing tape/))), 'adding the same name brings the item back with its count (' + text(rowOf(/Packing tape/)).slice(0, 80) + ')');
+    ok(o.errors.length === 0, 'no page errors (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+    // staff: Set count yes, owner-only controls no
+    const s = await openAdmin('staff', { width: 375 });
+    click(s.byText('#tabs .tab', /^Stock$/)); await until(() => s.qa('#viewStock .line').length >= 4, 4000, 'the stock page for staff');
+    const sb = Array.from((s.qa('#viewStock .line').find((l) => /Mono carton: Kesari/.test(s.text(l))) || s.doc.createElement('i')).querySelectorAll('button')).map((b) => s.text(b));
+    ok(sb.includes('Set count') && !sb.includes('Remove') && !sb.some((b) => /Low level/.test(b)), 'staff see Set count only (' + sb.join(',') + ')');
+    ok(!s.byText('#viewStock button', /^Add packaging item$/), 'staff have no Add packaging item');
+    ok(s.errors.length === 0, 'no page errors for staff (' + s.errors.join(' | ').slice(0, 200) + ')');
+    s.close();
   });
 
   return list;

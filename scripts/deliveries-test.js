@@ -248,17 +248,15 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     ok((await sellOf(inv, 'atta-kesari')) == null || (await sellOf(inv, 'atta-kesari')) === 0, 'held lot is not sellable');
     const kBefore = await packBoxes(st, 'mono-kesari');
     const r = await dl.release({ code: KES, tasted: true, weightG: 275, note: ' ok ' }, A);
-    eq([r.lot.status, r.lot.released_by, r.lot.check_weight_g, r.lot.check_note, r.warnings, r.packagingRows], ['released', 'staff@x.com', 275, 'ok', [], 2], 'staff release works');
+    eq([r.lot.status, r.lot.released_by, r.lot.check_weight_g, r.lot.check_note, r.warnings, 'packagingRows' in r], ['released', 'staff@x.com', 275, 'ok', [], false], 'staff release works');
     ok(/^2026-11-07T06:00:00/.test(r.lot.released_at), 'released_at from now()');
-    const u = useRows(st, KES);
-    eq(u.map((x) => [x.item_slug, x.qty]).sort(), [['label-stamp', -98], ['mono-kesari', -98]], 'two USE rows of 98 with ref = code');
-    ok(u.every((x) => x.actor_email === 'staff@x.com'), 'USE rows carry the actor');
-    eq(await packBoxes(st, 'mono-kesari'), kBefore - 98, 'packaging stock falls once');
+    eq([useRows(st, KES).length, st.mv.filter((m) => m.type === 'USE').length], [0, 0], 'Release writes no USE rows (packaging is hand-kept)');
+    eq(await packBoxes(st, 'mono-kesari'), kBefore, 'packaging stock is untouched by Release');
     eq(await sellOf(inv, 'atta-kesari'), 98, 'released lot is in sellable');
     const stored = (await st.lots()).find((l) => l.lot_code === KES);
     ok(stored.status === 'released' && stored.released_by === 'staff@x.com', 'stored lot updated');
     await rejects(dl.release({ code: KES, tasted: true, weightG: 275 }, A), /^This lot is already released\.$/, 'release of a released lot refused', 400);
-    // hold then release again: no second pair of USE rows
+    // hold then release again: still no USE rows
     await rejects(dl.hold({ code: KES, reason: 'complaint' }, A), /^Only the owner can reject or hold a lot\.$/, 'staff Hold refused', 403);
     await dl.hold({ code: KES, reason: 'complaint' }, OWNER);
     const l1 = (await st.lots()).find((l) => l.lot_code === KES);
@@ -271,7 +269,7 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     ok(st.mv.filter((m) => m.type === 'SAMPLE')[0].lot_code == null, 'a take-out does not use the held lot');
     await rejects(dl.reject({ code: KES, reason: 'bad' }, OWNER), /^This lot was released before, so it cannot be rejected\.$/, 'reject after an earlier release refused', 400);
     const r2 = await dl.release({ code: KES, tasted: true, weightG: 280 }, OWNER);
-    eq([r2.packagingRows, useRows(st, KES).length], [0, 2], 'second release writes no second pair of USE rows');
+    eq([useRows(st, KES).length, st.mv.filter((m) => m.type === 'USE').length], [0, 0], 'second release writes no USE rows either');
     eq(await sellOf(inv, 'atta-kesari'), 97, 'released again and sellable');
     await rejects(dl.reject({ code: KES, reason: 'bad' }, OWNER), /^Only a lot still on hold can be rejected\. Use Hold this lot\.$/, 'reject on a released lot refused', 400);
   }
@@ -286,21 +284,17 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     await rejects(dl.release({ code: KES, tasted: true, weightG: 99 }, A), /Enter the weight/, 'weight under 100', 400);
     await rejects(dl.release({ code: KES, tasted: true, weightG: 1001 }, A), /Enter the weight/, 'weight over 1000', 400);
     await rejects(dl.release({ code: KES, tasted: true, weightG: 250.5 }, A), /Enter the weight/, 'weight must be whole', 400);
-    await rejects(dl.release({ code: KES, tasted: true, weightG: 275, packaging: [{ slug: 'atta-kesari', qty: 1 }] }, A), /packaging/i, 'only packaging items', 400);
-    await rejects(dl.release({ code: KES, tasted: true, weightG: 275, packaging: [{ slug: 'mono-kesari', qty: 1.5 }] }, A), /whole number/, 'whole-number packaging', 400);
     eq(useRows(st, KES).length + (await st.lots()).filter((l) => l.status === 'released').length, 0, 'refusals write nothing');
     const r = await dl.release({ code: KES, tasted: true, weightG: 245, packaging: [{ slug: 'mono-kesari', qty: 90 }, { slug: 'label-stamp', qty: 0 }] }, OWNER);
     eq(r.warnings, ['One box weighed 245 g, under the 250 g on the pack. Weigh a second box.'], '245 g releases with a warning');
-    eq([r.packagingRows, useRows(st, KES).map((x) => [x.item_slug, x.qty])], [1, [['mono-kesari', -90]]], 'custom packaging, zero line skipped');
+    eq([st.mv.filter((m) => m.type === 'USE').length, 'packagingRows' in r], [0, false], 'a packaging list sent with Release is ignored: no USE rows');
   }
-  // below zero warning
+  // no packaging at all in the stock: Release neither warns nor writes anything about packaging
   {
-    const { st, dl, inv } = fresh();
+    const { st, dl } = fresh();
     await saveOne(dl, oneKesari(100, 2));
-    await inv.receive({ slug: 'label-stamp', received: 500, actor: A.actor });
     const r = await dl.release({ code: KES, tasted: true, weightG: 300 }, A);
-    eq(r.warnings, ['Mono carton: Kesari is now below zero: count it'], 'below-zero packaging warning');
-    eq(await packBoxes(st, 'mono-kesari'), -98, 'packaging went negative, not blocked');
+    eq([r.warnings, await packBoxes(st, 'mono-kesari'), st.mv.filter((m) => m.type === 'USE').length], [[], 0, 0], 'no packaging warning and no packaging movement');
   }
   // reject
   {
@@ -365,35 +359,33 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     await inv.receive({ slug: 'atta-kesari', received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
     await dl.hold({ code: '15OCT26', reason: 'x' }, OWNER);
     const r = await dl.release({ code: '15OCT26', tasted: true, weightG: 300 }, A);
-    eq([r.packagingRows, st.mv.filter((m) => m.type === 'USE').length], [0, 0], 'legacy lot: Hold -> Release writes no USE rows');
+    eq([st.mv.filter((m) => m.type === 'USE').length], [0], 'legacy lot: Hold -> Release writes no USE rows');
     // ledger-only lot created by findLot
     await inv.receive({ slug: 'atta-ajwain', received: 20, lot: 'MNGA-261101-01', bestBefore: '2027-01-30', actor: A.actor });
     await dl.hold({ code: 'MNGA-261101-01', reason: 'x' }, OWNER);
     const r2 = await dl.release({ code: 'MNGA-261101-01', tasted: true, weightG: 300 }, A);
-    eq([r2.packagingRows, st.mv.filter((m) => m.type === 'USE').length], [0, 0], 'ledger-only lot: Hold -> Release writes no USE rows');
+    eq([st.mv.filter((m) => m.type === 'USE').length], [0], 'ledger-only lot: Hold -> Release writes no USE rows');
   }
   {
-    // a failed lot update then a retry: one USE pair only
+    // a failed lot update then a retry: still no USE rows, and the retry releases
     const { st, dl, inv } = fresh();
     await stockPack(st, inv);
     await saveOne(dl, oneKesari(100, 2));
     const real = st.updateLot; let failed = false;
     st.updateLot = async (...a) => { if (!failed) { failed = true; throw new Error('db down'); } return real(...a); };
     try { await dl.release({ code: KES, tasted: true, weightG: 300 }, A); ok(false, 'first release should fail'); } catch (e) { ok(e.message === 'db down', 'first release fails'); }
-    eq(useRows(st, KES).length, 2, 'USE rows written before the failure');
+    eq(useRows(st, KES).length, 0, 'no USE rows written before the failure');
     const r = await dl.release({ code: KES, tasted: true, weightG: 300 }, A);
-    eq([useRows(st, KES).length, r.packagingRows, (await st.lots()).find((l) => l.lot_code === KES).status], [2, 0, 'released'], 'retry writes no second pair');
+    eq([useRows(st, KES).length, (await st.lots()).find((l) => l.lot_code === KES).status], [0, 'released'], 'retry releases and writes no USE rows');
   }
   {
-    // a default packaging item is missing
-    const { st, dl, inv } = fresh();
-    await inv.receive({ slug: 'mono-kesari', received: 500, actor: A.actor });
-    const lotsOut = await saveOne(dl, oneKesari(100, 0));
+    // a packaging item missing from the list no longer matters to Release
+    const { st, dl } = fresh();
+    await saveOne(dl, oneKesari(100, 0));
     const st2 = { ...st, item: async (s) => (s === 'label-stamp' ? null : st.item(s)) };
     const dl2 = makeDeliveries(st2, { now: () => NOW });
     const r = await dl2.release({ code: KES, tasted: true, weightG: 300 }, A);
-    eq(r.warnings, ['label-stamp is not set up as a packaging item, so it was not taken off.'], 'missing default packaging item warns');
-    eq([r.lot.status, useRows(st, KES).map((x) => [x.item_slug, x.qty])], ['released', [['mono-kesari', -100]]], 'release still succeeds with the rest');
+    eq([r.warnings, r.lot.status, useRows(st, KES).length], [[], 'released', 0], 'a missing packaging item gives no warning; release still succeeds');
   }
 
   console.log(pass + ' passed, ' + fail + ' failed');

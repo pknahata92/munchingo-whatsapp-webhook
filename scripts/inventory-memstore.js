@@ -18,7 +18,7 @@ function memStore(trackingFrom) {
     { slug: 'packing-tape', name: 'Packing tape', kind: 'packaging', unit: 'rolls', low_level: 0, manual_low: false, active: true, sort: 33 },
   ];
   // defaults equal batch_receiving_migration.sql (inventory-test checks it)
-  const settings = { tracking_from: trackingFrom, shelf_days: '90', ship_floor_days: '50', dispatch_days: '2', old_bake_days: '7', sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test', lots_from: new Date().toISOString() };
+  const settings = { tracking_from: trackingFrom, shelf_days: '90', ship_floor_days: '50', dispatch_days: '2', old_bake_days: '7', sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test', lots_from: new Date().toISOString(), packaging_count_from: new Date().toISOString() };
   const lots = [], deliveries = [];
   const lotKey = (r) => r.item_slug + '|' + r.lot_code;
   const billKey = (d) => `${String(d.supplier).toLowerCase()}|${String(d.bill_no).toLowerCase()}|${d.part}`;
@@ -63,8 +63,9 @@ function memStore(trackingFrom) {
     deliveriesByBill: async (supplier, billNo) => deliveries.filter((d) => String(d.supplier).toLowerCase() === String(supplier).toLowerCase() && String(d.bill_no).toLowerCase() === String(billNo).toLowerCase()),
     lastDelivery: async () => deliveries.filter((d) => d.status !== 'void').slice(-1)[0] || null,
     updateDelivery: async (i, fields) => { const d = deliveries.find((x) => x.id === i); if (d) Object.assign(d, fields); },
+    // Packaging counts: for each slug that has at least one ledger row on or after `ts` (compared as times), the sum of those rows and the time of the newest.
+    totalsSince: async (ts, slugs) => { const t0 = Date.parse(ts); const m = {}; mv.forEach((r) => { if (!slugs.includes(r.item_slug) || !(Date.parse(r.created_at) >= t0)) return; const e = m[r.item_slug] || (m[r.item_slug] = { item_slug: r.item_slug, qty: 0, last: r.created_at }); e.qty += r.qty; if (Date.parse(r.created_at) > Date.parse(e.last)) e.last = r.created_at; }); return Object.values(m); },
     movementsByLots: async (codes) => mv.filter((r) => r.lot_code && codes.includes(r.lot_code)),
-    movementsByRef: async (ref) => mv.filter((r) => r.ref === ref),
     movementsByDelivery: async (i) => mv.filter((r) => r.delivery_id === i),
     // Mirrors stock_save_delivery: everything is checked first, so a throw writes nothing. The same receipt id again returns the first
     // result with again:true. Returns d, like the database function.

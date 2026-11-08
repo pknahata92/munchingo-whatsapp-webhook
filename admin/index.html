@@ -809,7 +809,7 @@ header small{color:var(--ink2);opacity:1}
     window.scrollTo(0, 0);
   }
   function invPick(title, fn) {
-    var items = (state.inv && state.inv.items) || [];
+    var items = ((state.inv && state.inv.items) || []).filter(function (i) { return i.kind === 'product'; });   // biscuits only: packaging is hand-kept (Set count)
     invShow(title, [h('p', { class: 'muted' }, 'Which item?'), h('div', { class: 'moregrid' }, items.map(function (it) { return moreBtn(it.name, it.on_hand + ' ' + it.unit + ' on hand', function () { fn(it); }); })),
       h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))]);
   }
@@ -939,29 +939,45 @@ header small{color:var(--ink2);opacity:1}
           it.at_events ? h('small', { class: 'muted', style: 'color:var(--tx-amber)' }, it.at_events + ' ' + it.unit + ' are out at events (not on the shelf)') : null,
           h('div', { class: 'acts' },
             h('button', { class: 'btn small', onclick: function () { invReceive(it); } }, 'Receive'),
-            it.kind === 'product' ? null : h('button', { class: 'btn ghost small', onclick: function () { invTake(it); } }, 'Take out'),   // flavours use Take out: several flavours
             h('button', { class: 'btn ghost small', onclick: function () { invCount(it); } }, 'Count'),
             it.kind === 'product' ? h('button', { class: 'btn ghost small' + (it.paused ? '' : ' red'), onclick: function (e) { if (!it.paused && !confirm('Pause ' + it.name + ' on the website? Customers will not be able to order it (or any gift set that contains it) until you resume.')) return; e.target.disabled = true; api('/admin/api/inventory/pause', { method: 'POST', body: { slug: it.slug, paused: !it.paused } }).then(function (r) { toast(r.ok ? (it.paused ? it.name + ' is on sale again' : it.name + ' paused on the website') : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); if (r.ok) chanLater(); }); } }, it.paused ? 'Resume selling' : 'Pause selling') : null,
             h('button', { class: 'btn ghost small' + (it.manual_low ? ' red' : ''), onclick: function (e) { e.target.disabled = true; api('/admin/api/inventory/low', { method: 'POST', body: { slug: it.slug, low: !it.manual_low } }).then(function (r) { toast(r.ok ? (it.manual_low ? 'Low flag cleared' : 'Marked as running low') : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, it.manual_low ? 'Clear low flag' : 'Mark low'),
             state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Show LOW when ' + it.name + ' is at or below how many ' + it.unit + '? (0 = only the manual Low flag)', it.low_level); if (v === null) return; api('/admin/api/inventory/level', { method: 'POST', body: { slug: it.slug, lowLevel: v } }).then(function (r) { toast(r.ok ? 'Saved' : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, 'Low level: ' + it.low_level) : null));
       };
+      // Packaging is a hand-kept list: a count only when someone types one, no Receive or Take out, an alert only when a low level is set.
+      var istDay = function (iso) { var d = new Date(Date.parse(iso) + 330 * 60000); return d.getUTCDate() + ' ' + DAY_MON[d.getUTCMonth()]; };
+      var packRow = function (it) {
+        var st = it.status === 'low' || it.status === 'out' ? STATUS[it.status] : null;
+        var count = it.counted ? it.on_hand + ' ' + it.unit + (it.last_counted ? ', counted ' + istDay(it.last_counted) : '') : 'no count';
+        return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:8px' },
+          h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap' }, h('b', { style: 'flex:1 1 140px;min-width:0;overflow-wrap:anywhere' }, it.name),
+            h('span', { class: it.counted ? '' : 'muted', style: it.counted ? 'font-weight:600' : '' }, count),
+            st ? h('span', { class: 'badge ' + st[1] }, st[0]) : null),
+          h('div', { class: 'acts' },
+            h('button', { class: 'btn small', onclick: function () { invCount(it); } }, 'Set count'),
+            it.manual_low ? h('button', { class: 'btn ghost small red', onclick: function (e) { e.target.disabled = true; api('/admin/api/inventory/low', { method: 'POST', body: { slug: it.slug, low: false } }).then(function (r) { toast(r.ok ? 'Low flag cleared' : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, 'Clear low flag') : null,
+            state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var v = prompt('Show LOW when ' + it.name + ' is at or below how many ' + it.unit + '? (0 = no alert)', it.low_level); if (v === null) return; api('/admin/api/inventory/level', { method: 'POST', body: { slug: it.slug, lowLevel: v } }).then(function (r) { toast(r.ok ? 'Saved' : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, 'Low level: ' + it.low_level) : null,
+            state.role === 'owner' ? h('button', { class: 'btn ghost small red', onclick: function (e) { if (!confirm('Remove ' + it.name + ' from the list? Its history is kept.')) return; e.target.disabled = true; api('/admin/api/inventory/item/remove', { method: 'POST', body: { slug: it.slug } }).then(function (r) { toast(r.ok ? it.name + ' removed from the list' : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); }); } }, 'Remove') : null));
+      };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
       var body = [chanBox, h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
         h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
-          state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the new item (for example Bubble wrap):'); if (!nm) return; var kind = confirm('Is "' + nm + '" a product we sell? OK = product, Cancel = packaging or supplies.') ? 'product' : 'packaging'; var unit = prompt('Unit (boxes, rolls, labels...):', kind === 'product' ? 'boxes' : 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: kind, unit: unit } }).then(function (r) { toast(r.ok ? 'Item added' : (r.error || 'Failed')); openInventory(); }); } }, 'Add item') : null,
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { invPick('Rename lot', invRenameLot); } }, 'Rename lot') : null),
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
           return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
             ev.items.map(function (x) { return h('div', { style: 'display:flex;align-items:center;gap:10px;justify-content:space-between' }, h('span', {}, x.name + ': ' + x.out + ' still out (took ' + x.taken + ', back ' + x.returned + ')'),
               h('button', { class: 'btn small', onclick: function (e) { var v = prompt('How many ' + x.name + ' came back from ' + ev.ref + '? (the rest counts as sold or given at the event; record that cash in your cash book)', x.out); if (v === null) return; e.target.disabled = true; api('/admin/api/inventory/event-return', { method: 'POST', body: { slug: x.slug, qty: v, ref: ev.ref } }).then(function (r) { toast(r.ok ? 'Back on the shelf. Still out: ' + r.stillOut : (r.error || 'Failed'), 6000); refreshLow(); openInventory(); }); } }, 'Mark returned')); }));
         })) : null,
-        section('Products', prods.map(row)), section('Packaging and supplies', pack.map(row))];
+        section('Products', prods.map(row)),
+        section('Packaging (counted by hand)', h('p', { class: 'muted' }, 'Nothing here is taken off automatically. Type a count when you check the shelf; you only get an alert if you set a low level.'),
+          pack.length ? pack.map(packRow) : h('p', { class: 'muted' }, 'No packaging items yet.'),
+          state.role === 'owner' ? h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the packaging item (for example Bubble wrap):'); if (!nm) return; var unit = prompt('Unit (rolls, cartons, labels...):', 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: 'packaging', unit: unit } }).then(function (r) { toast(r.ok ? (r.restored ? 'Item is back on the list' : 'Item added') : (r.error || 'Failed')); openInventory(); }); } }, 'Add packaging item')) : null)];
       invShow('Stock', body);
     });
   }
   function invForm(title, it, fields, onSave, saveLabel) {
     var save = h('button', { class: 'btn small', onclick: function (e) { e.target.disabled = true; onSave(function () { e.target.disabled = false; }); } }, saveLabel || 'Save');
-    var kids = [h('p', { class: 'muted' }, 'On hand now: ' + it.on_hand + ' ' + it.unit)].concat(fields, [h('div', { class: 'acts' }, save, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))]);
+    var kids = [h('p', { class: 'muted' }, it.kind === 'packaging' && it.counted === false ? 'No count yet. Type what you have now.' : 'On hand now: ' + it.on_hand + ' ' + it.unit)].concat(fields, [h('div', { class: 'acts' }, save, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))]);
     invShow(title + ': ' + it.name, kids);
   }
   function numIn(ph) { return h('input', { type: 'number', inputmode: 'numeric', min: '0', step: '1', placeholder: ph || '' }); }
@@ -1029,9 +1045,10 @@ header small{color:var(--ink2);opacity:1}
     });
   }
   function invCount(it) {
-    var c = numIn('what you counted'), note = h('input', { placeholder: 'Why it differs (needed if the number changes)' });
+    var pk = it.kind === 'packaging';
+    var c = numIn('what you counted'), note = h('input', { placeholder: pk ? 'Note (optional)' : 'Why it differs (needed if the number changes)' });
     invForm('Count', it, [h('label', {}, 'Counted on the shelf'), c, h('label', {}, 'Note'), note], function (done) {
-      postInv('count', { slug: it.slug, counted: c.value, note: note.value }, done, function (x) { return x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'; });
+      postInv('count', { slug: it.slug, counted: c.value, note: note.value || (pk ? 'Counted by hand' : '') }, done, function (x) { return pk ? (x.diff ? 'Count saved: ' + x.onHand : (it.counted ? 'Matches. Nothing to change.' : 'Nothing saved: there is no count yet, and 0 would not change that.')) : (x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'); });
     }, 'Save count');
   }
   // Several flavours in one entry (e.g. everything sold at a fair): one reason, one note, a count per flavour; all or nothing.

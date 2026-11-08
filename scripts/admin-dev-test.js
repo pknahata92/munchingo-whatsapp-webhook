@@ -380,5 +380,27 @@ async function login(email) {
     ok(u2 && u2.length === 1 && /not taken off stock/i.test(u2[0].reason || '') && u2[0].note === 'stall stock', 'and it is listed as unplanned with the owner\'s note, since no lot-less line was written (' + JSON.stringify(u2) + ')');
     ok(!(await call('/stock/needs-lot', s.token)).j.lines.some((l) => l.orderId === I), 'the failed write left no lot-less line behind');
   }
+  // Task 6b: packaging is a hand-kept list. Remove = archive, owner only; adding the same name brings it back.
+  {
+    const list = async () => (await call('/inventory', o.token)).j.items || [];
+    const add = await call('/inventory/item', o.token, { name: 'Practice bubble wrap', kind: 'packaging', unit: 'rolls' });
+    ok(add.j.ok && add.j.slug === 'practice-bubble-wrap', 'owner adds a packaging item (' + JSON.stringify(add.j) + ')');
+    ok((await call('/inventory/item', s.token, { name: 'Staff tape', kind: 'packaging' })).s === 403, 'staff cannot add an item');
+    const cnt = await call('/inventory/count', s.token, { slug: 'practice-bubble-wrap', counted: 9, note: 'first count' });
+    ok(cnt.j.ok && cnt.j.onHand === 9, 'staff types a count for it');
+    const it = (await list()).find((i) => i.slug === 'practice-bubble-wrap');
+    ok(it && it.counted === true && it.on_hand === 9 && typeof it.last_counted === 'string', 'the list shows 9 and when it was counted');
+    const rs = await call('/inventory/item/remove', s.token, { slug: 'practice-bubble-wrap' });
+    ok(rs.s === 403 && !rs.j.ok, 'staff gets 403 on remove (' + rs.s + ')');
+    ok((await list()).some((i) => i.slug === 'practice-bubble-wrap'), 'a refused remove changes nothing');
+    const rb = await call('/inventory/item/remove', o.token, { slug: 'atta-kesari' });
+    ok(rb.s === 400 && /Biscuits stay/.test(rb.j.error || ''), 'a biscuit cannot be removed (' + rb.s + ' ' + rb.j.error + ')');
+    const ro = await call('/inventory/item/remove', o.token, { slug: 'practice-bubble-wrap' });
+    ok(ro.j.ok && !(await list()).some((i) => i.slug === 'practice-bubble-wrap'), 'owner removes it and it leaves the list');
+    ok((await call('/inventory/item/remove', o.token, { slug: 'practice-bubble-wrap' })).s === 404, 'removing it twice is refused');
+    const back = await call('/inventory/item', o.token, { name: 'Practice bubble wrap', kind: 'packaging', unit: 'rolls' });
+    const it2 = (await list()).find((i) => i.slug === 'practice-bubble-wrap');
+    ok(back.j.ok && back.j.slug === 'practice-bubble-wrap' && it2 && it2.on_hand === 9, 'adding the name again brings it back with its count');
+  }
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
