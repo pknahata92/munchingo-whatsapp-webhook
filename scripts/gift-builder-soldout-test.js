@@ -1,5 +1,5 @@
 'use strict';
-// The gift builder on the home page when Flavors are sold out: tiles say so, a message explains it, Full Range and Trio say when
+// The gift builder on build-a-box.html when Flavors are sold out: tiles say so, a message explains it, Full Range and Trio say when
 // they are unavailable, and a link points to the singles in stock. Back in stock, all of it disappears.   node scripts/gift-builder-soldout-test.js
 const fs = require('fs'), path = require('path');
 let JSDOM, ResourceLoader;
@@ -12,8 +12,8 @@ class Local extends ResourceLoader { fetch(url) { const u = new URL(url); if (u.
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
 
 async function open(soldOut) {
-  const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'index.html'), 'utf8'), {
-    url: 'http://localhost/index.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+  const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'build-a-box.html'), 'utf8'), {
+    url: 'http://localhost/build-a-box.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
     beforeParse(w) { w.localStorage.setItem('munchingo_soldout', JSON.stringify(soldOut)); w.fetch = (u) => Promise.resolve({ ok: true, status: 200, json: async () => (/stock/.test(u) ? { ok: true, soldOut } : { ok: true, prices: {} }) }); w.scrollTo = () => {}; w.SVGElement.prototype.getComputedTextLength = () => 100; w.matchMedia = w.matchMedia || (() => ({ matches: false, addEventListener() {}, addListener() {} })); },
   });
   await wait(900);
@@ -24,13 +24,14 @@ async function open(soldOut) {
   const tile = (v) => d.querySelector(`.gb-fl[data-f="${v}"]`);
   const click = (el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true }));
   ok(d.querySelector('.gb-fl'), 'the builder is on the page');
+  click(d.querySelector('.gb-opt[data-size="3"]')); await wait(100);   // the builder opens on the Full Range; pick the Trio
   ['Kesari', 'Lite-sugar'].forEach((v) => { const t = tile(v); ok(t && !t.querySelector('.gb-so').hidden && /Sold out/.test(text(t.querySelector('.gb-so'))) && /Back soon/.test(text(t.querySelector('.gb-so'))) && t.disabled, v + ': tile says Sold out, Back soon, and cannot be picked'); });
   ['Original', 'Ajwain'].forEach((v) => { const t = tile(v); ok(t && t.querySelector('.gb-so').hidden && !t.disabled, v + ': in-stock tile is normal'); });
   const msg = d.querySelector('[data-gb-stock]');
   ok(!msg.hidden && /Kesari and Sugar-Lite are sold out for now/.test(text(msg)) && /Original and Ajwain are available/.test(text(msg)), 'a message names what is out and what is available: ' + text(msg));
   ok(/A Trio needs 3 different flavors/.test(text(msg)), 'the message says why the Trio cannot be completed');
   ok(/Trio unavailable today/.test(text(d.querySelector('[data-gb="cta"]'))) && d.querySelector('[data-gb="cta"]').disabled, 'Trio button says unavailable today');
-  ok(!d.querySelector('[data-gb="singles"]').hidden && /single boxes/.test(text(d.querySelector('[data-gb="singles"]'))) && d.querySelector('[data-gb="singles"]').getAttribute('href') === 'index.html#range', 'a link points to the single boxes in stock');
+  ok(!d.querySelector('[data-gb="singles"]').hidden && /single boxes/.test(text(d.querySelector('[data-gb="singles"]'))) && d.querySelector('[data-gb="singles"]').getAttribute('href') === 'shop.html', 'a link points to the single boxes in stock');
   click(d.querySelector('.gb-opt[data-size="4"]')); await wait(100);
   ok(/Full Range returns soon/.test(text(d.querySelector('[data-gb="cta"]'))) && /Back soon/.test(text(d.querySelector('.gb-opt[data-size="4"] small'))), 'Full Range: option says back soon and the button says it returns soon');
   ok(/The Full Range needs all four|both are unavailable/.test(text(msg)), 'Full Range message explains');
