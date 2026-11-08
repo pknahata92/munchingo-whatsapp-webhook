@@ -963,5 +963,22 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     ok(pk.diff === 5 && st.mv.slice(-1)[0].lot_code === null, 'I3: a packaging count-up needs no lot (unchanged)');
   }
 
+  // Final review: the fallback pack (no plan) writes one sale per lot, like the database's stock_movements_sale_once index demands, and
+  // the in-memory store refuses two sales with the same key in ONE insert, as Postgres does.
+  {
+    const st = memStore('2026-10-01T00:00:00.000Z'); const inv = makeInventory(st);
+    let dupErr = null;
+    try { await st.insert([{ item_slug: 'atta-original', qty: -1, type: 'SALE', lot_code: 'L1', ref: 'MNG-DUP@1' }, { item_slug: 'atta-original', qty: -2, type: 'SALE', lot_code: 'L1', ref: 'MNG-DUP@1' }]); } catch (e) { dupErr = e; }
+    ok(dupErr && /duplicate key/.test(dupErr.message) && !st.mv.some((m) => m.ref === 'MNG-DUP@1'), 'memstore: two sales with one key in one insert are refused and nothing is written (' + (dupErr && dupErr.message) + ')');
+    await inv.receive({ slug: 'atta-original', received: 3, lot: '27OCT26', bestBefore: '2027-01-25', actor: A });
+    await inv.receive({ slug: 'atta-original', received: 3, lot: '27OCT26', bestBefore: '2027-01-20', confirmDuplicate: true, actor: A });   // the same lot on a second best-before line
+    await st.insert([{ item_slug: 'atta-original', qty: 2, type: 'COUNT_FIX', lot_code: null, best_before: null, note: 'old count-up' }]);
+    const at = '2026-10-31T06:00:00.000Z', before = st.mv.length;
+    const r = await inv.deductForOrder({ orderId: 'MNG-FALL-0001', items: [{ slug: 'atta-original', quantity: 10 }], at }).then((x) => x, (e) => e);
+    const mine = st.mv.slice(before);
+    ok(!(r instanceof Error) && r.rows === 2, 'fallback pack: written (' + (r instanceof Error ? r.message : JSON.stringify(r)) + ')');
+    eq(mine.map((m) => [m.lot_code, m.qty, m.best_before]), [['27OCT26', -6, '2027-01-20'], [null, -4, null]], 'fallback pack: one sale for the lot (both lines, earliest best before) and one lot-less line for the old count-up and the shortfall');
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

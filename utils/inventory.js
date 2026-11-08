@@ -577,9 +577,18 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     const all = await store.byLot(); const ref = `${orderId}@${at}`; const rows = [];
     for (const slug of slugs) {
       if (!known.has(slug)) continue;
-      const { pieces, short } = allocate(all.filter((r) => r.item_slug === slug), boxes[slug]);
-      pieces.forEach((p) => rows.push({ item_slug: slug, qty: -p.qty, type: 'SALE', lot_code: p.lot_code, best_before: p.best_before, ref }));
-      if (short > 0) rows.push({ item_slug: slug, qty: -short, type: 'SALE', lot_code: null, best_before: null, ref });
+      // one sale per lot (the database allows one per pack, flavour and lot): a lot split over two best-before lines is summed with its
+      // earliest best before, as packLots does, and the boxes with no lot and the shortfall share one lot-less line
+      const groups = new Map();
+      for (const r of all.filter((x) => x.item_slug === slug)) {
+        const k = r.lot_code == null ? '' : r.lot_code, e = groups.get(k) || { lot_code: r.lot_code == null ? null : r.lot_code, best_before: null, qty: 0 };
+        e.qty += r.qty; if (r.best_before && (!e.best_before || r.best_before < e.best_before)) e.best_before = r.best_before;
+        groups.set(k, e);
+      }
+      const { pieces, short } = allocate([...groups.values()], boxes[slug]);
+      const mine = pieces.map((p) => ({ item_slug: slug, qty: -p.qty, type: 'SALE', lot_code: p.lot_code, best_before: p.best_before, ref }));
+      if (short > 0) { const none = mine.find((x) => x.lot_code == null); if (none) none.qty -= short; else mine.push({ item_slug: slug, qty: -short, type: 'SALE', lot_code: null, best_before: null, ref }); }
+      rows.push(...mine);
     }
     if (rows.length) await store.insert(rows);
     return { rows: rows.length };

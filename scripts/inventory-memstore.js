@@ -29,8 +29,9 @@ function memStore(trackingFrom) {
       if (!Number.isInteger(r.qty) || r.qty === 0) throw new Error('new row for relation "stock_movements" violates check constraint "stock_movements_qty_check"');
       if (!items.some((i) => i.slug === r.item_slug)) throw new Error('insert or update on table "stock_movements" violates foreign key constraint "stock_movements_item_slug_fkey" (' + r.item_slug + ')');
     });
+    // stock_movements_sale_once: one SALE (and one SALE_UNDO) per pack, flavour and lot, against the ledger AND within this one insert
     const seen = new Set(mv.filter((r) => r.type === 'SALE' || r.type === 'SALE_UNDO').map(uniq));
-    rows.forEach((r) => { if ((r.type === 'SALE' || r.type === 'SALE_UNDO') && seen.has(uniq(r))) throw new Error('duplicate key (sale written twice)'); });
+    rows.forEach((r) => { if (!(r.type === 'SALE' || r.type === 'SALE_UNDO')) return; if (seen.has(uniq(r))) throw new Error('duplicate key (sale written twice)'); seen.add(uniq(r)); });
   };
   const checkLots = (rows) => {
     const have = new Set(lots.map(lotKey));
