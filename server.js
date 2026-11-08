@@ -695,7 +695,9 @@ app.post('/webhook', async (req, res) => {
     // Status updates (delivered, read) — log only
     if (statuses?.length) {
       for (const s of statuses) {
-        console.log(`[Status] ${s.id} → ${s.status} (${s.recipient_id})`);
+        const err = s.errors && s.errors[0];
+        console.log(`[Status] ${s.id} → ${s.status} (${s.recipient_id})` + (err ? ` ERROR ${err.code}: ${err.title || ''} ${err.message || ''} ${(err.error_data && err.error_data.details) || ''}` : ''));
+        try { require('./utils/broadcast').noteStatus(s); } catch (e) { console.error('[BROADCAST] status note failed:', e.message); }
       }
       return;
     }

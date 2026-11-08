@@ -25,6 +25,26 @@ function D() {
 }
 
 const digits = (p) => String(p || '').replace(/\D/g, '');
+
+// Delivery results (8 Nov 2026): WhatsApp accepts a send, then reports delivered / read / failed a few seconds later on
+// the webhook. For messages this module sent, the last few results are kept IN MEMORY only (no phone numbers, nothing
+// written to the database) and shown on the next run, so a silent failure is seen before a big send.
+const sentIds = new Map();   // WhatsApp message id -> template
+const recent = [];
+const RECENT_MAX = 20;
+function resetStatuses() { sentIds.clear(); recent.length = 0; }   // tests only
+function remember(res, template) {
+  const id = res && res.messages && res.messages[0] && res.messages[0].id;
+  if (id) { sentIds.set(id, template); if (sentIds.size > 500) sentIds.delete(sentIds.keys().next().value); }
+}
+/** Called by the webhook for every status; keeps only results for broadcast messages. */
+function noteStatus(s) {
+  if (!s || !sentIds.has(s.id)) return;
+  const e = (s.errors && s.errors[0]) || {};
+  recent.unshift({ template: sentIds.get(s.id), status: s.status, code: e.code || null,
+    reason: [e.title, e.message, e.error_data && e.error_data.details].filter(Boolean).join(' | ') || null, at: new Date(D().now()).toISOString() });
+  recent.length = Math.min(recent.length, RECENT_MAX);
+}
 /** "mr. gaurav sharma" -> "Gaurav"; "~" or "KaamKe." -> "there". */
 function firstName(name) {
   const w = String(name || '').trim().replace(/^(mr|mrs|ms|dr)\.?\s+/i, '').split(/\s+/)[0] || '';
@@ -68,14 +88,14 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   const { db, wa, wait, ownerPhone } = D();
   const header = video ? { type: 'video', link: video } : image ? { type: 'image', link: image } : null;
   const a = await audience(template, src);
-  const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, to_send: a.list.length };
+  const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, to_send: a.list.length, recent: recent.slice() };
 
   if (mode === 'dry') return { ok: true, mode, template, ...counts };
 
   if (mode === 'test') {
     const owner = ownerPhone();
     if (!owner) return { ok: false, error: 'OWNER_PHONE is not set on Render.' };
-    try { await wa.sendTemplateWithHeader(owner, template, lang, header, ['Prashant']); return { ok: true, mode, template, sent: 1, ...counts }; }
+    try { remember(await wa.sendTemplateWithHeader(owner, template, lang, header, ['Prashant']), template); return { ok: true, mode, template, sent: 1, ...counts }; }
     catch (e) { return { ok: false, mode, error: 'WhatsApp refused the test: ' + metaError(e) }; }
   }
 
@@ -85,7 +105,7 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   let sent = 0, failed = 0;
   for (const p of a.list) {
     let status = 'sent', error = null;
-    try { await wa.sendTemplateWithHeader(p.phone, template, lang, header, [p.first]); sent++; }
+    try { remember(await wa.sendTemplateWithHeader(p.phone, template, lang, header, [p.first]), template); sent++; }
     catch (e) { status = 'failed'; error = metaError(e).slice(0, 300); failed++; }
     try { await db.insertMarketingSend({ phone: p.phone, template, status, error }); }
     catch (e) { console.error('[BROADCAST] could not log a send:', e.message); }
@@ -100,4 +120,4 @@ function metaError(e) {
   return m ? `${m.code || ''} ${m.message || ''} ${(m.error_data && m.error_data.details) || ''}`.trim() : String((e && e.message) || e);
 }
 
-module.exports = { run, firstName, setDeps, CAP, CAP_DAYS };
+module.exports = { run, firstName, noteStatus, resetStatuses, setDeps, CAP, CAP_DAYS };

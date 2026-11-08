@@ -99,9 +99,23 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   ok(!(await b.run({ template: T, mode: 'dry', image: I, video: V })).ok, 'a picture and a video together are refused (WhatsApp allows one header)');
   ok(!(await b.run({ template: T, mode: 'dry', image: 'http://x.jpg' })).ok, 'a picture link must be https');
 
+  // delivery results: WhatsApp accepts a message, then reports delivered / failed (with a code) a few seconds later
+  w = world({ contacts: [C('919000000001', 'Asha')] });
+  b.resetStatuses();
+  r = await b.run({ template: T, mode: 'test', image: 'https://munchingo.com/x.jpg' });
+  b.noteStatus({ id: 'wamid', status: 'failed', recipient_id: '919999900000', errors: [{ code: 131049, title: 'This message was not delivered to maintain healthy ecosystem engagement.' }] });
+  b.noteStatus({ id: 'other-message', status: 'failed', recipient_id: '919000000009', errors: [{ code: 1 }] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.recent && r.recent.length === 1 && r.recent[0].status === 'failed' && r.recent[0].code === 131049 && /ecosystem/.test(r.recent[0].reason), 'a failed delivery of a broadcast message shows its code and reason on the next run (got ' + JSON.stringify(r.recent) + ')');
+  ok(!JSON.stringify(r).match(/91999990000|91900000000/), 'delivery results never include phone numbers');
+  b.noteStatus({ id: 'wamid', status: 'delivered', recipient_id: '919999900000' });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.recent.some((x) => x.status === 'delivered'), 'a delivered status is shown too');
+
   // wiring
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   ok(/\/internal\/broadcast/.test(srv) && /utils\/broadcast/.test(srv), 'server exposes /internal/broadcast');
+  ok(/noteStatus/.test(srv) && /s\.errors/.test(srv), 'the webhook passes delivery statuses (with their errors) to broadcast.noteStatus and logs the error');
   const wf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'broadcast.yml'), 'utf8');
   ok(/workflow_dispatch/.test(wf) && !/schedule/.test(wf) && /DIGEST_SECRET/.test(wf), 'the workflow only runs by hand and uses the secret');
   const wa = require('../utils/whatsapp');
