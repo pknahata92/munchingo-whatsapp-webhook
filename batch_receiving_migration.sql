@@ -35,6 +35,7 @@ create table if not exists stock_deliveries (
   created_at     timestamptz not null default now()
 );
 -- A corrected (void) delivery frees its bill and part so the right one can be saved again.
+drop index if exists stock_deliveries_bill_part_once;   -- rebuilt every run: an older non-partial version must not survive
 create unique index if not exists stock_deliveries_bill_part_once on stock_deliveries (lower(supplier), lower(bill_no), part) where status <> 'void';
 
 -- 3. Lots: one per flavour per bake date. A lot in the ledger with no row here counts as released (the legacy rule).
@@ -162,6 +163,8 @@ select m.item_slug, m.lot_code, 'released', stock_lot_bake_date(m.lot_code), min
 from stock_movements m
 left join (values ('atta-original', 'O'), ('atta-kesari', 'K'), ('atta-ajwain', 'A'), ('atta-lite-sugar', 'L')) as l(slug, letter) on l.slug = m.item_slug
 where m.lot_code is not null
+  -- a code that only survives as another lot's alias (after Fix lot) is not a lot of its own
+  and not exists (select 1 from stock_lots s where s.item_slug = m.item_slug and m.lot_code = any(s.aliases))
 group by m.item_slug, m.lot_code, l.letter
 on conflict (item_slug, lot_code) do nothing;
 

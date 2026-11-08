@@ -622,6 +622,24 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
       eq(await total(st), t0, 'total on hand still unchanged');
       eq(st.mv.filter((m) => m.type === 'COUNT_FIX').length, 6, 'three fixes, three pairs');
     }
+    // Fix lot is retry-safe when the row update fails after the stock moved
+    for (const mode of ['code', 'date']) {
+      const { st, dl } = fresh();
+      const a = four(); const r = await dl.save(a, A);
+      const K = r.lots.find((l) => l.slug === 'atta-kesari').code;
+      const t0 = await total(st);
+      let boom = true; const flaky = { ...st, updateLot: async (...x) => { if (boom) { boom = false; throw new Error('db down'); } return st.updateLot(...x); } };
+      const dl2 = makeDeliveries(flaky, { now: () => NOW });
+      const args = mode === 'code' ? { code: K, newCode: 'MNGK-261104-01' } : { code: K, newBakeDate: '2026-11-04' };
+      await dl2.fixLot(args, OWNER).then(() => ok(false, mode + ': flaky did not throw'), (e) => ok(/db down/.test(e.message), mode + ': first attempt fails on the row update'));
+      const out = await dl2.fixLot(args, OWNER);
+      eq(out.to, 'MNGK-261104-01', mode + ': the retry lands on the same code (not -02, not refused)');
+      eq(st.mv.filter((m) => m.type === 'COUNT_FIX').length, 2, mode + ': one set of COUNT_FIX pairs');
+      const l = (await st.lots()).find((x) => x.item_slug === 'atta-kesari');
+      eq([l.lot_code, l.aliases, l.bake_date, l.best_before], ['MNGK-261104-01', [K], '2026-11-04', '2027-02-02'], mode + ': the row is on the new code');
+      eq([sumLot(st, K, 'atta-kesari'), sumLot(st, 'MNGK-261104-01', 'atta-kesari'), await total(st) === t0], [0, 100, true], mode + ': nothing stranded, total unchanged');
+      eq((await st.lots()).filter((x) => x.item_slug === 'atta-kesari').length, 1, mode + ': no extra lot row');
+    }
     // renamed to its own alias: no duplicate; two best-before groups move in two pairs
     {
       const { st, dl, inv } = fresh();

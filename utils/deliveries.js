@@ -397,12 +397,20 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
       bake = newBakeIn; datesChange = true;
     }
     const ownCodes = new Set([oldCode, ...(lot.aliases || [])]);
+    // A retry after a failed row update: the COUNT_FIX pair for this very fix is already in the ledger under the target code. That
+    // code is this lot's own, not another lot's, and it is not a taken sequence number.
+    const ledgerHas = (c) => (ledger || []).some((r) => r.item_slug === slug && r.lot_code === c);
+    const heldByRow = (c) => (lotRows || []).some((l) => l.item_slug === slug && (l.lot_code === c || (l.aliases || []).includes(c)));
+    const ours = async (c) => ledgerHas(c) && !heldByRow(c) && ((await store.movementsByLots([c])) || []).some((m) => m.item_slug === slug && m.type === 'COUNT_FIX' && m.note === `Lot fixed ${oldCode} to ${c}`);
     if (!newCode) {
       const codes = [...(lotRows || []).flatMap((l) => [l.lot_code, ...(l.aliases || [])]), ...(ledger || []).map((l) => l.lot_code)].filter(Boolean);
-      newCode = lots.lotCode(slug, bake, lots.nextSeq(codes, slug, bake));
+      const seq = lots.nextSeq(codes, slug, bake);
+      const last = seq > 1 ? lots.lotCode(slug, bake, seq - 1) : null;
+      newCode = last && await ours(last) ? last : lots.lotCode(slug, bake, seq);
     }
+    const pending = await ours(newCode);
     const usedElsewhere = (lotRows || []).some((l) => l.item_slug === slug && l.lot_code !== oldCode && (l.lot_code === newCode || (l.aliases || []).includes(newCode)))
-      || (!ownCodes.has(newCode) && (ledger || []).some((r) => r.item_slug === slug && r.lot_code === newCode));
+      || (!ownCodes.has(newCode) && !pending && ledgerHas(newCode));
     if (usedElsewhere) fail('That code is already used by another lot.');
     if (datesChange) bestBefore = lots.datesFor(bake, settings).bestBefore;
 
