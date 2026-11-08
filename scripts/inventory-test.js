@@ -265,6 +265,22 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     let atomicFail = null; try { await sb.saveDelivery({ d: D('D4', 'B1'), lots: [L('MNGO-261106-01', 'atta-original')], moves: [M('RECEIVE', 1)] }); } catch (e) { atomicFail = e; }
     ok(atomicFail && (await sb.delivery('D4')) === null && sb.mv.length === nb + 2, 'a lot clash rolls back the delivery and the movements too');
 
+    // the mirror refuses what the database function refuses, and writes nothing when it does
+    const snap = async () => JSON.stringify([sb.mv.length, (await sb.lots()).length, (await sb.delivery('F1')), (await sb.delivery('F2'))]);
+    const refuses = async (label, args, re) => { const before = await snap(); let e = null; try { await sb.saveDelivery(args); } catch (x) { e = x; } ok(e && re.test(e.message) && await snap() === before, label + ' (got: ' + (e && e.message) + ')'); };
+    await refuses('a move with quantity 0 is refused', { d: D('F1', 'F-1'), lots: [], moves: [M('DAMAGED', 0)] }, /stock_movements_qty_check/);
+    await refuses('a move with no quantity is refused', { d: D('F1', 'F-1'), lots: [], moves: [M('RECEIVE', null)] }, /not-null/);
+    await refuses('a move for an unknown item is refused', { d: D('F1', 'F-1'), lots: [], moves: [M('RECEIVE', 1, { item_slug: 'atta-nope' })] }, /stock_movements_item_slug_fkey/);
+    await refuses('a lot for an unknown item is refused', { d: D('F1', 'F-1'), lots: [L('X-1', 'atta-nope')], moves: [] }, /foreign key/);
+    await refuses('a delivery with no id is refused', { d: { ...D('F1', 'F-1'), id: undefined }, lots: [], moves: [] }, /"id".*not-null/);
+    await refuses('a delivery with no bill number is refused', { d: { ...D('F1', 'F-1'), bill_no: '' }, lots: [], moves: [] }, /bill_no/);
+    const fsave = await sb.saveDelivery({ d: { ...D('F2', 'F-2'), part: undefined, supplier: null, status: null, freight: null, photos: null } });
+    const f2 = await sb.delivery('F2');
+    ok(fsave.id === 'F2' && f2.part === 1 && f2.supplier === 'Krazy Bakers' && f2.status === 'received' && JSON.stringify(f2.freight) === '{}' && f2.photos.length === 0, 'missing or null delivery fields take the same defaults as the database');
+    await sb.saveDelivery({ d: D('F3', 'F-3'), lots: [L('MNGO-261120-01', 'atta-original', { delivery_id: null, status: null, aliases: null })], moves: [M('RECEIVE', 2, { delivery_id: null, lot_code: 'MNGO-261120-01' })] });
+    const fl = (await sb.lotsByCode('MNGO-261120-01'))[0];
+    ok(fl.delivery_id === 'F3' && fl.status === 'hold' && fl.aliases.length === 0 && sb.mv[sb.mv.length - 1].delivery_id === 'F3', 'null delivery_id, status and aliases take the delivery id, hold and an empty list, like the database');
+
     // the real store: every new method calls the right table or function, and a missing migration reads as a plain instruction
     const dbPath = require.resolve('../utils/database'); const calls = []; let reply = { data: [], error: null };
     const q = (t) => { const o = { t, ops: [] }; const chain = new Proxy(o, { get: (target, k) => (k === 'then' ? (res) => { calls.push(target); res(reply); } : (...a) => { target.ops.push([k, ...a]); return chain; }) }); return chain; };
@@ -272,6 +288,8 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     const real = require('../utils/inventory').supabaseStore();
     reply = { data: { id: 'D1' }, error: null };
     ok((await real.saveDelivery({ d: { id: 'D1' }, lots: [], moves: [] })).id === 'D1' && calls[calls.length - 1].rpc === 'stock_save_delivery' && Object.keys(calls[calls.length - 1].args).join() === 'd,lots,moves', 'saveDelivery calls the stock_save_delivery function');
+    await real.saveDelivery({ d: { id: 'D9' } });
+    ok(JSON.stringify(calls[calls.length - 1].args) === '{"d":{"id":"D9"},"lots":[],"moves":[]}', 'saveDelivery always sends all three arguments (the function has no two-argument form)');
     reply = { data: [], error: null };
     await real.lots(); await real.lotsByCode('X'); await real.deliveriesByBill('Krazy Bakers', 'A_1%'); await real.lastDelivery(); await real.movementsByLots(['X']); await real.movementsByDelivery('D1'); await real.settingsAll();
     ok(['stock_lots', 'stock_lots', 'stock_lots', 'stock_deliveries', 'stock_deliveries', 'stock_movements', 'stock_movements', 'stock_settings'].join() === calls.slice(-8).map((c) => c.t).join(), 'the real store reads the new tables');

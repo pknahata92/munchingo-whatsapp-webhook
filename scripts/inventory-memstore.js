@@ -23,7 +23,12 @@ function memStore(trackingFrom) {
   const lotKey = (r) => r.item_slug + '|' + r.lot_code;
   const billKey = (d) => `${String(d.supplier).toLowerCase()}|${String(d.bill_no).toLowerCase()}|${d.part}`;
   const checkRows = (rows) => {
-    rows.forEach((r) => { if (!TYPES.has(r.type)) throw new Error('new row for relation "stock_movements" violates check constraint "stock_movements_type_check" (' + r.type + ')'); });
+    rows.forEach((r) => {
+      if (!TYPES.has(r.type)) throw new Error('new row for relation "stock_movements" violates check constraint "stock_movements_type_check" (' + r.type + ')');
+      if (r.qty == null) throw new Error('null value in column "qty" of relation "stock_movements" violates not-null constraint');
+      if (!Number.isInteger(r.qty) || r.qty === 0) throw new Error('new row for relation "stock_movements" violates check constraint "stock_movements_qty_check"');
+      if (!items.some((i) => i.slug === r.item_slug)) throw new Error('insert or update on table "stock_movements" violates foreign key constraint "stock_movements_item_slug_fkey" (' + r.item_slug + ')');
+    });
     const seen = new Set(mv.filter((r) => r.type === 'SALE' || r.type === 'SALE_UNDO').map(uniq));
     rows.forEach((r) => { if ((r.type === 'SALE' || r.type === 'SALE_UNDO') && seen.has(uniq(r))) throw new Error('duplicate key (sale written twice)'); });
   };
@@ -37,7 +42,7 @@ function memStore(trackingFrom) {
       have.add(lotKey(r));
     });
   };
-  const lotRow = (r, deliveryId) => ({ delivery_id: deliveryId || null, supplier_batch: null, bake_date: null, best_before: null, status: 'hold', released_at: null, released_by: null, check_weight_g: null, check_note: null, reject_reason: null, hold_reason: null, unit_cost_paise: null, aliases: [], created_at: new Date().toISOString(), ...r });
+  const lotRow = (r, deliveryId) => ({ delivery_id: deliveryId || null, supplier_batch: null, bake_date: null, best_before: null, status: 'hold', released_at: null, released_by: null, check_weight_g: null, check_note: null, reject_reason: null, hold_reason: null, unit_cost_paise: null, aliases: [], created_at: new Date().toISOString(), ...r, delivery_id: r.delivery_id ?? deliveryId ?? null, status: r.status ?? 'hold', aliases: r.aliases ?? [] });   // defaults after the spread, like the SQL coalesce
   const writeMoves = (rows) => rows.forEach((r) => mv.push({ id: ++id, created_at: new Date().toISOString(), reverses_id: null, ...r }));
   const uniq = (r) => `${r.ref}|${r.item_slug}|${r.lot_code || ''}|${r.type}`;
   return {
@@ -61,17 +66,20 @@ function memStore(trackingFrom) {
     movementsByDelivery: async (i) => mv.filter((r) => r.delivery_id === i),
     // Mirrors stock_save_delivery: everything is checked first, so a throw writes nothing. The same receipt id again returns the first
     // result with again:true. Returns d, like the database function.
-    saveDelivery: async ({ d, lots: newLots = [], moves = [] }) => {
+    saveDelivery: async ({ d, lots: lotsIn, moves: movesIn }) => {
+      const newLots = lotsIn || [], moves = movesIn || [];
+      if (!d || d.id == null || d.id === '') throw new Error('null value in column "id" of relation "stock_deliveries" violates not-null constraint');
       const first = deliveries.find((x) => x.id === d.id);
       if (first) return { ...(first.result || {}), again: true };
       if (!d.bill_no) throw new Error('null value in column "bill_no" of relation "stock_deliveries" violates not-null constraint');
       const row = { supplier: 'Krazy Bakers', part: 1, bilty: null, arrived_on: null, cartons: null, invoice_paise: null, gst_paise: null, billed_kg: null, freight: {}, photos: [], note: null, status: 'received', saved_by_email: null, saved_by_name: null, input: null, result: null, created_at: new Date().toISOString(), ...d };
+      row.supplier = d.supplier ?? 'Krazy Bakers'; row.part = d.part ?? 1; row.status = d.status ?? 'received'; row.freight = d.freight ?? {}; row.photos = d.photos ?? [];   // like the SQL coalesce
       if (!['received', 'void'].includes(row.status)) throw new Error('new row for relation "stock_deliveries" violates check constraint "stock_deliveries_status_check"');
       if (deliveries.some((x) => billKey(x) === billKey(row))) throw new Error('duplicate key value violates unique constraint "stock_deliveries_bill_part_once"');
       checkLots(newLots);
-      const moveRows = moves.map((m) => ({ delivery_id: d.id, ...m }));
+      const moveRows = moves.map((m) => ({ ...m, delivery_id: m.delivery_id ?? d.id }));
       checkRows(moveRows);
-      deliveries.push(row); newLots.forEach((l) => lots.push(lotRow(l, l.delivery_id || d.id))); writeMoves(moveRows);
+      deliveries.push(row); newLots.forEach((l) => lots.push(lotRow(l, d.id))); writeMoves(moveRows);
       return d;
     },
     committedMap: {}, pausedList: [],
