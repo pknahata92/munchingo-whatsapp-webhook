@@ -6,6 +6,7 @@ const NOW = Date.parse('2026-10-31T06:00:00Z');
 const makeInventory = (store, opts) => makeInv(store, { now: () => NOW, ...(opts || {}) });
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
+const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), m + ' (got ' + JSON.stringify(a) + ')');
 const rejects = async (p, re, m) => { try { await p; ok(false, m + ' (did not throw)'); } catch (e) { ok(e instanceof StockError && re.test(e.message), m + ' (got: ' + e.message + ')'); } };
 
 const { memStore } = require('./inventory-memstore');
@@ -167,24 +168,32 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     const had = await onHand(iv, 'atta-lite-sugar');
     ok(await lotsOf('atta-lite-sugar') === `15Oct26:${had}:2027-01-12`, 'setup: Sugar-Lite is all in lot 15Oct26 (' + await lotsOf('atta-lite-sugar') + ')');
 
+    // Final review C2 changed this block: Rename lot is refused for biscuits (Fix lot on the lot page moves the lot row, so a hold and the
+    // dates follow the lot). Each check is kept: the refusals and the moving itself are now checked on a packaging item with a lot code
+    // (the only kind Rename lot still renames), and the biscuit checks say the biscuit lot is left exactly as it was.
     await rejects(iv.renameLot({ slug: 'atta-lite-sugar', from: '15Oct26', to: '15OCT26', actor: A, isOwner: false }), /owner/i, 'only the owner can rename a lot');
-    await rejects(iv.renameLot({ slug: 'atta-lite-sugar', from: '15Oct26', to: '15Oct26', actor: A, isOwner: true }), /different/i, 'the new code must differ from the old one');
-    await rejects(iv.renameLot({ slug: 'atta-lite-sugar', from: '15Oct26', to: 'bad!code', actor: A, isOwner: true }), /lot can use/i, 'an invalid new code is refused');
-    await rejects(iv.renameLot({ slug: 'atta-lite-sugar', from: 'NOPE', to: '15OCT26', actor: A, isOwner: true }), /no stock/i, 'a lot with nothing in it cannot be renamed');
+    await rejects(iv.renameLot({ slug: 'atta-lite-sugar', from: '15Oct26', to: '15OCT26', actor: A, isOwner: true }), /^Biscuit lots are fixed with Fix lot on the lot page, so the hold and the dates follow the lot\.$/, 'a biscuit lot is refused: it is fixed with Fix lot');
     ok(await lotsOf('atta-lite-sugar') === `15Oct26:${had}:2027-01-12`, 'refused renames change nothing');
-
-    const r = await iv.renameLot({ slug: 'atta-lite-sugar', from: '15Oct26', to: '15OCT26', actor: A, isOwner: true });
-    ok(r.moved === had, 'the whole remaining quantity moves (' + r.moved + ')');
-    ok(await lotsOf('atta-lite-sugar') === `15OCT26:${had}:2027-01-12`, 'one lot left, with the right code, same quantity and same best-before (' + await lotsOf('atta-lite-sugar') + ')');
-    ok(await onHand(iv, 'atta-lite-sugar') === had, 'total on hand is unchanged');
-    const fixes = st3.mv.filter((m) => m.type === 'COUNT_FIX' && m.item_slug === 'atta-lite-sugar');
-    ok(fixes.length === 2 && fixes[0].qty === -had && fixes[1].qty === had && fixes.every((m) => /15Oct26.*15OCT26/.test(m.note || '')), 'two lines are added (out of the old lot, into the new) with a note saying why; nothing is edited');
     ok(st3.mv.filter((m) => m.type === 'SALE').every((m) => m.lot_code === '15Oct26'), 'past sale lines keep the lot they were typed under (history stays truthful)');
-    const fl = (await iv.flow()).items.find((i) => i.slug === 'atta-lite-sugar'); ok(fl.fixes === 0, 'the Where did it go summary shows no net fix (the two lines cancel)');
-    await rejects(iv.renameLot({ slug: 'atta-lite-sugar', from: '15Oct26', to: '15OCT26', actor: A, isOwner: true }), /no stock/i, 'renaming twice is refused (the old lot is empty now)');
+    const fl = (await iv.flow()).items.find((i) => i.slug === 'atta-lite-sugar'); ok(fl.fixes === 0, 'the Where did it go summary shows no net fix (nothing was written for the biscuit)');
     await iv.deductForOrder({ orderId: 'MNG-AFTER', items: [{ slug: 'atta-lite-sugar', quantity: 2 }], at: '2026-10-25T05:00:00.000Z' });
-    ok(await lotsOf('atta-lite-sugar') === `15OCT26:${had - 2}:2027-01-12`, 'new sales now draw from the renamed lot');
+    ok(await lotsOf('atta-lite-sugar') === `15Oct26:${had - 2}:2027-01-12`, 'new sales draw from the biscuit lot as it was (not renamed)');
     ok(await lotsOf('atta-kesari') === '15OCT26:50:2027-01-13', 'other products are untouched');
+    // packaging with a lot code: Rename lot works as before
+    st3.setSetting('packaging_count_from', null);   // so the packaging lines show by lot here
+    await iv.receive({ slug: 'label-stamp', received: 33, lot: '15Oct26', bestBefore: '2027-01-12', actor: A });
+    const pk = 'label-stamp', pHad = await onHand(iv, pk);
+    await rejects(iv.renameLot({ slug: pk, from: '15Oct26', to: '15Oct26', actor: A, isOwner: true }), /different/i, 'the new code must differ from the old one');
+    await rejects(iv.renameLot({ slug: pk, from: '15Oct26', to: 'bad!code', actor: A, isOwner: true }), /lot can use/i, 'an invalid new code is refused');
+    await rejects(iv.renameLot({ slug: pk, from: 'NOPE', to: '15OCT26', actor: A, isOwner: true }), /no stock/i, 'a lot with nothing in it cannot be renamed');
+    ok(await lotsOf(pk) === '15Oct26:33:2027-01-12', 'refused packaging renames change nothing');
+    const r = await iv.renameLot({ slug: pk, from: '15Oct26', to: '15OCT26', actor: A, isOwner: true });
+    ok(r.moved === 33, 'the whole remaining quantity moves (' + r.moved + ')');
+    ok(await lotsOf(pk) === '15OCT26:33:2027-01-12', 'one lot left, with the right code, same quantity and same best-before (' + await lotsOf(pk) + ')');
+    ok(await onHand(iv, pk) === pHad, 'total on hand is unchanged');
+    const fixes = st3.mv.filter((m) => m.type === 'COUNT_FIX' && m.item_slug === pk);
+    ok(fixes.length === 2 && fixes[0].qty === -33 && fixes[1].qty === 33 && fixes.every((m) => /15Oct26.*15OCT26/.test(m.note || '')), 'two lines are added (out of the old lot, into the new) with a note saying why; nothing is edited');
+    await rejects(iv.renameLot({ slug: pk, from: '15Oct26', to: '15OCT26', actor: A, isOwner: true }), /no stock/i, 'renaming twice is refused (the old lot is empty now)');
   }
   // ── Several flavours in one take-out entry, and sales at an exhibition or event (26 Oct 2026) ──
   {
@@ -834,6 +843,55 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     await st.updateLot('atta-original', 'MNGO-261030-01', { status: 'released' });
     o = await row('atta-original');
     ok(o.on_hold === 0 && o.sellable === 4, 'released: nothing on hold and the website counts the 4 boxes');
+  }
+
+  // Final review C2: a hold covers every code of the lot (its aliases), in the website count and in packing; boxes put back under an old
+  // code after Fix lot follow the lot; the old Rename lot is refused for biscuits (Fix lot moves the hold and the dates with the lot).
+  {
+    const { makeDeliveries } = require('../utils/deliveries');
+    const OWN = { actor: { email: 'o@x', name: 'Owner' }, isOwner: true };
+    const mailer = { sendDeliveryEmail: async () => {}, sendLotReleasedEmail: async () => {} };
+    const NOW2 = Date.parse('2026-11-10T06:00:00Z');
+    const mk = () => { const st = memStore('2026-10-01T00:00:00Z'); st.setSetting('lots_from', '2026-11-01T00:00:00Z'); return { st, inv: makeInv(st, { now: () => NOW2 }), dl: makeDeliveries(st, { now: () => NOW2, mailer, db: { getOrdersByIds: async () => [] } }) }; };
+    // rows under an alias code (a sticker code typed on the old form) are held with the lot
+    {
+      const { st, inv, dl } = mk();
+      await st.insert([{ item_slug: 'atta-kesari', qty: 30, type: 'RECEIVE', lot_code: '15OCT26', best_before: '2027-01-13' }, { item_slug: 'atta-kesari', qty: 5, type: 'RECEIVE', lot_code: 'MNGK-261016-01', best_before: '2027-01-13' }]);
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: '15OCT26', status: 'released', best_before: '2027-01-13', aliases: ['MNGK-261016-01'] }]);
+      eq((await inv.sellable())['atta-kesari'], 35, 'C2 setup: 35 Kesari on the website');
+      await dl.hold({ code: '15OCT26', slug: 'atta-kesari', reason: 'recall' }, OWN);
+      eq((await inv.sellable())['atta-kesari'], 0, 'C2: hold covers the boxes booked under the alias code (website)');
+      const p = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 2 }], at: new Date(NOW2).toISOString() });
+      ok(p.rows.length === 0 && p.short.length === 1 && p.short[0].boxes === 2, 'C2: and packing takes none of them (' + JSON.stringify(p) + ')');
+      const k = (await inv.overview()).items.find((i) => i.slug === 'atta-kesari');
+      ok(k.on_hold === 35 && k.lots.every((l) => l.status === 'hold'), 'C2: the Stock screen shows all 35 on hold (' + JSON.stringify(k.lots) + ')');
+    }
+    // undo after Fix lot puts the boxes back under the old code; they follow the lot when it is held
+    {
+      const { st, inv, dl } = mk();
+      await st.insert([{ item_slug: 'atta-kesari', qty: 50, type: 'RECEIVE', lot_code: '15OCT26', best_before: '2027-01-13' }, { item_slug: 'atta-kesari', qty: 6, type: 'EXHIBITION', lot_code: '15OCT26', best_before: '2027-01-13', ref: 'Fair' }].map((r) => (r.type === 'EXHIBITION' ? { ...r, qty: -6 } : r)));
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: '15OCT26', status: 'released', best_before: '2027-01-13', aliases: ['MNGK-261016-01'] }]);
+      const at = '2026-11-09T05:00:00.000Z';
+      const plan = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 4 }], at });
+      await inv.deductForOrder({ orderId: 'MNG-AAAA-0001', items: [], at, plan });
+      await dl.fixLot({ code: '15OCT26', slug: 'atta-kesari', newCode: 'MNGK-261016-01' }, OWN);
+      await inv.restoreForOrder({ orderId: 'MNG-AAAA-0001' });
+      await inv.eventReturn({ slug: 'atta-kesari', qty: 6, ref: 'Fair' });
+      ok(st.mv.filter((m) => m.lot_code === '15OCT26' && (m.type === 'SALE_UNDO' || m.type === 'EXHIBITION_RETURN')).length === 2, 'C2 setup: the undo and the event return go back under the old code 15OCT26');
+      eq((await inv.sellable())['atta-kesari'], 50, 'C2 setup: all 50 sellable after the undo and the return');
+      await dl.hold({ code: 'MNGK-261016-01', slug: 'atta-kesari', reason: 'recall' }, OWN);
+      eq((await inv.sellable())['atta-kesari'], 0, 'C2: after Hold of the fixed lot the boxes put back under its old code are held too (website)');
+      const p = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 2 }], at: new Date(NOW2).toISOString() });
+      ok(p.rows.length === 0 && p.short.length === 1, 'C2: and packing takes none of them (' + JSON.stringify(p.rows) + ')');
+      await rejects(inv.take({ slug: 'atta-kesari', qty: 1, type: 'SAMPLE', lot: '15OCT26' }), /on hold/, 'C2: a take-out naming the old code is refused while the lot is held');
+    }
+    // the old Rename lot: refused for biscuits, unchanged for packaging
+    {
+      const { st, inv } = mk();
+      await st.insert([{ item_slug: 'atta-original', qty: 80, type: 'RECEIVE', lot_code: '27OCT26', best_before: '2027-01-25' }]);
+      await rejects(inv.renameLot({ slug: 'atta-original', from: '27OCT26', to: 'MNGO-261027-01', actor: A, isOwner: true }), /^Biscuit lots are fixed with Fix lot on the lot page, so the hold and the dates follow the lot\.$/, 'C2: Rename lot refuses a biscuit lot');
+      ok(st.mv.filter((m) => m.type === 'COUNT_FIX').length === 0, 'C2: and writes nothing');
+    }
   }
 
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

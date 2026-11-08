@@ -78,5 +78,40 @@ ok(L.stickerCommand('MNGK-261105-01', 106, '--cols 3') === 'python3 make_stamp_l
 ok(L.stickerCommand('MNGL-261105-01', 4, '') === 'python3 make_stamp_labels.py --lot MNGL-261105-01 --qty lite=4', 'sticker no flags, no trailing space');
 ok(L.stickerCommand('MNGO-261105-01', 1, null) === 'python3 make_stamp_labels.py --lot MNGO-261105-01 --qty original=1', 'sticker null flags');
 
+// Final review C1/C2: which lot a typed code reaches, one per flavour: (a) exact own code, (b) own code ignoring case, (c) an alias.
+// An alias that another row of the same flavour owns as its own code belongs to that row, never to the lot that lists it.
+{
+  const rows = [
+    { item_slug: 'atta-lite-sugar', lot_code: '15Oct26', status: 'released', aliases: [] },
+    { item_slug: 'atta-lite-sugar', lot_code: '15OCT26', status: 'released', aliases: ['MNGL-261016-01'] },
+    { item_slug: 'atta-kesari', lot_code: '15OCT26', status: 'released', aliases: ['MNGK-261016-01'] },
+    { item_slug: 'atta-original', lot_code: '27OCT26', status: 'released', aliases: ['MNGO-261027-01'] },   // the old backfill: an alias that is also its own lot
+    { item_slug: 'atta-original', lot_code: 'MNGO-261027-01', status: 'hold', aliases: [] },
+  ];
+  const ledger = [{ item_slug: 'atta-lite-sugar', lot_code: '15OCT26', qty: 20 }, { item_slug: 'atta-lite-sugar', lot_code: '15Oct26', qty: 0 }, { item_slug: 'atta-ajwain', lot_code: 'OLD1', qty: 4 }, { item_slug: 'atta-ajwain', lot_code: 'old1', qty: 0 }];
+  const r = (code, slug) => L.resolveCode(rows, ledger, code, slug).map((x) => [x.slug, x.code, x.how]);
+  eq(r('15OCT26', 'atta-lite-sugar'), [['atta-lite-sugar', '15OCT26', 'exact']], 'exact own code wins over the case variant');
+  eq(r('15Oct26', 'atta-lite-sugar'), [['atta-lite-sugar', '15Oct26', 'exact']], 'the other spelling opens its own lot');
+  eq(r('15oct26', 'atta-lite-sugar'), [['atta-lite-sugar', '15OCT26', 'case']], 'no exact match: one lot ignoring case (the upper-case code first)');
+  eq(r('mngl-261016-01'), [['atta-lite-sugar', '15OCT26', 'alias']], 'an alias, any case, opens the lot that has it');
+  eq(r('15OCT26'), [['atta-kesari', '15OCT26', 'exact'], ['atta-lite-sugar', '15OCT26', 'exact']], 'a shared code: one entry per flavour, never two for one flavour');
+  eq(r('MNGO-261027-01', 'atta-original'), [['atta-original', 'MNGO-261027-01', 'exact']], 'an alias that is another lot\'s own code is that lot');
+  eq(r('27OCT26', 'atta-original'), [['atta-original', '27OCT26', 'exact']], 'and the old code opens its own lot');
+  eq(r('OLD1', 'atta-ajwain'), [['atta-ajwain', 'OLD1', 'exact']], 'a ledger-only code is a legacy lot');
+  eq(r('Old1', 'atta-ajwain'), [['atta-ajwain', 'OLD1', 'case']], 'two ledger-only spellings: one lot, the upper-case one first');
+  eq(r('NOPE'), [], 'nothing found');
+  // after Fix lot 15OCT26 -> MNGL-261016-01 the old code is an alias, and the empty lot spelt 15Oct26 is still an own code
+  const fixed = [{ item_slug: 'atta-lite-sugar', lot_code: '15Oct26', status: 'released', aliases: [] }, { item_slug: 'atta-lite-sugar', lot_code: 'MNGL-261016-01', status: 'hold', aliases: ['15OCT26'] }];
+  const fl = [{ item_slug: 'atta-lite-sugar', lot_code: '15Oct26', qty: 0 }, { item_slug: 'atta-lite-sugar', lot_code: 'MNGL-261016-01', qty: 18 }, { item_slug: 'atta-lite-sugar', lot_code: '15OCT26', qty: 1 }];
+  eq(['15OCT26', '15oct26', '15Oct26'].map((x) => L.resolveCode(fixed, fl, x, 'atta-lite-sugar').map((y) => y.code + ':' + y.how).join()), ['MNGL-261016-01:alias', 'MNGL-261016-01:alias', '15Oct26:exact'], 'the old code (any case) reaches the fixed lot; only the exact other spelling opens the empty lot');
+  const idx = L.lotIndex(rows);
+  eq(L.codesOfLot(idx, rows[3]), ['27OCT26'], 'a lot\'s codes leave out an alias another lot owns');
+  eq(L.codesOfLot(idx, rows[1]), ['15OCT26', 'MNGL-261016-01'], 'a lot\'s codes: its own and its aliases');
+  eq(idx.get('atta-kesari|MNGK-261016-01').lot_code, '15OCT26', 'the index maps an alias to its lot');
+  eq(idx.get('atta-original|MNGO-261027-01').lot_code, 'MNGO-261027-01', 'the index maps an owned code to the lot that owns it');
+  // Final review I2: a lot the owner put on hold after it was released (or after the backfill made it released) is the owner's
+  eq([{ status: 'hold' }, { status: 'hold', hold_reason: 'recall' }, { status: 'hold', released_at: '2026-11-01T00:00:00Z' }, { status: 'released', hold_reason: 'old' }].map(L.ownerHold), [false, true, true, false], 'ownerHold: a hold with a reason or after a release');
+}
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

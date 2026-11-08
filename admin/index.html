@@ -898,11 +898,6 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     nodes.forEach(function (n) { if (n) v.appendChild(n); });
     window.scrollTo(0, 0);
   }
-  function invPick(title, fn) {
-    var items = ((state.inv && state.inv.items) || []).filter(function (i) { return i.kind === 'product'; });   // biscuits only: packaging is hand-kept (Set count)
-    invShow(title, [h('p', { class: 'muted' }, 'Which item?'), h('div', { class: 'moregrid' }, items.map(function (it) { return moreBtn(it.name, it.on_hand + ' ' + it.unit + ' on hand', function () { fn(it); }); })),
-      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back'))]);
-  }
   var STATUS = { ok: ['OK', 'b-delivered'], low: ['LOW', 'b-topack'], out: ['OUT', 'b-refunded'], 'new': ['Not counted yet', 'b-unpaid'] };
 
   // ── Meta and Google: one line each at the top of the Stock screen. Everyone sees the lines; only the owner gets the buttons. ──
@@ -1059,8 +1054,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
       var body = [chanBox, needBox, h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: New delivery when biscuits arrive (each lot waits on hold until it is tasted and released), Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
-        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { openNewDelivery(); } }, 'New delivery'), h('button', { class: 'btn ghost small', onclick: function () { openLots(); } }, 'Lots'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
-          state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { invPick('Rename lot', invRenameLot); } }, 'Rename lot') : null),
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { openNewDelivery(); } }, 'New delivery'), h('button', { class: 'btn ghost small', onclick: function () { openLots(); } }, 'Lots'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History')),   // no Rename lot: a biscuit lot is fixed with Fix lot on its lot page, so a hold and the dates follow it
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
           return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
             ev.items.map(function (x) { return h('div', { style: 'display:flex;align-items:center;gap:10px;justify-content:space-between' }, h('span', {}, x.name + ': ' + x.out + ' still out (took ' + x.taken + ', back ' + x.returned + ')'),
@@ -1909,19 +1903,6 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       if (!confirm((pre ? 'Correct the earlier receipt?\n\n' : '') + 'Receive ' + r + ' × ' + it.name + (isProd ? ', lot ' + (lot.value || '(none)') + (bb.value ? ', best before ' + bb.value : '') : '') + ', ' + d + ' damaged or not okay?\n\nGood stock added: ' + (r - d))) return done();
       postInv('receive', { slug: it.slug, received: rec.value, damaged: dmg.value || 0, lot: lot.value, bestBefore: bb.value, ref: ref.value, billedKg: kg.value, amountRupees: amt.value, note: note.value, replaces: pre ? pre.id : undefined }, done, function (x) { return 'Received ' + x.received + (x.damaged ? ' (' + x.damaged + ' damaged)' : '') + '. On hand: ' + x.onHand; });
     }, 'Save receipt');
-  }
-  // Owner: fix a mistyped lot code. What is left in the lot moves to the right code (same best-before); past lines keep what was typed.
-  function invRenameLot(it) {
-    var lots = (it.lots || []).filter(function (l) { return l.lot_code; });
-    if (!lots.length) return toast(it.name + ' has no lots to rename.', 5000);
-    var from = h('select', {}, lots.map(function (l) { return h('option', { value: l.lot_code }, l.lot_code + ': ' + l.qty + (l.best_before ? ' (best before ' + l.best_before + ')' : '')); }));
-    var to = h('input', { placeholder: 'e.g. 15OCT26' });
-    invForm('Rename lot', it, [h('p', { class: 'muted' }, 'Fixes a mistyped lot code. What is left in the lot moves to the new code with the same best-before. Past sales keep the code they were recorded under, and nothing is deleted.'), h('label', {}, 'Which lot'), from, h('label', {}, 'Correct lot code'), to], function (done) {
-      var code = to.value.trim().toUpperCase();
-      if (!code) { toast('Type the correct lot code.'); return done(); }
-      if (!confirm('Move the stock in lot ' + from.value + ' to lot ' + code + '?')) return done();
-      postInv('rename-lot', { slug: it.slug, from: from.value, to: code }, done, function (x) { return 'Moved ' + x.moved + ' to lot ' + x.to; });
-    }, 'Rename lot');
   }
   function invTake(it) {
     var type = h('select', {}, h('option', { value: 'USE' }, 'Used (packing, tape, labels...)'), h('option', { value: 'DAMAGED' }, 'Damaged or not okay'), h('option', { value: 'GIFT' }, 'Given away to someone'), h('option', { value: 'EXHIBITION' }, 'Taken to an exhibition or event'), h('option', { value: 'EVENT_SALE' }, 'Sold at an exhibition or event'), h('option', { value: 'OFFLINE_SALE' }, 'Sold offline (bulk order)'), h('option', { value: 'SAMPLE' }, 'Sample or tasting')),

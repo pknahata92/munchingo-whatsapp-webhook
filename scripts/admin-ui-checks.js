@@ -478,24 +478,25 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
-  // Rename a lot (owner only): fixes a mistyped lot code without a phantom negative lot
+  // Rename a lot (owner only). Final review C2 changed this block: the Stock screen no longer offers Rename lot (it moved boxes to a code
+  // with no lot row, so they slipped past a hold); a biscuit lot is fixed with Fix lot on its lot page, and the server refuses a biscuit rename.
   list.push(async () => {
-    const o = await openAdmin('owner'); const { q, qa, text, click, byText, set } = o;
+    const o = await openAdmin('owner'); const { q, qa, text, click, byText } = o;
     const token = o.win.localStorage.getItem('mngAdminToken');
     const apiGet = async (p) => (await (await fetch(BASE + p, { headers: { Authorization: 'Bearer ' + token } })).json());
+    const apiPost = async (p, b) => { const r = await fetch(BASE + p, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify(b) }); return { s: r.status, j: await r.json() }; };
     click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock list');
-    ok(!!byText('#viewStock button', /^Rename lot$/), 'the owner sees a Rename lot button');
+    ok(!byText('#viewStock button', /^Rename lot$/), 'the owner no longer sees Rename lot on the Stock screen (biscuit lots are fixed with Fix lot)');
     const before = (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar');
-    click(byText('#viewStock button', /^Rename lot$/)); await until(() => /Which/i.test(text(q('#viewStock'))), 3000, 'the item picker');
-    click(byText('#viewStock button', /Atta Sugar-Lite/)); await until(() => /Rename lot: Atta Sugar-Lite/.test(text(q('#viewStock'))), 3000, 'the rename form');
-    const sel = q('#viewStock select');
-    ok(!!sel && Array.from(sel.options).some((x) => /15OCT26/.test(x.textContent)), 'the form lists the product\'s current lots (' + (sel ? Array.from(sel.options).map((x) => x.textContent).join(' | ') : 'no select') + ')');
-    set(qa('#viewStock input').find((i) => /15OCT26/.test(i.placeholder)), '16OCT26');
-    click(byText('#viewStock button', /^Rename lot$/)); await until(async () => (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').lots.some((l) => l.lot_code === '16OCT26'), 5000, 'the lot to be renamed').catch(() => {});
+    click(byText('#viewStock button', /^Lots$/)); await until(() => qa('#viewStock .lotcard').some((c) => c.getAttribute('data-code') === '15OCT26' && c.getAttribute('data-slug') === 'atta-lite-sugar'), 4000, 'the Lots list');
+    click(qa('#viewStock .lotcard').find((c) => c.getAttribute('data-code') === '15OCT26' && c.getAttribute('data-slug') === 'atta-lite-sugar'));
+    await until(() => text(q('#viewStock .pagehead')) === '15OCT26' && /Atta Sugar-Lite/.test(text(q('#lotHead'))), 4000, 'the Sugar-Lite lot page').catch(() => {});
+    ok(!!byText('#viewStock button', /^Fix lot$/), 'the lot page of Sugar-Lite 15OCT26 offers Fix lot instead (' + text(q('#viewStock .pagehead')) + ')');
+    const rn = await apiPost('/admin/api/inventory/rename-lot', { slug: 'atta-lite-sugar', from: '15OCT26', to: '16OCT26' });
     const after = (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar');
-    ok(after.lots.length === before.lots.length && after.lots.every((l) => l.lot_code !== '15OCT26') && after.lots.some((l) => l.lot_code === '16OCT26'), 'the lot now carries the new code and the old one is gone from the stock list (' + after.lots.map((l) => l.lot_code + ':' + l.qty).join(',') + ')');
+    ok(rn.s === 409 && rn.j.error === 'Biscuit lots are fixed with Fix lot on the lot page, so the hold and the dates follow the lot.' && after.lots.map((l) => l.lot_code + ':' + l.qty).join() === before.lots.map((l) => l.lot_code + ':' + l.qty).join(), 'the server refuses a biscuit rename in plain words and the lots stay as they were (' + rn.s + ' ' + rn.j.error + ' | ' + after.lots.map((l) => l.lot_code + ':' + l.qty).join(',') + ')');
     ok(after.on_hand === before.on_hand, 'total on hand is unchanged (' + before.on_hand + ' -> ' + after.on_hand + ')');
-    ok(o.errors.length === 0, 'no page errors renaming a lot (' + o.errors.join(' | ').slice(0, 200) + ')');
+    ok(o.errors.length === 0, 'no page errors on the Stock screen and the lot page (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
     const s = await openAdmin('staff'); click(s.byText('#tabs .tab', /^Stock$/)); await until(() => s.qa('#viewStock .line').length >= 4, 4000, 'the stock page for staff');
     ok(!s.byText('#viewStock button', /^Rename lot$/), 'staff do not see Rename lot');

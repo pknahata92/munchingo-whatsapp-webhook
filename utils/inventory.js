@@ -41,17 +41,19 @@ function allocate(lots, qty) {
   return { pieces, short: left };
 }
 
-// What the stock_lots table and the settings say, read once per question. `meta` is keyed 'slug|code' (codes are case-sensitive).
+// What the stock_lots table and the settings say, read once per question. `meta` is keyed 'slug|code' (codes are case-sensitive) and covers
+// every code of a lot, its aliases too (final review C2), so boxes booked under an old or sticker code are held, released and dated with
+// the lot. An alias another row of the flavour owns as its own code belongs to that row (lots.lotIndex).
 async function lotContext(store, nowMs) {
   const [rows, raw] = await Promise.all([store.lots(), store.settingsAll()]);
   const meta = {};
-  for (const l of rows || []) meta[`${l.item_slug}|${l.lot_code}`] = { status: l.status == null ? null : l.status, best_before: l.best_before || null };
+  for (const [k, l] of lotRules.lotIndex(rows || [])) meta[k] = { status: l.status == null ? null : l.status, best_before: l.best_before || null, lot: l.lot_code, ownerHold: lotRules.ownerHold(l) };
   return { meta, today: lotRules.todayIst(nowMs), s: lotRules.readSettings(raw) };
 }
 // A ledger row's lot: the stock_lots row decides the status (and the best before when it has one); a row with no lot row, or no lot code, is legacy.
 function lotInfo(ctx, r) {
   const m = r.lot_code != null ? ctx.meta[`${r.item_slug}|${r.lot_code}`] : null;
-  return m ? { status: m.status, best_before: m.best_before || r.best_before || null } : { status: null, best_before: r.best_before || null };
+  return m ? { status: m.status, best_before: m.best_before || r.best_before || null, lot: m.lot, ownerHold: m.ownerHold } : { status: null, best_before: r.best_before || null };
 }
 const eligibleRow = (ctx, r, purpose) => lotRules.eligible(lotInfo(ctx, r), purpose, ctx.today, ctx.s);
 
@@ -166,7 +168,8 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       const m = map[i.slug];
       const lotList = m ? m.lots.filter((l) => l.qty !== 0).sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9'))).map((l) => {
         const info = lotInfo(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }); const c = lotRules.cutoffs(info.best_before, ctx.s);
-        return { ...l, status: info.status || 'legacy', lastShip: c ? c.lastShip : null, websiteStop: c ? c.websiteStop : null };
+        // lot: the lot these boxes belong to (an alias row names its lot); owner_hold: held by the owner, not a new delivery (I2)
+        return { ...l, status: info.status || 'legacy', lot: info.lot || l.lot_code, owner_hold: !!info.ownerHold, lastShip: c ? c.lastShip : null, websiteStop: c ? c.websiteStop : null };
       }) : [];
       const elig = (purpose) => (m ? m.lots.filter((l) => eligibleRow(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }, purpose)).reduce((n, l) => n + l.qty, 0) : 0);
       const usable = i.kind === 'product' ? (m ? Math.min(m.total, elig('other')) : 0) : null;
@@ -477,6 +480,9 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   async function renameLot({ slug, from, to, actor, isOwner = false }) {
     if (!isOwner) throw new StockError('Only the owner can rename a lot.', 403);
     const item = await store.item(slug); if (!item) throw new StockError('No such item.', 404);
+    // Final review C2: rows moved to a new code had no lot row, so they counted as released and slipped past a hold. A biscuit lot is
+    // fixed with Fix lot (deliveries.fixLot), which moves the lot row too and keeps the old code as an alias.
+    if (item.kind === 'product') throw new StockError('Biscuit lots are fixed with Fix lot on the lot page, so the hold and the dates follow the lot.', 409);
     const oldCode = cleanText(from, 40), newCode = cleanText(to, 40);
     if (!newCode || !validLot(newCode)) throw new StockError('The lot can use letters, numbers, space and . - / only.');
     if (oldCode === newCode) throw new StockError('The new lot code must be different from the old one.');
@@ -574,19 +580,17 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       .sort((a, b) => Date.parse(a.packedAt) - Date.parse(b.packedAt));
   }
 
-  // The lot a code (or alias) names for one flavour (R5): its status (null = legacy), best before and boxes on hand; null if none.
-  async function lotOf(slug, code) {
-    const ledger = (await store.byLot()).filter((r) => r.item_slug === slug);
-    for (const c of [code, code.toUpperCase()]) {
-      const rows = ((await store.lotsByCode(c)) || []).filter((l) => l.item_slug === slug);
-      const row = rows.find((l) => l.lot_code === c) || rows[0] || null;
-      const lotCode = row ? row.lot_code : c;
-      const groups = ledger.filter((r) => r.lot_code === lotCode);
-      if (!row && !groups.length) continue;
-      const bbs = groups.map((g) => g.best_before).filter(Boolean).sort();
-      return { lot_code: lotCode, status: row ? row.status : null, best_before: (row && row.best_before) || bbs[0] || null, onHand: groups.reduce((n, g) => n + g.qty, 0) };
-    }
-    return null;
+  // The lot a code (or alias) names for one flavour (R5), resolved as everywhere else (lots.resolveCode: exact own code, then own code
+  // ignoring case, then an alias): its own code, status (null = legacy), best before and boxes on hand under all its codes; null if none.
+  async function lotOf(slug, code, { lotRows = null, ledger = null } = {}) {
+    const rows = lotRows || (await store.lots()) || [];
+    const mine = (ledger || (await store.byLot()) || []).filter((r) => r.item_slug === slug);
+    const hit = lotRules.resolveCode(rows, mine, code, slug)[0];
+    if (!hit) return null;
+    const codes = hit.row ? lotRules.codesOfLot(lotRules.lotIndex(rows), hit.row) : [hit.code];
+    const groups = mine.filter((r) => codes.includes(r.lot_code));
+    const bbs = groups.map((g) => g.best_before).filter(Boolean).sort();
+    return { lot_code: hit.code, status: hit.row ? hit.row.status : null, best_before: (hit.row && hit.row.best_before) || bbs[0] || null, onHand: groups.reduce((n, g) => n + g.qty, 0) };
   }
 
   // Owner: give a lot to the boxes of an order that were packed without one (spec 6.6). Each lot-less sale of that order and flavour

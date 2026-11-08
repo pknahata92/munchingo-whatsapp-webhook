@@ -250,7 +250,8 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
     // flavour with no stock at all would be packable once (lot-less) and then refused, which the practice orders would trip over.
     for (const slug of ['atta-original', 'atta-ajwain']) await real.receive({ slug, received: 120, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } });
     // The migration's backfill (batch_receiving_migration.sql, step 7), as on the live shop after it runs: one released lot row per
-    // flavour and code, bake date from the code, the earliest best before, and the sticker code 15OCT26 boxes carry as an alias.
+    // flavour and code, bake date from the code, the earliest best before, and the sticker code 15OCT26 boxes carry as an alias (not
+    // when that sticker code is already in the ledger for the flavour: then it is its own lot).
     const LETTER = { 'atta-original': 'O', 'atta-kesari': 'K', 'atta-ajwain': 'A', 'atta-lite-sugar': 'L' };
     const pairs = new Map();
     for (const r of await store.byLot()) {
@@ -260,7 +261,7 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
       pairs.set(k, e);
     }
     await store.insertLots([...pairs.values()].map((e) => ({ ...e, status: 'released', bake_date: e.lot_code === '15OCT26' ? '2026-10-15' : null,
-      aliases: e.lot_code === '15OCT26' && LETTER[e.item_slug] ? ['MNG' + LETTER[e.item_slug] + '-261016-01'] : [] })));
+      aliases: e.lot_code === '15OCT26' && LETTER[e.item_slug] && !pairs.has(e.item_slug + '|MNG' + LETTER[e.item_slug] + '-261016-01') ? ['MNG' + LETTER[e.item_slug] + '-261016-01'] : [] })));
   })().catch((e) => console.error('[dev] practice stock seed failed:', e.message));
   inv.instance = () => real;
   // POST /dev/stock { planFails: true }: the packing planner throws (as if the lot table could not be read); { deductFails: true }: writing

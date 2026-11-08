@@ -249,29 +249,19 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
   const nameOf = async (slug) => { const it = await store.item(slug).catch(() => null); return (it && it.name) || NAMES[slug] || slug; };
   const onHandOf = (ledger, slug, code) => (ledger || []).filter((r) => r.item_slug === slug && r.lot_code === code).reduce((a, r) => a + r.qty, 0);
 
-  // A lot is addressed by code (or alias) plus, when the code is shared, the flavour (R5). A lot received through the old form after
-  // the migration has ledger rows but no stock_lots row: it is created as released first. Tasks 7-9 reuse this.
+  // A lot is addressed by code (or alias) plus, when the code is shared, the flavour (R5). Within one flavour the code is resolved as
+  // everywhere else (final review C1, lots.resolveCode): exact own code, then own code ignoring case, then an alias, so one flavour never
+  // answers twice. A lot received through the old form after the migration has ledger rows but no stock_lots row: it is created as
+  // released first. Tasks 7-9 reuse this.
   async function findLot({ code, slug } = {}) {
     const c = cleanText(code, 60);
     if (!c) throw new StockError('No lot with that code.', 404);
-    const rows = ((await store.lotsByCode(c)) || []).filter((l) => !slug || l.item_slug === slug);
-    const ledger = (await store.byLot()) || [];
-    const have = new Set(((await store.lots()) || []).map((l) => `${l.item_slug}|${l.lot_code}`));
-    const only = new Map();   // ledger-only candidates, keyed by flavour
-    for (const r of ledger) {
-      if (r.lot_code !== c || (slug && r.item_slug !== slug) || have.has(`${r.item_slug}|${r.lot_code}`) || rows.some((l) => l.item_slug === r.item_slug)) continue;   // ledger rows under an old code (now an alias) belong to the lot that has it
-      const e = only.get(r.item_slug) || { slug: r.item_slug, bestBefore: null };
-      if (r.best_before && (!e.bestBefore || r.best_before < e.bestBefore)) e.bestBefore = r.best_before;
-      only.set(r.item_slug, e);
-    }
-    const found = [...rows.map((l) => ({ slug: l.item_slug, lot: l })), ...[...only.values()].map((e) => ({ slug: e.slug, made: e }))];
-    if (!found.length) throw new StockError('No lot with that code.', 404);
-    if (found.length > 1) throw new StockError('This code is on more than one flavour. Choose one.', 409, { choose: await Promise.all(found.map(async (f) => ({ code: c, slug: f.slug, name: await nameOf(f.slug) }))) });
-    const f = found[0];
-    if (f.lot) return f.lot;
-    const parsed = lots.parseCode(c);
-    await store.insertLots([{ item_slug: f.slug, lot_code: c, bake_date: parsed ? parsed.bakeDate : null, best_before: f.made.bestBefore, status: 'released' }]);
-    return ((await store.lotsByCode(c)) || []).find((l) => l.item_slug === f.slug && l.lot_code === c);
+    const { cand } = await pick(c, slug);
+    if (cand.row) return cand.row;
+    const parsed = lots.parseCode(cand.code);
+    const bb = ((await store.byLot()) || []).filter((r) => r.item_slug === cand.slug && r.lot_code === cand.code && r.best_before).map((r) => day(r.best_before)).sort()[0] || null;
+    await store.insertLots([{ item_slug: cand.slug, lot_code: cand.code, bake_date: parsed ? parsed.bakeDate : null, best_before: bb, status: 'released' }]);
+    return ((await store.lots()) || []).find((l) => l.item_slug === cand.slug && l.lot_code === cand.code);
   }
 
   const ownerOnly = (isOwner) => { if (!isOwner) throw new StockError(OWNER_ONLY, 403); };
@@ -345,7 +335,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     input = input || {};
     const today = lots.todayIst(now());
     const [ledger, lotRows] = await Promise.all([store.byLot(), store.lots()]);
-    const meta = new Map((lotRows || []).map((l) => [`${l.item_slug}|${l.lot_code}`, l]));
+    const meta = lots.lotIndex(lotRows || []);   // an alias row takes its lot's best before (C2)
     const groups = new Map();
     for (const r of ledger || []) {
       if (r.lot_code == null || (input.slug && r.item_slug !== input.slug)) continue;
@@ -507,34 +497,19 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
   async function world() {
     const [lotRows, ledger, items, raw] = await Promise.all([store.lots(), store.byLot(), store.items(), store.settingsAll()]);
     const products = new Map((items || []).filter((i) => i.kind === 'product').map((i) => [i.slug, i.name || NAMES[i.slug] || i.slug]));
-    return { lotRows: (lotRows || []).filter((l) => products.has(l.item_slug)), ledger: (ledger || []).filter((r) => products.has(r.item_slug)), products, s: lots.readSettings(raw) };
+    const mine = (lotRows || []).filter((l) => products.has(l.item_slug));
+    return { lotRows: mine, index: lots.lotIndex(mine), ledger: (ledger || []).filter((r) => products.has(r.item_slug)), products, s: lots.readSettings(raw) };
   }
-  const codesOf = (l) => [l.lot_code, ...(l.aliases || [])];
+  // A lot's codes: its own and the aliases that are its (an alias another lot of the flavour owns as its own code is that lot's, C1).
+  const codesOf = (w, l) => lots.codesOfLot(w.index, l);
 
-  // Lots a typed code can mean: `mode` 'code' (a lot's own code), 'alias', or 'any'. A code that exists only in the ledger is a legacy lot.
-  function candidates(w, c, slug, mode) {
-    const out = [], seen = new Set(), covered = new Set();
-    for (const l of w.lotRows) for (const x of codesOf(l)) covered.add(`${l.item_slug}|${up(x)}`);
-    for (const l of w.lotRows) {
-      if (slug && l.item_slug !== slug) continue;
-      const byCode = up(l.lot_code) === c, byAlias = (l.aliases || []).some((a) => up(a) === c) && !byCode;
-      if (!(mode === 'any' ? byCode || byAlias : mode === 'code' ? byCode : byAlias)) continue;
-      const k = `${l.item_slug}|${l.lot_code}`;
-      if (!seen.has(k)) { seen.add(k); out.push({ slug: l.item_slug, code: l.lot_code, row: l }); }
-    }
-    if (mode !== 'alias') for (const r of w.ledger) {
-      if (r.lot_code == null || up(r.lot_code) !== c || (slug && r.item_slug !== slug) || covered.has(`${r.item_slug}|${c}`)) continue;
-      const k = `${r.item_slug}|${r.lot_code}`;
-      if (!seen.has(k)) { seen.add(k); out.push({ slug: r.item_slug, code: r.lot_code, row: null }); }
-    }
-    return out;
-  }
+  // The lots a typed code can mean, one per flavour at most (final review C1, lots.resolveCode). A code only in the ledger is a legacy lot.
+  const candidates = (w, code, slug) => lots.resolveCode(w.lotRows, w.ledger, code, slug || null);
   const chooseOf = (w, list) => list.map((x) => ({ code: x.code, slug: x.slug, name: w.products.get(x.slug) })).sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
   const ambiguous = (w, list) => new StockError('This code is on more than one flavour. Choose one.', 409, { choose: chooseOf(w, list) });
   async function pick(code, slug) {
-    const c = up(code);
     const w = await world();
-    const found = c ? candidates(w, c, slug || null, 'any') : [];
+    const found = up(code) ? candidates(w, code, slug) : [];
     if (!found.length) throw new StockError('No lot with that code.', 404);
     if (found.length > 1) throw ambiguous(w, found);
     return { w, cand: found[0] };
@@ -570,17 +545,17 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       return { code, slug, name: w.products.get(slug), status, onHand: qty, bakeDate: bake, bestBefore: bb, websiteStop: cut ? cut.websiteStop : null, daysToStop: cut ? daysBetween(today, cut.websiteStop) : null,
         lastShip: cut ? cut.lastShip : null, canShip: lots.eligible({ status, best_before: bb }, 'pack', today, w.s) };
     };
-    const out = [], covered = new Set();
+    const out = [];
     for (const l of w.lotRows) {
-      for (const x of codesOf(l)) covered.add(`${l.item_slug}|${x}`);
-      const rows = w.ledger.filter((r) => r.item_slug === l.item_slug && codesOf(l).includes(r.lot_code) && r.best_before);
+      const codes = codesOf(w, l);
+      const rows = w.ledger.filter((r) => r.item_slug === l.item_slug && codes.includes(r.lot_code) && r.best_before);
       const bb = day(l.best_before) || rows.map((r) => day(r.best_before)).sort()[0] || null;
       const p = lots.parseCode(l.lot_code);
-      out.push(entry(l.item_slug, l.lot_code, l.status == null ? null : l.status, day(l.bake_date) || (p && p.bakeDate) || null, bb, sumOf(l.item_slug, codesOf(l))));
+      out.push(entry(l.item_slug, l.lot_code, l.status == null ? null : l.status, day(l.bake_date) || (p && p.bakeDate) || null, bb, sumOf(l.item_slug, codes)));
     }
     const legacy = new Map();
     for (const r of w.ledger) {
-      if (r.lot_code == null || covered.has(`${r.item_slug}|${r.lot_code}`)) continue;
+      if (r.lot_code == null || w.index.has(`${r.item_slug}|${r.lot_code}`)) continue;
       const k = `${r.item_slug}|${r.lot_code}`;
       const e = legacy.get(k) || { slug: r.item_slug, code: r.lot_code, bb: null };
       if (r.best_before && (!e.bb || day(r.best_before) < e.bb)) e.bb = day(r.best_before);
@@ -617,7 +592,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
   async function lotPage(code, slug) {
     const { w, cand } = await pick(code, slug);
     const lot = cand.row, today = lots.todayIst(now());
-    const codes = lot ? codesOf(lot) : [cand.code];
+    const codes = lot ? codesOf(w, lot) : [cand.code];
     const rows = ((await store.movementsByLots(codes)) || []).filter((m) => m.item_slug === cand.slug);
     const byId = new Map(rows.map((m) => [m.id, m]));
     const n = { received: 0, broken: 0, good: 0, onHand: 0, website: 0, offline: 0, fairs: 0, gifts: 0, samples: 0, damaged: 0, returned: 0, expired: 0, fixes: 0 };
@@ -686,16 +661,16 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     if (!c) return { none: true };
     const w = await world();
     const answer = (found) => (found.length === 1 ? { lot: { code: found[0].code, slug: found[0].slug } } : { choose: chooseOf(w, found) });
-    let found = candidates(w, c, null, 'code');
-    if (found.length) return answer(found);
-    found = candidates(w, c, null, 'alias');
+    // one entry per flavour, by its own code or an alias (C1): after Fix lot on one flavour of a shared code (15OCT26 -> MNGK-261016-01),
+    // the code still lists every flavour that carries it, so a recall by the printed code misses none
+    let found = candidates(w, q, null);
     if (found.length) return answer(found);
     found = w.lotRows.filter((l) => l.supplier_batch && up(l.supplier_batch) === c).map((l) => ({ slug: l.item_slug, code: l.lot_code }));
     if (found.length) return answer(found);
     if (ORDER_ID.test(c)) {
       const sales = (await store.salesOf(c)) || [];
       const undone = new Set(sales.filter((r) => r.type === 'SALE_UNDO').map(saleKey));
-      const canon = (slug, code) => { if (code == null) return null; const l = w.lotRows.find((x) => x.item_slug === slug && codesOf(x).includes(code)); return l ? l.lot_code : code; };
+      const canon = (slug, code) => { if (code == null) return null; const l = w.index.get(`${slug}|${code}`); return l ? l.lot_code : code; };
       const g = new Map();
       for (const r of sales) {
         if (r.type !== 'SALE' || undone.has(saleKey(r))) continue;

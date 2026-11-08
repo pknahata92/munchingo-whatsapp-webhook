@@ -142,7 +142,9 @@ end $$;
 
 -- 7. Backfill: one released lot row for every flavour + lot code already in the ledger (any quantity, even 0 or below), so nothing
 --    that is on the shelf today changes. Bake date comes from the code (15OCT26 style, or MNGK-261105-01 style); best before is
---    the earliest one the ledger holds for that lot. The old shared codes get the sticker codes the printed boxes carry.
+--    the earliest one the ledger holds for that lot. The old shared codes get the sticker codes the printed boxes carry, unless that
+--    sticker code is already in the ledger for that flavour (the lot was renamed to it with the old Rename lot): then the sticker code
+--    is its own lot and the old code gets no alias, so no code ever means two lots of one flavour.
 create or replace function stock_lot_bake_date(code text) returns date language plpgsql immutable as $f$
 begin
   if code ~* '^\d{2}[A-Z]{3}\d{2}$' then return to_date(upper(code), 'DDMONYY'); end if;
@@ -156,8 +158,12 @@ $f$;
 insert into stock_lots (item_slug, lot_code, status, bake_date, best_before, aliases)
 select m.item_slug, m.lot_code, 'released', stock_lot_bake_date(m.lot_code), min(m.best_before),
        case
-         when m.lot_code = '15OCT26' and l.letter is not null then array['MNG' || l.letter || '-261016-01']
-         when m.lot_code = '27OCT26' and l.letter is not null then array['MNG' || l.letter || '-261027-01']
+         when m.lot_code = '15OCT26' and l.letter is not null
+              and not exists (select 1 from stock_movements x where x.item_slug = m.item_slug and x.lot_code = 'MNG' || l.letter || '-261016-01')
+           then array['MNG' || l.letter || '-261016-01']
+         when m.lot_code = '27OCT26' and l.letter is not null
+              and not exists (select 1 from stock_movements x where x.item_slug = m.item_slug and x.lot_code = 'MNG' || l.letter || '-261027-01')
+           then array['MNG' || l.letter || '-261027-01']
          else '{}'::text[]
        end
 from stock_movements m
