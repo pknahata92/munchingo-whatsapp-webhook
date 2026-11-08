@@ -84,8 +84,34 @@ ok(r.sg && textOf(r.C.suggestionHtml(r.sg)) === 'Make it the Full Range and save
   ok(x.sg && textOf(x.C.suggestionHtml(x.sg)) === 'Make it the Full Range and save ₹' + saved, 'merge wording ' + mix.join('+'));
 });
 
+let C;
+// ---- no MRP on a gift box ----
+w = load({ book: SINGLES, rule: RULE, cart: [line('full-range-set', 999), line(OAK, 749)] }); C = w.MunchingoCart;
+ok(C.mrpOf(C.getCart()[0]) === 0 && C.mrpOf(C.getCart()[1]) === 0, 'mrpOf a Full Range line and a Trio line is 0');
+ok(C.mrpOf({ slug: 'full-range-set', price: 999, mrp: 1300 }) === 0, 'mrpOf ignores an MRP carried on a set line');
+w = load({ book: SINGLES, rule: RULE, cart: [line('full-range-set', 999)] });
+ok(w.MunchingoCart.cartSavings() === 0, 'a bag with only a Full Range saves 0 against MRP');
+
+// ---- suggestion() itself ----
+const sug = (cart) => { const x = load({ book: SINGLES, rule: RULE, cart }); return { C: x.MunchingoCart, sg: x.MunchingoCart.suggestion() }; };
+r = sug([line('atta-original', 259), line('atta-ajwain', 259), line('atta-kesari', 299)]);
+ok(r.sg && r.sg.kind === 'trio' && r.sg.saved === 68 && textOf(r.C.suggestionHtml(r.sg)) === 'Make it a Trio and save \u20B968', 'suggestion(): 3 singles give the Trio, saved 68');
+let before = r.C.cartTotal(); r.C.acceptSuggestion();
+ok(r.C.getCart().length === 1 && r.C.getCart()[0].slug === OAK && r.C.cartTotal() === before - 68, 'accepting the Trio swaps the lines and the total drops by 68: ' + r.C.cartTotal());
+r = sug([line(OAK, 749), line('atta-lite-sugar', 329)]);
+ok(r.sg && r.sg.kind === 'merge' && r.sg.saved === 79, 'suggestion(): Trio O+A+K plus Sugar-Lite gives a merge, saved 79');
+before = r.C.cartTotal(); r.C.acceptSuggestion();
+ok(r.C.getCart().length === 1 && r.C.getCart()[0].slug === 'full-range-set' && r.C.cartTotal() === before - 79, 'accepting the merge gives the Full Range and the total drops by 79: ' + r.C.cartTotal());
+r = sug([line('atta-original', 259), line('atta-ajwain', 259), line('atta-kesari', 299), line('atta-lite-sugar', 329)]);
+ok(r.sg && r.sg.kind === 'full' && r.sg.saved === 147, 'suggestion(): 4 singles give the Full Range, saved 147');
+before = r.C.cartTotal(); r.C.acceptSuggestion();
+ok(r.C.getCart().length === 1 && r.C.cartTotal() === before - 147, 'accepting the Full Range drops the total by 147');
+ok(sug([line('full-range-set', 999)]).sg === null, 'a bag with only a Full Range has no suggestion');
+r = sug([line('atta-original', 259), line('atta-ajwain', 259), line('atta-kesari', 299)]); r.C.keepSuggestion(r.sg.sig);
+ok(r.C.suggestion() === null, 'a dismissed suggestion stays dismissed');
+
 // ---- shipping ----
-w = load({ book: SINGLES, rule: RULE, cart: [line('atta-original', 259, 2)] }); let C = w.MunchingoCart;
+w = load({ book: SINGLES, rule: RULE, cart: [line("atta-original", 259, 2)] }); C = w.MunchingoCart;
 ok(C.cartTotal() === 518 && C.cartShipping() === 49, '2 singles (518): shipping 49');
 ok(textOf(C.renderAovProgressHtml(C.getCart())).indexOf('Add one more box and it ships free (free shipping from ₹777).') >= 0, '2 singles: one more box nudge, exact sentence');
 w = load({ book: SINGLES, rule: RULE, cart: [line(OAK, 749)] }); C = w.MunchingoCart;
