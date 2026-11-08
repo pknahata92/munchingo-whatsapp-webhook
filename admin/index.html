@@ -140,6 +140,21 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 .dldates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:8px 0}
 .dldate{background:var(--band);border-radius:10px;padding:6px 10px;min-width:0}.dldate small{display:block;font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:.06em}.dldate b{font-size:14px}
 .dlotline{align-items:flex-start}.dlotmain{flex:1;min-width:0;overflow-wrap:anywhere}.dlotline .badge{flex:none}
+
+/* ── Lots, the lot page, Release, stock Needs attention, the Packed refusal (Task 12; phone first, nothing wider than the screen) ── */
+.lotcard{display:block;width:100%;text-align:left;font:inherit;color:var(--ink)}
+.lotcard .top{align-items:center;flex-wrap:wrap}.lotcard .top>span:first-child{min-width:0;overflow-wrap:anywhere}.lotcard .badge{margin-left:0}
+.lotcard.dim{opacity:.85;cursor:default}.lotcard.dim:hover{border-color:var(--line)}
+.lothead{display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap;margin:0 0 6px}.lothead b{flex:1 1 140px;min-width:0;font-size:16px}.lothead .badge{margin-left:0}
+.lotnums{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;font-size:12px}.lotnums div{display:flex;flex-direction:column;min-width:0}
+.lotnums b{font-size:17px;font-variant-numeric:tabular-nums}.lotnums span{color:var(--ink2);overflow-wrap:anywhere}
+.lotcmd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;background:var(--band);border-radius:10px;padding:8px 10px;margin-top:8px;overflow-wrap:anywhere;word-break:break-all;user-select:all}
+.srch{display:flex;gap:8px;margin-bottom:8px;align-items:center}.srch input{flex:1;min-width:0}
+.dlthumbs{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}.dlthumb{width:96px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--band);cursor:zoom-in}.dlthumb.big{width:100%;height:auto;cursor:zoom-out}
+.nlline,.upline{flex-direction:column;align-items:stretch;gap:4px}.nlline .acts,.upline .acts{margin-top:2px}
+.refuse{border:1.5px solid var(--red);background:#FBE4E0;color:#2A1A12;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px;cursor:default;overflow-wrap:anywhere}
+.refuse>b{color:#A63B38}.refuse label,.refuse .muted{color:#5B4537}
+@media (prefers-color-scheme:dark){.refuse{background:#3E1F1D;color:var(--ink)}.refuse>b{color:var(--tx-red)}.refuse label,.refuse .muted{color:var(--ink2)}}
 </style>
 </head>
 <body>
@@ -217,7 +232,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var token = ''; try { token = localStorage.getItem('mngAdminToken') || ''; } catch (e) {}
-  var state = { role: 'staff', sel: {}, orders: [], filter: 'topack', reasons: {}, open: null, sort: 'new', range: 'all', from: '', to: '', gift: false, coupon: false, set: false };
+  var state = { role: 'staff', sel: {}, orders: [], filter: 'topack', reasons: {}, open: null, sort: 'new', range: 'all', from: '', to: '', gift: false, coupon: false, set: false, refused: {}, needsLot: null, held: 0 };
   try { var saved = JSON.parse(localStorage.getItem('mngAdminView') || '{}'); ['filter', 'sort', 'range', 'from', 'to', 'gift', 'coupon', 'set'].forEach(function (k) { if (saved[k] != null) state[k] = saved[k]; }); } catch (e) {}
   function saveView() { try { localStorage.setItem('mngAdminView', JSON.stringify({ filter: state.filter, sort: state.sort, range: state.range, from: state.from, to: state.to, gift: state.gift, coupon: state.coupon, set: state.set })); } catch (e) {} }
   var IST = 5.5 * 3600 * 1000;
@@ -281,14 +296,15 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
   // ── tabs: Orders, Stock, More (owner) ──
   var TABS = ['orders', 'stock', 'more'];
-  function showTab(n) {
+  // then: a Stock page to open instead of the Stock list (a Needs card that goes straight to stock Needs attention)
+  function showTab(n, then) {
     if (TABS.indexOf(n) < 0 || (n === 'more' && state.role !== 'owner')) n = 'orders';
     state.tab = n;
     TABS.forEach(function (t) { $('view' + t.charAt(0).toUpperCase() + t.slice(1)).hidden = t !== n; });
     [].forEach.call(document.querySelectorAll('#tabs .tab'), function (b) { var on = b.getAttribute('data-tab') === n; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
     try { localStorage.setItem('mngAdminTab', n); } catch (e) {}
     closeSheet();
-    if (n === 'stock') openInventory(); else if (n === 'more') renderMore();
+    if (n === 'stock') (typeof then === 'function' ? then : openInventory)(); else if (n === 'more') renderMore();
   }
   function moreBtn(title, sub, fn) { return h('button', { class: 'morebtn', type: 'button', onclick: fn }, h('b', {}, title), h('span', {}, sub)); }
   function renderMore() {
@@ -321,7 +337,26 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       h('p', { class: 'muted' }, 'Stock tab: New delivery when boxes arrive (they wait on hold until tasted and released), Count when you check the shelf, Mark low when something runs short. Packing an order takes its boxes off stock for you.')]);
   }
   function refreshLow() {
-    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; renderNeeds(); }).catch(function () {});
+    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; if (j && j.ok) state.held = heldLots(j.items); renderNeeds(); }).catch(function () {});
+    refreshNeedsLot();
+  }
+  // Boxes packed without a lot and packs whose lots were not checked (GET /stock/needs-lot), for the Needs cards.
+  function refreshNeedsLot() {
+    return api('/admin/api/stock/needs-lot').then(function (j) { state.needsLot = j && j.ok ? { lines: j.lines || [], unplanned: j.unplanned } : null; renderNeeds(); }, function () {});
+  }
+  // Lots on hold with boxes on the shelf, from the Stock overview (one per flavour and code).
+  function heldLots(items) {
+    var seen = {};
+    (items || []).forEach(function (it) { if (it.kind === 'product') (it.lots || []).forEach(function (l) { if (l.status === 'hold' && l.qty > 0 && l.lot_code) seen[it.slug + '|' + l.lot_code] = 1; }); });
+    return Object.keys(seen).length;
+  }
+  // The stock items of Needs attention: [count, one, many, tap, red]. Shown in Needs you now and at the top of Stock.
+  function stockNeedCards() {
+    var nl = state.needsLot, go = function () { showTab('stock', openStockAttention); };
+    var boxes = nl ? nl.lines.reduce(function (a, l) { return a + (Number(l.boxes) || 0); }, 0) : 0, up = nl && Array.isArray(nl.unplanned) ? nl.unplanned.length : 0;
+    return [[boxes, 'box packed without a lot: tap to assign', 'boxes packed without a lot: tap to assign', go, true],
+      [state.held || 0, 'lot on hold: tap to release', 'lots on hold: tap to release', go, false],
+      [up, 'pack was not checked against lots: tap to see', 'packs were not checked against lots: tap to see', go, true]];
   }
   function load() {
     refreshLow();
@@ -358,6 +393,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     add(low.length, 'running low: ' + low.map(function (x) { return x.name; }).join(', '), 'running low: ' + low.map(function (x) { return x.name; }).join(', '), function () { showTab('stock'); }, low.some(function (x) { return x.status === 'out'; }));
     var chs = state.channels || {};   // Meta or Google showing something other than the admin (not found, refusing, or different for over 30 min)
     ['meta', 'google'].forEach(function (ch) { var n = chs[ch] && chs[ch].problems ? chs[ch].problems.length : 0, msg = CH[ch] + ' does not match the admin: tap to see'; add(n, msg, msg, function () { showTab('stock'); }, true); });
+    stockNeedCards().forEach(function (c) { add(c[0], c[1], c[2], c[3], c[4]); });
     if (state.role === 'owner') { var att = state.orders.filter(function (o) { return o.needs_attention && o.state !== 'test'; }).length; add(att, 'order needs attention (invoice or accounting)', 'orders need attention (invoice or accounting)', go('attention'), true); }
     if (!box.children.length) box.appendChild(h('div', { class: 'need calm' }, h('b', {}, '✓'), h('span', {}, 'Nothing needs you right now.')));
   }
@@ -464,9 +500,12 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     var map = { topack: ['Mark packed', 'packed'], packed: ['Create shipment', null], shipped: ['Mark delivered', 'delivered'] }, m = map[o.state];
     if (!m) return null;
     if (o.state === 'shipped' && o.awaiting_pickup) return null;   // not collected yet: one tap must not be able to call it delivered (the order sheet still can)
+    // Packed was refused (no lot that can ship covers it): the reason stays on the card, with Pack anyway for the owner
+    if (o.state === 'topack' && state.refused[o.id]) return packRefusal(o, state.refused[o.id], function (msg) { toast(msg, 6000); load(); }, function () { delete state.refused[o.id]; render(); });
     return h('div', { class: 'qa' }, h('button', { class: 'btn small', onclick: function (e) {
       e.stopPropagation();
       if (!m[1]) return openOrder(o.id);
+      if (m[1] === 'packed') return packNow(o, e.target, function () { render(); }, function (msg) { toast(msg); load(); });
       if (m[1] === 'delivered' && !confirm('Mark ' + o.id + ' as delivered?')) return;
       e.target.disabled = true;
       api('/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { method: 'POST', body: { to: m[1] } }).then(function (j) { if (!j.ok) { e.target.disabled = false; return toast(j.error || 'Failed', 6000); } toast(o.id + ' ' + m[1]); load(); });
@@ -560,9 +599,14 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       api('/admin/api/orders/bulk-pack', { method: 'POST', body: { ids: toPack } }).then(function (j) {
         if (!j.ok) { e.target.disabled = false; return toast(j.error || 'Failed', 6000); }
         var bad = j.results.filter(function (r) { return !r.ok; });
-        toast(j.packed + ' packed' + (bad.length ? ' · ' + bad.length + ' skipped: ' + bad[0].id + ' ' + bad[0].error : ''), 6000);
         state.sel = {}; load();
-      });
+        if (!bad.length) return toast(j.packed + ' packed', 6000);
+        // every order that was not packed, with its reason (a Packed refusal names the flavour, the boxes short and the lot)
+        ownerPanel('Mark packed', [h('p', {}, h('b', {}, j.packed + ' packed.'), ' ' + bad.length + ' not packed:'),
+          h('div', {}, bad.map(function (r) { return h('div', { class: 'line dlotline' }, h('div', { class: 'dlotmain' }, h('b', {}, r.id), h('small', { style: 'color:var(--tx-red)' }, r.error || 'Something went wrong.')), h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openOrder(r.id); } }, 'Open')); })),
+          h('p', { class: 'muted' }, 'Open an order to see what to do. Only the owner can pack anyway.'),
+          h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: closeSheet }, 'Close'))]);
+      }, function () { e.target.disabled = false; toast('Could not reach the server', 6000); });
     } }, 'Mark ' + toPack.length + ' packed'));
   }
   var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
@@ -728,9 +772,14 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     if (o.credit_notes.length) p.appendChild(section('Refunds & credit notes', o.credit_notes.map(function (c) { return h('div', { class: 'line' }, h('div', {}, c.no, h('small', {}, c.reason + (c.full ? ' · order closed' : '') + ' · ' + when(c.at))), h('div', {}, inr(c.amount))); })));
 
     var adv = '/admin/api/orders/' + encodeURIComponent(o.id) + '/advance';
-    if (o.state === 'topack') p.appendChild(section('Next step', h('p', { class: 'muted' }, 'Pack the box(es), then mark it packed.'),
-      h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { act(adv, { to: 'packed' }, 'Marked packed', e.target); } }, 'Mark packed'),
-        h('button', { class: 'btn ghost small', onclick: function () { printOne(o.id, 'slips'); } }, 'Print slip'))));
+    if (o.state === 'topack') {
+      var refusal = h('div', {});
+      var refuse = function (msg) { refusal.textContent = ''; refusal.appendChild(packRefusal(o, msg, function (m2) { done(m2); }, function () { delete state.refused[o.id]; refusal.textContent = ''; render(); })); };
+      p.appendChild(section('Next step', h('p', { class: 'muted' }, 'Pack the box(es), then mark it packed.'),
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function (e) { packNow(o, e.target, refuse, function () { done('Marked packed'); }); } }, 'Mark packed'),
+          h('button', { class: 'btn ghost small', onclick: function () { printOne(o.id, 'slips'); } }, 'Print slip')), refusal));
+      if (state.refused[o.id]) refuse(state.refused[o.id]);
+    }
     if (o.state === 'packed') p.appendChild(shipForm(o));
     if (o.state === 'shipped' || o.state === 'delivered') p.appendChild(section(o.state === 'delivered' ? 'Delivered' : 'Shipped', kv([['Packed', o.packed_at ? when(o.packed_at) + (o.packed_by ? ' by ' + o.packed_by : '') : ''], ['Carrier', o.carrier], ['Tracking', o.awb], ['Shipped', when(o.shipped_at)], ['Expected delivery', o.state === 'shipped' ? (o.expected_by ? shortDate(o.expected_by) : 'No date from the courier yet') + (isLate(o) ? ' · LATE, ' + o.late.days + ' day' + (o.late.days === 1 ? '' : 's') : '') : ''], ['Delivered', o.delivered_at ? when(o.delivered_at) + (o.delivered_by ? ' by ' + o.delivered_by : '') : '']]),
       o.state === 'shipped' ? h('div', { class: 'acts' }, labelable(o) ? h('button', { class: 'btn ghost small', onclick: function () { openOrderLabels([o.id]); } }, 'Shipping label') : null, h('button', { class: 'btn small', onclick: function (e) { if (confirm('Mark this order as delivered?')) act(adv, { to: 'delivered' }, 'Marked delivered', e.target); } }, 'Mark delivered')) : null));
@@ -745,8 +794,14 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     if (o.state === 'unpaid') p.appendChild(payPanel(o));
 
     if (o.events && o.events.length) p.appendChild(section('Timeline', h('div', { class: 'tl' }, o.events.map(function (e) {
-      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to : ({ packed: 'Packed', delhivery_shipment_created: 'Delhivery shipment created', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled', payment_link_emailed: 'Payment link emailed', payment_link_whatsapped: 'Payment link sent on WhatsApp (Munchingo)', payment_link_regenerated: 'New payment link made', stock_unplanned: 'Stock not checked at packing: see Needs attention' }[e.event] || e.event);
-      return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at));
+      var mt = e.meta || {};
+      var what = e.event === 'undo' ? 'Undone: ' + e.from + ' → ' + e.to
+        : e.event === 'packed' && mt.note ? 'Packed anyway: ' + mt.note   // the owner's override: the short boxes went out without a lot
+        : e.event === 'stock_unplanned' ? 'Stock not checked at packing: ' + UNPLANNED_WORDS[unplannedKind(mt)] + (mt.note ? ' Owner\'s note: ' + mt.note : '')
+        : e.event === 'stock_unplanned_checked' ? 'Stock checked by ' + (e.by || 'the owner')
+        : ({ packed: 'Packed', delhivery_shipment_created: 'Delhivery shipment created', shipped: 'Shipped', delivered: 'Delivered', note: 'Note saved', refund_started: 'Refund started', auto_cancelled: 'Cancelled automatically (fully refunded)', invoice_resent: 'Invoice resent', invoice_issued: 'Invoice created', zoho_synced: 'Sent to Zoho Books', address_changed: 'Address changed', cancelled_unpaid: 'Cancelled', payment_link_emailed: 'Payment link emailed', payment_link_whatsapped: 'Payment link sent on WhatsApp (Munchingo)', payment_link_regenerated: 'New payment link made' }[e.event] || e.event);
+      return h('div', {}, h('b', {}, what), ' · ' + (e.by || 'system') + ' · ' + when(e.at),
+        e.event === 'stock_unplanned' ? h('button', { class: 'lnk', type: 'button', style: 'display:block', onclick: function () { showTab('stock', openStockAttention); } }, 'Open Needs attention') : null);
     }))));
     var note = h('textarea', { placeholder: 'Private note (not shown to the customer)' }); note.value = o.admin_note || '';
     p.appendChild(section('Note', note, h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: function (e) { act('/admin/api/orders/' + encodeURIComponent(o.id) + '/note', { note: note.value }, 'Note saved', e.target); } }, 'Save note'))));
@@ -944,20 +999,28 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
 
   function openInventory() {
-    api('/admin/api/inventory').then(function (j) {
+    // the stock items of Needs attention come along (never blocking the Stock screen if they cannot be read)
+    Promise.all([api('/admin/api/inventory'), api('/admin/api/stock/needs-lot').then(null, function () { return null; })]).then(function (rs) {
+      var j = rs[0], nl = rs[1];
       if (!j.ok) return toast(j.error || 'Could not load stock', 6000);
-      state.inv = j;
+      state.inv = j; state.held = heldLots(j.items);
+      if (nl && nl.ok) state.needsLot = { lines: nl.lines || [], unplanned: nl.unplanned };
+      renderNeeds();
+      var sn = stockNeedCards().filter(function (c) { return c[0] > 0; });
+      var needBox = sn.length ? h('div', { class: 'needs', id: 'stockNeeds' }, sn.map(function (c) { return h('button', { class: 'need' + (c[4] ? ' hot' : ''), type: 'button', onclick: function () { openStockAttention(); } }, h('b', {}, String(c[0])), h('span', {}, c[0] === 1 ? c[1] : c[2])); })) : null;
       var chanBox = null;
       if ('channels' in j) { state.channels = j.channels; renderNeeds(); chanBox = h('div', { class: 'sec', id: 'chanBox' }); drawChannels(chanBox, j.channels); }
       var row = function (it) {
         var st = (it.paused || (it.sellable != null && it.sellable <= 0 && it.kind === 'product')) ? ['SOLD OUT ONLINE', 'b-refunded'] : (STATUS[it.status] || STATUS['new']);
-        var lots = it.lots.length ? it.lots.map(function (l) { return (l.lot_code || 'no lot') + ': ' + l.qty + (l.best_before ? ' (best before ' + new Date(l.best_before + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ')' : ''); }).join(' · ') : '';
+        // a lot code never breaks at its hyphens (staff match it against the sticker)
+        var lots = it.lots.length ? it.lots.reduce(function (a, l, i) { if (i) a.push(' · '); a.push(h('span', { style: 'white-space:nowrap' }, l.lot_code || 'no lot'), ': ' + l.qty + (l.status === 'hold' ? ' on hold' : '') + (l.best_before ? ' (best before ' + new Date(l.best_before + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ')' : '')); return a; }, []) : null;
         return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:8px' },
           h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap' }, h('b', { style: 'flex:1 1 140px' }, it.name),
             h('span', { style: 'font-size:22px;font-weight:700' }, String(it.on_hand), h('small', { style: 'font-size:12px;font-weight:500;margin-left:4px' }, it.unit)),
             h('span', { class: 'badge ' + st[1] }, st[0])),
           lots ? h('small', { class: 'muted' }, lots) : null,
-          it.kind === 'product' ? h('small', { class: 'muted', style: 'color:' + (it.paused || (it.sellable != null && it.sellable <= 0) ? 'var(--red)' : 'inherit') }, it.paused ? 'Paused: customers cannot order this on the website.' : (it.sellable == null ? 'Website: no stock recorded yet, so it is not limited.' : (it.sellable <= 0 ? 'Website: sold out automatically (everything left is already paid for).' : 'Website: ' + it.sellable + ' can still be ordered' + (it.committed ? ' (' + it.committed + ' more are paid for and waiting to be packed)' : '') + '.'))) : null,
+          it.kind === 'product' ? h('small', { class: 'muted', style: 'color:' + (it.paused || (it.sellable != null && it.sellable <= 0) ? 'var(--red)' : 'inherit') }, it.paused ? 'Paused: customers cannot order this on the website.' : (it.sellable == null ? 'Website: no stock recorded yet, so it is not limited.' : (it.sellable <= 0 ? (it.on_hold > 0 ? 'Website: sold out automatically. Nothing more can be sold until a lot is released.' : 'Website: sold out automatically (everything left is already paid for).') : 'Website: ' + it.sellable + ' can still be ordered' + (it.committed ? ' (' + it.committed + ' more are paid for and waiting to be packed)' : '') + '.'))) : null,
+          it.on_hold > 0 ? h('small', { class: 'muted', style: 'color:var(--tx-amber)' }, it.on_hold + (it.on_hold === 1 ? ' box' : ' boxes') + ' on hold: the website counts them once their lot is tasted and released (Lots).') : null,
           it.at_events ? h('small', { class: 'muted', style: 'color:var(--tx-amber)' }, it.at_events + ' ' + it.unit + ' are out at events (not on the shelf)') : null,
           h('div', { class: 'acts' },
             h('button', { class: 'btn small', onclick: function () { openNewDelivery(); } }, 'Receive'),   // biscuits arrive only through New delivery (lots, hold)
@@ -982,8 +1045,8 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
             state.role === 'owner' ? h('button', { class: 'btn ghost small red', onclick: function (e) { if (!confirm('Remove ' + it.name + ' from the list? Its history is kept.')) return; e.target.disabled = true; api('/admin/api/inventory/item/remove', { method: 'POST', body: { slug: it.slug } }).then(function (r) { toast(r.ok ? it.name + ' removed from the list' : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); }); } }, 'Remove') : null));
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
-      var body = [chanBox, h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: New delivery when biscuits arrive (each lot waits on hold until it is tasted and released), Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
-        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { openNewDelivery(); } }, 'New delivery'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
+      var body = [chanBox, needBox, h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: New delivery when biscuits arrive (each lot waits on hold until it is tasted and released), Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { openNewDelivery(); } }, 'New delivery'), h('button', { class: 'btn ghost small', onclick: function () { openLots(); } }, 'Lots'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { invPick('Rename lot', invRenameLot); } }, 'Rename lot') : null),
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
           return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
@@ -1379,37 +1442,418 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     openDelivery(d.id, { over: 'dlSavedNote', failed: function () { var t = $('dlSavedNote'); if (t) t.textContent = 'Open it again from Stock when you have signal.'; } });
   }
 
-  // The delivery page (read only for now): bill, part, arrival, each lot with its status, what to raise with Krazy Bakers, notes.
+  // The delivery page: bill, part, arrival, the photos of the bill, each lot with its status and (on hold) Release, what to raise with
+  // Krazy Bakers, notes, and Correct whole delivery while the server allows it (canCorrect). Reached from a lot page (Stock, Lots).
   // opts.over: an element id that must still be on screen (the person may have moved on: then nothing is drawn over them);
-  // opts.failed: called instead of a toast when the page cannot be loaded.
+  // opts.failed: called instead of a toast when the page cannot be loaded; opts.note: a line to show at the top (after a Release).
   function openDelivery(id, opts) {
     opts = opts || {};
     var gone = function () { return !!opts.over && !$(opts.over); };
     var fail = function (msg) { if (gone()) return; if (opts.failed) opts.failed(msg); else toast(msg, 6000); };
+    var again = function (note) { openDelivery(id, { note: note }); };
     api('/admin/api/stock/deliveries/' + encodeURIComponent(id || '')).then(function (j) {
       if (gone()) return;
       if (!j.ok) return fail(j.error || 'Could not open the delivery.');
       var d = j.delivery || {};
       var lines = (j.lots || []).map(function (l) {
-        var st = DL_STATUS[l.status] || [l.status || 'Unknown', 'b-unpaid'];
-        return h('div', { class: 'line dlotline' },
+        var st = lotChip(l.status);
+        return h('div', { class: 'line dlotline', 'data-code': l.code, 'data-slug': l.slug },
           h('div', { class: 'dlotmain' }, h('b', { class: 'dlcode' }, l.code),
             h('small', {}, [l.name || DL_NAME[l.slug] || l.slug, l.good != null ? l.good + ' good boxes' : null, l.perGoodPaise != null ? dlRs(l.perGoodPaise) + ' a box' : null].filter(Boolean).join(' · ')),
-            l.websiteStop ? h('small', {}, 'Website stops ' + dlWords(l.websiteStop) + ' · last ship ' + dlWords(l.lastShip) + ' · best before ' + dlWords(l.bestBefore)) : null),
+            l.websiteStop ? h('small', {}, 'Website stops ' + dlWords(l.websiteStop) + ' · last ship ' + dlWords(l.lastShip) + ' · best before ' + dlWords(l.bestBefore)) : null,
+            h('div', { class: 'acts' }, l.status === 'hold' ? h('button', { class: 'btn small', type: 'button', onclick: function () { openRelease(l, again); } }, 'Release') : null,
+              h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openLot(l.code, l.slug); } }, 'Open lot'))),
           h('span', { class: 'badge ' + st[1] }, st[0]));
       });
       var held = (j.lots || []).some(function (l) { return l.status === 'hold'; });
       var raise = (j.toRaise || []).map(function (t) { return h('div', { class: 'line' }, h('span', {}, (DL_NAME[t.slug] || t.slug) + ': bill ' + t.invoice + ', counted ' + t.counted)); });
       var notes = (j.notes || []).map(function (t) { return h('p', { class: 'muted' }, t); });
       if (d.note) notes.push(h('p', {}, d.note));
+      // Correct whole delivery (spec 6.7): a reason, then the form opens filled in with a fresh receipt id
+      var fix = null;
+      if (j.canCorrect && d.status !== 'void') {
+        fix = h('div', { id: 'dcBox' });
+        var start = h('button', { class: 'btn ghost small', type: 'button', onclick: function () {
+          var reason = h('input', { id: 'dc-reason', autocomplete: 'off', placeholder: 'For example: typed the wrong count' });
+          var err = h('div', { class: 'dlerr', id: 'dc-err', role: 'alert' });
+          var go = h('button', { class: 'btn red small', id: 'dc-go', type: 'button', onclick: function () {
+            if (!dlTrim(reason.value)) { err.textContent = 'Add a reason.'; return; }
+            err.textContent = '';
+            stockSend(go, '/admin/api/stock/deliveries/' + encodeURIComponent(d.id) + '/correct', { reason: reason.value }, function (r) {
+              refreshLow();
+              toast('This delivery no longer counts. Fix the form and save it again.', 7000);
+              openNewDelivery(r.prefill || {});
+            }, function (r) { err.textContent = r.error || 'Something went wrong. Try again.'; });
+          } }, 'Correct it');
+          fix.textContent = '';
+          fix.appendChild(h('div', { class: 'sec' }, h('p', { class: 'muted', style: 'margin-top:0' }, 'The whole delivery stops counting, and the form opens filled in so you can change it and save it again.'),
+            h('div', { class: 'dlf' }, h('label', { for: 'dc-reason' }, 'Why? (needed)'), reason), err,
+            h('div', { class: 'acts' }, go, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { fix.textContent = ''; fix.appendChild(start); } }, 'Cancel'))));
+        } }, 'Correct whole delivery');
+        fix.appendChild(start);
+      }
+      var thumbs = photoThumbs(d.photos);
       invShow('Delivery ' + (d.billNo || '') + (d.part > 1 ? ', part ' + d.part : ''), [
+        opts.note ? h('div', { class: 'hint', role: 'status' }, opts.note) : null,
         h('div', { class: 'muted' }, [d.supplier || 'Krazy Bakers', 'part ' + (d.part || 1), d.arrivedOn ? 'arrived ' + dlWords(d.arrivedOn) : null, d.cartons != null ? d.cartons + ' cartons' : null, d.savedBy ? 'saved by ' + d.savedBy + (d.savedAt ? ', ' + when(d.savedAt) : '') : null].filter(Boolean).join(' · ')),
         d.status === 'void' ? h('p', { class: 'note' }, 'This entry was corrected: it no longer counts.') : null,
+        thumbs ? section('Photos of the bill', thumbs) : null,
         section('Lots', lines.length ? lines : h('p', { class: 'muted' }, 'No lots.'), held ? h('p', { class: 'muted' }, 'On hold: the boxes are on the shelf, but the website does not count them until each lot is tasted and released.') : null),
         raise.length ? section('To raise with Krazy Bakers', raise) : null,
         notes.length ? section('Notes', notes) : null,
-        h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
+        fix,
+        h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openLots(); } }, 'Lots'), h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
     }, function () { fail('No signal. The delivery is saved: open it again when you have signal.'); });
+  }
+
+  // ── Lots, the lot page, Release, Hold, Reject, Fix lot, Broken while cartoning, stock Needs attention (spec 6.5-6.8, 6.12) ──
+  // Staff and owner see every page; the owner-only buttons (Hold, Reject, Fix lot, Throw away expired, Assign lot, Mark checked,
+  // Pack anyway) are not drawn for staff, and the server refuses them anyway.
+  var lotChip = function (status) { return DL_STATUS[status] || (status == null ? ['Released', 'b-delivered'] : [String(status), 'b-unpaid']); };   // no status = a lot from before lots began: it counts as released
+  var boxesText = function (n) { return n + (Number(n) === 1 ? ' box' : ' boxes'); };
+  // POST from a stock button: the button is disabled while it sends (a double tap cannot send twice) and comes back on a failure.
+  function stockSend(btn, path, body, ok, failed) {
+    if (btn) btn.disabled = true;
+    return api(path, { method: 'POST', body: body || {} }).then(function (j) {
+      if (!j.ok) { if (btn) btn.disabled = false; return failed ? failed(j) : toast(j.error || 'Something went wrong. Try again.', 6000); }
+      ok(j);
+    }, function () { if (btn) btn.disabled = false; if (failed) failed({ error: 'No signal. Nothing was saved: try again.' }); else toast('No signal. Nothing was saved: try again.', 6000); });
+  }
+  // The photos of a bill, through a link that lasts 10 minutes (private bucket). Tap one to see it full width.
+  function photoThumbs(paths) {
+    if (!paths || !paths.length) return null;
+    return h('div', { class: 'dlthumbs' }, paths.map(function (p, i) {
+      var img = h('img', { class: 'dlthumb', alt: 'Photo ' + (i + 1) + ' of the bill' });
+      img.addEventListener('click', function () { img.classList.toggle('big'); });
+      api('/admin/api/stock/photo?path=' + encodeURIComponent(p)).then(function (r) { if (r.ok && r.url) img.setAttribute('src', r.url); else img.alt = 'This photo could not be shown'; }, function () { img.alt = 'No signal: the photo could not be shown'; });
+      return img;
+    }));
+  }
+  function lotCard(l, extra) {
+    var st = l.status === undefined ? null : lotChip(l.status), d = l.daysToStop;
+    var stop = d == null ? null : d > 1 ? 'website stops in ' + d + ' days' : d === 1 ? 'website stops tomorrow' : d === 0 ? 'website stops today' : 'off the website since ' + dlWords(l.websiteStop);
+    return h('button', { class: 'card lotcard', type: 'button', 'data-code': l.code, 'data-slug': l.slug, onclick: function () { openLot(l.code, l.slug); } },
+      h('div', { class: 'top' }, h('span', { class: 'dlcode' }, l.code), st ? h('span', { class: 'badge ' + st[1] }, st[0]) : null),
+      h('div', { class: 'meta' }, [l.name || DL_NAME[l.slug] || l.slug, extra || (l.onHand != null ? l.onHand + ' on hand' : null), stop].filter(Boolean).join(' · ')));
+  }
+  function lotChoices(list) {
+    return h('div', { class: 'sec' }, h('h3', {}, 'Which flavour?'), h('p', { class: 'muted', style: 'margin-top:0' }, 'This code is on more than one flavour. Choose one.'),
+      h('div', { class: 'dlchoice' }, list.map(function (c) { return h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openLot(c.code, c.slug); } }, c.name || DL_NAME[c.slug] || c.slug); })));
+  }
+  var lotBack = function () { return h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openLots(); } }, 'Back to Lots'), h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock')); };
+
+  // Stock > Lots: newest bake first (Untraced last), each with its chip, boxes on hand and days to the website stop; the search box.
+  function openLots(note) {
+    api('/admin/api/stock/lots').then(function (j) {
+      if (!j.ok) return toast(j.error || 'Could not load the lots.', 6000);
+      var all = j.lots || [], own = state.role === 'owner';
+      var qIn = h('input', { id: 'lotQ', type: 'search', autocomplete: 'off', autocapitalize: 'characters', placeholder: 'Code, sticker code, Krazy Bakers batch or order ID', 'aria-label': 'Search lots' });
+      var found = h('div', { id: 'lotFound', 'aria-live': 'polite' });
+      var find = h('button', { class: 'btn small', type: 'button', onclick: function () { lotSearch(qIn.value, found, find, all); } }, 'Find');
+      qIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') find.click(); });
+      var cards = all.map(function (l) {
+        if (l.code == null) return h('div', { class: 'card lotcard dim' }, h('div', { class: 'top' }, h('span', {}, l.name)), h('div', { class: 'meta' }, l.onHand + ' on hand · older lines with no lot, shown together, never guessed'));
+        return lotCard(l);
+      });
+      invShow('Lots', [note ? h('div', { class: 'hint', role: 'status' }, note) : null,
+        h('div', { class: 'srch' }, qIn, find), found,
+        own ? h('div', { class: 'acts', style: 'margin:0 0 10px' }, h('button', { class: 'btn ghost red small', type: 'button', onclick: function (e) { throwExpired(all, e.currentTarget); } }, 'Throw away expired')) : null,
+        cards.length ? h('div', {}, cards) : h('p', { class: 'muted' }, 'No lots yet.'),
+        h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
+    }, function () { toast('No signal. Try again.', 6000); });
+  }
+  // Search (spec 6.8): a code opens its lot page; a code on several flavours asks which; an order ID lists the lots in that order.
+  function lotSearch(q, box, btn, all) {
+    var t = dlTrim(q); box.textContent = '';
+    if (!t) return;
+    btn.disabled = true;
+    api('/admin/api/stock/search?q=' + encodeURIComponent(t)).then(function (j) {
+      btn.disabled = false;
+      if (!j.ok) return box.appendChild(h('p', { class: 'dlerr' }, j.error || 'Could not search just now.'));
+      if (j.lot) return openLot(j.lot.code, j.lot.slug);
+      if (j.choose) return box.appendChild(lotChoices(j.choose));
+      if (j.orderLots) return box.appendChild(h('div', { class: 'sec' }, h('h3', {}, 'Lots in ' + t.toUpperCase()), j.orderLots.map(function (x) {
+        var nm = DL_NAME[x.slug] || x.slug, l = (all || []).filter(function (y) { return y.code === x.code && y.slug === x.slug; })[0];
+        return x.code ? lotCard(l || { code: x.code, slug: x.slug, name: nm }, boxesText(x.boxes) + ' in this order') : h('div', { class: 'line' }, h('span', {}, nm + ': ' + boxesText(x.boxes) + ' packed without a lot (Needs attention)'));
+      })));
+      box.appendChild(h('p', { class: 'muted' }, 'Nothing found for ' + t + '.'));
+    }, function () { btn.disabled = false; box.appendChild(h('p', { class: 'dlerr' }, 'No signal. Try again.')); });
+  }
+  // Owner: write off every box past its best before (EXPIRED rows). Asks first, naming the lots that look past it on this list.
+  function throwExpired(all, btn) {
+    var today = dlToday(), old = all.filter(function (l) { return l.code && l.bestBefore && l.bestBefore < today && l.onHand > 0; });
+    if (!confirm(old.length ? 'Past their best before: ' + old.map(function (l) { return l.code + ' (' + (l.name || l.slug) + ', ' + boxesText(l.onHand) + ')'; }).join(', ') + '.\n\nThrow them away? They are written off as expired.' : 'No lot on this list looks past its best before. Check, and throw away anything that is?')) return;
+    stockSend(btn, '/admin/api/stock/expired', {}, function (r) {
+      var ls = r.lines || [];
+      if (ls.length) { refreshLow(); chanLater(); }
+      openLots(ls.length ? 'Thrown away: ' + ls.map(function (x) { return x.code + ' (' + (DL_NAME[x.slug] || x.slug) + '), ' + boxesText(x.qty); }).join('; ') + '.' : 'Nothing is past its best before, so nothing was thrown away.');
+    });
+  }
+
+  // The lot page (spec 6.8): everything lotPage returns, its delivery, and the buttons. opts.note: a line at the top (after an action).
+  function openLot(code, slug, opts) {
+    opts = opts || {};
+    api('/admin/api/stock/lots/' + encodeURIComponent(code) + (slug ? '?slug=' + encodeURIComponent(slug) : '')).then(function (j) {
+      if (j.choose) return invShow('Which flavour?', [lotChoices(j.choose), lotBack()]);
+      if (!j.ok) return toast(j.error || 'Could not open the lot.', 6000);
+      drawLot(j, opts.note);
+    }, function () { toast('No signal. Try again.', 6000); });
+  }
+  function drawLot(p, note) {
+    var L = p.lot || {}, own = state.role === 'owner', st = lotChip(L.status), n = p.numbers || {}, dt = p.dates || {}, dv = p.delivery;
+    var again = function (msg) { openLot(L.code, L.slug, { note: msg }); };
+    var lot = { code: L.code, slug: L.slug, name: L.name, onHand: n.onHand, good: n.good };
+    var live = L.status !== 'rejected' && L.status !== 'void', sellable = L.status === 'released' || L.status == null;
+    var cmdBox = h('div', {});
+    var about = [];
+    if (L.aliases && L.aliases.length) about.push((L.aliases.length === 1 ? 'Sticker code ' : 'Sticker codes ') + L.aliases.join(', '));
+    if (L.status === 'hold' && L.holdReason) about.push('On hold: ' + L.holdReason);
+    if (L.status === 'rejected' && L.rejectReason) about.push('Rejected: ' + L.rejectReason);
+    if (L.status === 'void') about.push('Its delivery was corrected: this lot no longer counts.');
+    if (L.releasedAt) about.push((L.status === 'released' ? 'Released' : 'Released before') + (L.releasedBy ? ' by ' + L.releasedBy : '') + ', ' + when(L.releasedAt) + (L.checkWeightG ? ' (one box weighed ' + L.checkWeightG + ' g)' : ''));
+    if (L.legacy) about.push('From before lots began: it counts as released.');
+    var left = [dt.daysToStop == null ? null : dt.daysToStop > 0 ? dt.daysToStop + (dt.daysToStop === 1 ? ' day' : ' days') + ' left on the website' : 'off the website', dt.daysToBestBefore == null ? null : dt.daysToBestBefore >= 0 ? dt.daysToBestBefore + ' to best before' : 'past its best before'].filter(Boolean).join(' · ');
+    var nums = [['Received', n.received], ['Broken', n.broken], ['Good', n.good], ['On hand', n.onHand], ['Website', n.website], ['Offline', n.offline], ['Fairs', n.fairs], ['Gifts', n.gifts], ['Samples', n.samples], ['Damaged', n.damaged], ['Returned', n.returned], ['Expired', n.expired]];
+    if (n.fixes) nums.push(['Count fixes', n.fixes]);
+    var buyers = (p.orders || []).map(function (b) {
+      return h('div', { class: 'line' }, h('div', { class: 'dlotmain' }, h('b', {}, b.orderId), h('small', {}, [b.name, b.phone ? '+' + String(b.phone).replace(/^\+/, '') : null, b.city].filter(Boolean).join(' · ')),
+        b.recipientName ? h('small', {}, 'A gift to ' + b.recipientName + (b.recipientPhone ? ' (+' + String(b.recipientPhone).replace(/^\+/, '') + ')' : '') + ': a recall goes to them, they have the box') : null,
+        h('small', {}, 'packed ' + (b.packedAt ? when(b.packedAt) : '(date not known)') + ' · ' + boxesText(b.boxes))));
+    });
+    var csvBtn = h('button', { class: 'btn ghost small', type: 'button', onclick: function (e) { buyersCsv(L, e.currentTarget); } }, 'Copy buyer list');
+    invShow(L.code, [
+      h('div', { class: 'lothead', id: 'lotHead' }, h('b', {}, L.name || DL_NAME[L.slug] || L.slug), h('span', { class: 'badge ' + st[1] }, st[0])),
+      note ? h('div', { class: 'hint', id: 'lotNote', role: 'status' }, note) : null,
+      about.length ? h('div', {}, about.map(function (t) { return h('div', { class: 'muted' }, t); })) : null,
+      h('div', { class: 'dldates' }, dlDate('Baked', dt.bakeDate), dlDate('Website stops', dt.websiteStop), dlDate('Last ship', dt.lastShip), dlDate('Best before', dt.bestBefore)),
+      left ? h('div', { class: 'muted' }, left) : null,
+      h('div', { class: 'acts' },
+        L.status === 'hold' ? h('button', { class: 'btn small', type: 'button', onclick: function () { openRelease(lot, again); } }, 'Release') : null,
+        own && sellable ? h('button', { class: 'btn ghost red small', type: 'button', onclick: function () { lotReasonForm(lot, 'hold', again); } }, 'Hold this lot') : null,
+        own && L.status === 'hold' && !L.releasedAt ? h('button', { class: 'btn ghost red small', type: 'button', onclick: function () { lotReasonForm(lot, 'reject', again); } }, 'Reject') : null,
+        own && live ? h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openFixLot(lot, dt, again); } }, 'Fix lot') : null,
+        sellable && n.onHand > 0 ? h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openBroken(lot, again); } }, 'Broken while cartoning') : null,
+        h('button', { class: 'btn ghost small', type: 'button', onclick: function () { showCmd(p.sticker, cmdBox); } }, 'Print stickers')),
+      cmdBox,
+      section('Delivery', dv ? [h('div', {}, ['Bill ' + dv.billNo + (dv.part > 1 ? ', part ' + dv.part : ''), dv.arrivedOn ? 'arrived ' + dlWords(dv.arrivedOn) : null, dv.savedBy ? 'received by ' + dv.savedBy : null].filter(Boolean).join(' · ')),
+        h('div', { class: 'muted' }, 'Krazy Bakers batch: ' + (dv.supplierBatch || 'not given')), photoThumbs(dv.photos),
+        h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openDelivery(dv.id); } }, 'Open the delivery'))]
+        : h('p', { class: 'muted' }, 'This lot came in before deliveries were recorded here.')),
+      section('Where the boxes went', h('div', { class: 'lotnums' }, nums.map(function (x) { return h('div', {}, h('b', {}, String(x[1] == null ? 0 : x[1])), h('span', {}, x[0])); })),
+        h('p', { class: 'muted', style: 'margin-bottom:0' }, 'Cost per good box ', h('b', {}, p.perGoodPaise != null ? dlRs(p.perGoodPaise) : 'not known'), p.perGoodPaise != null ? ' (biscuit and inbound freight; packaging not included)' : '')),
+      section('Website buyers (' + buyers.length + (buyers.length === 1 ? ' order)' : ' orders)'), buyers.length ? buyers : h('p', { class: 'muted' }, 'No website order has taken a box from this lot yet.'),
+        h('div', { class: 'acts' }, csvBtn), h('p', { class: 'muted', style: 'margin-bottom:0' }, 'A CSV file for a recall: order, buyer, phone, city, gift recipient, packed date, boxes.')),
+      lotBack()]);
+  }
+  // Print stickers (spec 6.9): the printer is on the Mac, so the page gives the command to run there.
+  function showCmd(cmd, box) {
+    box.textContent = '';
+    if (!cmd) return box.appendChild(h('p', { class: 'note', id: 'lotCmd', style: 'margin:8px 0' }, 'This lot has no sticker code. Fix the lot first.'));
+    box.appendChild(h('div', { class: 'lotcmd', id: 'lotCmd' }, cmd));
+    box.appendChild(h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { copyText(cmd, 'Command'); } }, 'Copy'), h('span', { class: 'muted' }, 'Run it on the Mac beside the sticker printer.')));
+  }
+  // Copy buyer list: the recall CSV, fetched with the session and saved as a file.
+  function buyersCsv(L, btn) {
+    btn.disabled = true;
+    fetch('/admin/api/stock/lots/' + encodeURIComponent(L.code) + '/buyers.csv' + (L.slug ? '?slug=' + encodeURIComponent(L.slug) : ''), { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+      .then(function (r) {
+        if (r.status === 401 && token) signOut(true);
+        if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || 'Could not make the list.'); });
+        var cd = (r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/);
+        return r.blob().then(function (b) { return { b: b, name: cd ? cd[1] : 'buyers-' + String(L.code).replace(/[^A-Za-z0-9-]/g, '') + '.csv' }; });
+      })
+      .then(function (x) {
+        btn.disabled = false;
+        var a = h('a', { href: URL.createObjectURL(x.b), download: x.name }); document.body.appendChild(a); a.click(); a.remove();
+        toast('Buyer list saved as ' + x.name, 4500);
+      }, function (e) { btn.disabled = false; toast(e && e.message && !/fetch/i.test(e.message) ? e.message : 'No signal. Try again.', 6000); });
+  }
+
+  // Release (staff and owner, spec 6.5 as changed 3 Nov and 8 Nov): one box tasted and weighed, an optional note. Packaging is a
+  // hand-kept list, so nothing else is asked. back(note): the page to return to (the lot or its delivery), with the server's warning.
+  function openRelease(l, back) {
+    var tick = h('input', { type: 'checkbox', id: 'rel-tasted' });
+    var w = h('input', { id: 'rel-weight', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off', placeholder: 'For example 252' });
+    var note = h('input', { id: 'rel-note', autocomplete: 'off', placeholder: 'Optional' });
+    var warn = h('p', { class: 'note', id: 'rel-wwarn', hidden: true, style: 'margin:6px 0 0' }, 'Under the 250 g on the pack: weigh a second box. You can still release.');
+    var err = h('div', { class: 'dlerr', id: 'rel-err', role: 'alert' });
+    var grams = function () { var t = dlTrim(w.value); return /^\d+$/.test(t) ? Number(t) : NaN; };
+    var go = h('button', { class: 'btn dlwide', id: 'rel-go', type: 'button', onclick: function () {
+      if (go.disabled) return;
+      err.textContent = '';
+      stockSend(go, '/admin/api/stock/lots/' + encodeURIComponent(l.code) + '/release', { slug: l.slug, tasted: true, weightG: grams(), note: note.value }, function (r) {
+        var ws = (r.warnings || []).join(' ');
+        toast('Released. The website counts these boxes within 30 seconds.' + (ws ? ' ' + ws : ''), 7000);
+        refreshLow(); chanLater();
+        back('Released.' + (ws ? ' ' + ws : ' The website counts these boxes within 30 seconds.'));
+      }, function (r) { if (r.choose) return invShow('Which flavour?', [lotChoices(r.choose), lotBack()]); err.textContent = r.error || 'Something went wrong. Try again.'; sync(); });
+    } }, 'Release');
+    var sync = function () {
+      var g = grams(), okW = g >= 100 && g <= 1000;
+      warn.hidden = !(okW && g < 250);
+      go.disabled = !(tick.checked && okW);
+      go.textContent = !tick.checked ? 'Tick that one box tasted OK' : !okW ? 'Enter the weight (100 to 1000 g)' : 'Release';
+    };
+    [tick, w].forEach(function (el) { el.addEventListener('input', sync); el.addEventListener('change', sync); });
+    invShow('Release ' + l.code, [
+      h('div', { class: 'muted' }, [l.name || DL_NAME[l.slug] || l.slug, l.good != null ? l.good + ' good boxes' : null, l.onHand != null && l.onHand !== l.good ? l.onHand + ' on hand' : null, 'on hold'].filter(Boolean).join(' · ')),
+      h('div', { class: 'sec' }, h('label', { class: 'dltick' }, tick, h('span', {}, 'Tasted one box: OK')),
+        h('div', { class: 'dlf' }, h('label', { for: 'rel-weight' }, 'Weight of one box (grams)'), w), warn,
+        h('div', { class: 'dlf' }, h('label', { for: 'rel-note' }, 'Note (optional)'), note)),
+      h('p', { class: 'muted' }, 'The website starts counting this lot within 30 seconds of Release, and Meta and Google follow. Your name is recorded with the check.'),
+      err, go,
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { back(); } }, 'Back'))]);
+    sync();
+  }
+  // Hold this lot (owner, any time, a complaint or a recall) and Reject (owner, only while on hold and never released): a reason is needed.
+  function lotReasonForm(l, kind, back) {
+    var hold = kind === 'hold';
+    var reason = h('input', { id: 'lr-reason', autocomplete: 'off', placeholder: hold ? 'For example: a customer complaint' : 'For example: stale smell' });
+    var err = h('div', { class: 'dlerr', id: 'lr-err', role: 'alert' });
+    var go = h('button', { class: 'btn red dlwide', id: 'lr-go', type: 'button', onclick: function () {
+      if (!dlTrim(reason.value)) { err.textContent = 'Add a reason.'; return; }
+      if (!hold && !confirm('Reject lot ' + l.code + '? Its ' + boxesText(l.onHand || 0) + ' are recorded as going back to Krazy Bakers, and it can never be sold.')) return;
+      err.textContent = '';
+      stockSend(go, '/admin/api/stock/lots/' + encodeURIComponent(l.code) + '/' + kind, { slug: l.slug, reason: reason.value }, function () {
+        refreshLow(); chanLater();
+        back(hold ? 'On hold. The website stops counting it and packing skips it until it is released again.' : 'Rejected. Its boxes are recorded as going back to Krazy Bakers.');
+      }, function (r) { if (r.choose) return invShow('Which flavour?', [lotChoices(r.choose), lotBack()]); err.textContent = r.error || 'Something went wrong. Try again.'; });
+    } }, hold ? 'Hold this lot' : 'Reject this lot');
+    invShow((hold ? 'Hold ' : 'Reject ') + l.code, [
+      h('p', { class: 'muted' }, hold ? 'For a complaint or a recall. The website stops counting this lot and packing skips it, until someone releases it again.' : 'The good boxes are recorded as going back to Krazy Bakers (on the bill). Only while the lot is on hold and was never released.'),
+      h('div', { class: 'dlf' }, h('label', { for: 'lr-reason' }, 'Why? (needed)'), reason), err, go,
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { back(); } }, 'Back'))]);
+  }
+  // Fix lot (owner, spec 6.7): a new bake date (the code and dates follow) or a new code. The old code stays as a sticker code.
+  function openFixLot(l, dt, back) {
+    var bake = h('input', { id: 'fx-bake', type: 'date', max: dlToday() });
+    var code = h('input', { id: 'fx-code', autocomplete: 'off', autocapitalize: 'characters', placeholder: 'Only if the code itself is wrong' });
+    var err = h('div', { class: 'dlerr', id: 'fx-err', role: 'alert' });
+    var go = h('button', { class: 'btn dlwide', id: 'fx-go', type: 'button', onclick: function () {
+      var nb = dlTrim(bake.value), nc = dlTrim(code.value).toUpperCase();
+      if (!nb && !nc) { err.textContent = 'Enter the new bake date or the new code.'; return; }
+      if (!confirm('Fix lot ' + l.code + (nb ? ': baked ' + dlWords(nb).replace(/ /g, ' ') : '') + (nc ? (nb ? ', ' : ': ') + 'code ' + nc : '') + '?\n\nIts boxes move to the new code. The old code still finds this lot.')) return;
+      err.textContent = '';
+      stockSend(go, '/admin/api/stock/lots/' + encodeURIComponent(l.code) + '/fix', { slug: l.slug, newBakeDate: nb || undefined, newCode: nc || undefined }, function (r) {
+        refreshLow(); chanLater();
+        openLot(r.to, l.slug, { note: 'Fixed: ' + r.from + ' is now ' + r.to + '. ' + (r.warning || '') });
+      }, function (r) { err.textContent = r.error || 'Something went wrong. Try again.'; });
+    } }, 'Fix lot');
+    invShow('Fix lot ' + l.code, [
+      h('p', { class: 'muted' }, 'Now baked ' + (dt && dt.bakeDate ? dlWords(dt.bakeDate) : '(not known)') + '. A new bake date gives the lot a new code and new dates. Stickers already printed carry the old code or date: reprint them after.'),
+      h('div', { class: 'dlf' }, h('label', { for: 'fx-bake' }, 'New bake date'), bake),
+      h('div', { class: 'dlf' }, h('label', { for: 'fx-code' }, 'Or a new code (optional)'), code), err, go,
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { back(); } }, 'Back'))]);
+  }
+  // Broken while cartoning (staff and owner, spec 6.6): boxes come off this lot with the reason repack. A photo is optional and goes
+  // through the same shrink and upload as New delivery.
+  function openBroken(l, back) {
+    var qty = h('input', { id: 'bk-qty', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off', placeholder: 'How many broke' });
+    var note = h('input', { id: 'bk-note', autocomplete: 'off', placeholder: 'Optional, for example dropped' });
+    var path = null, pstat = h('span', { class: 'muted', id: 'bk-pstat' }, 'No photo (optional)');
+    var file = h('input', { type: 'file', accept: 'image/*', class: 'dlfile', id: 'bk-photo' });
+    file.addEventListener('change', function () {
+      var f = (file.files || [])[0]; if (!f) return;
+      pstat.textContent = 'Sending the photo…';
+      dlPhoto(f, function (e, p) { file.value = ''; if (e) { pstat.textContent = e; return; } path = p; pstat.textContent = 'Photo added'; });
+    });
+    var err = h('div', { class: 'dlerr', id: 'bk-err', role: 'alert' });
+    var go = h('button', { class: 'btn dlwide', id: 'bk-go', type: 'button', onclick: function () {
+      var t = dlTrim(qty.value);
+      if (!/^\d+$/.test(t) || Number(t) < 1) { err.textContent = 'Enter how many boxes broke.'; return; }
+      err.textContent = '';
+      stockSend(go, '/admin/api/stock/lots/' + encodeURIComponent(l.code) + '/broken', { slug: l.slug, qty: Number(t), note: note.value, photo: path || undefined }, function () {
+        refreshLow(); chanLater();
+        back(boxesText(Number(t)) + ' taken off this lot (broken while cartoning).');
+      }, function (r) { err.textContent = r.error || 'Something went wrong. Try again.'; });
+    } }, 'Take them off');
+    invShow('Broken while cartoning: ' + l.code, [
+      h('p', { class: 'muted' }, 'Boxes that broke while they were put in cartons come off this lot (' + boxesText(l.onHand || 0) + ' on hand).'),
+      h('div', { class: 'dlf' }, h('label', { for: 'bk-qty' }, 'Boxes broken'), qty),
+      h('div', { class: 'dlf' }, h('label', { for: 'bk-note' }, 'Note (optional)'), note),
+      h('label', { for: 'bk-photo' }, 'Photo (optional)'), h('div', { class: 'dlprow' }, h('label', { for: 'bk-photo', class: 'btn ghost small dlphoto' }, 'Take a photo'), pstat), file,
+      err, go,
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { back(); } }, 'Back'))]);
+  }
+
+  // Needs attention, stock (spec 6.6): boxes packed without a lot (owner: Assign lot, from that flavour's lots that can still ship and
+  // have enough boxes), lots on hold, and packs whose lots were not checked or whose boxes were not taken off (owner: Mark checked).
+  var UNPLANNED_WORDS = { plan: 'Packed without checking lots: check which lot the boxes came from.', write: 'Packed, but the boxes were not taken off stock: count the shelf.' };
+  var unplannedKind = function (u) { return u.kind === 'write' || u.kind === 'plan' ? u.kind : (/not taken off stock/i.test(String(u.reason || '')) ? 'write' : 'plan'); };
+  function openStockAttention(note) {
+    Promise.all([api('/admin/api/stock/needs-lot'), api('/admin/api/stock/lots')]).then(function (rs) {
+      var nl = rs[0], ll = rs[1];
+      if (!nl.ok) return toast(nl.error || 'Could not load Needs attention.', 6000);
+      var own = state.role === 'owner', lots = ll.ok ? ll.lots || [] : [];
+      var held = lots.filter(function (l) { return l.code && l.status === 'hold' && l.onHand > 0; });
+      state.needsLot = { lines: nl.lines || [], unplanned: nl.unplanned }; state.held = held.length; renderNeeds();
+      var lines = (nl.lines || []).map(function (x) {
+        var nm = DL_NAME[x.slug] || x.slug, b = boxesText(x.boxes), ctl;
+        var can = lots.filter(function (l) { return l.code && l.slug === x.slug && l.canShip && l.onHand >= x.boxes; })
+          .sort(function (a, c) { return String(a.bestBefore || '9').localeCompare(String(c.bestBefore || '9')); });   // oldest first, as packing takes them
+        if (!own) ctl = h('p', { class: 'muted', style: 'margin:0' }, 'Only the owner can assign a lot.');
+        else if (!can.length) ctl = h('p', { class: 'muted', style: 'margin:0' }, 'No ' + nm + ' lot that can ship has ' + b + '. Release a lot first, then assign it here.');
+        else {
+          var pick = h('select', { class: 'nlpick', 'aria-label': 'Lot for ' + x.orderId }, can.map(function (l) { return h('option', { value: l.code }, l.code + ' (' + l.onHand + ' on hand)'); }));
+          var go = h('button', { class: 'btn small', type: 'button', onclick: function () {
+            stockSend(go, '/admin/api/orders/' + encodeURIComponent(x.orderId) + '/assign-lot', { slug: x.slug, lot: pick.value }, function (j) { refreshLow(); openStockAttention(x.orderId + ': ' + b + ' now from lot ' + (j.lot || pick.value) + '.'); });
+          } }, 'Assign lot');
+          ctl = h('div', { class: 'acts' }, pick, go);
+        }
+        return h('div', { class: 'line nlline', 'data-order': x.orderId, 'data-slug': x.slug },
+          h('div', { class: 'dlotmain' }, h('b', {}, x.orderId), h('small', {}, nm + ': ' + b + ' packed without a lot' + (x.packedAt ? ', ' + when(x.packedAt) : ''))),
+          ctl, h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openOrder(x.orderId); } }, 'Open order')));
+      });
+      var heldCards = held.map(function (l) { var c = lotCard(l); c.classList.add('heldlot'); return c; });
+      var ups = Array.isArray(nl.unplanned) ? nl.unplanned.map(function (u) {
+        var mc = own ? h('button', { class: 'btn small', type: 'button', onclick: function () {
+          stockSend(mc, '/admin/api/orders/' + encodeURIComponent(u.orderId) + '/stock-checked', {}, function () { refreshLow(); openStockAttention(u.orderId + ' marked checked.'); });
+        } }, 'Mark checked') : null;
+        return h('div', { class: 'line upline', 'data-order': u.orderId },
+          h('div', { class: 'dlotmain' }, h('b', {}, u.orderId), h('small', {}, 'Packed ' + when(u.at)), h('small', {}, UNPLANNED_WORDS[unplannedKind(u)]), u.note ? h('small', {}, 'Owner\'s note: ' + u.note) : null),
+          h('div', { class: 'acts' }, mc, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openOrder(u.orderId); } }, 'Open order')));
+      }) : null;
+      var body = [note ? h('div', { class: 'hint', role: 'status' }, note) : null];
+      if (lines.length) body.push(section('Boxes packed without a lot', h('p', { class: 'muted', style: 'margin-top:0' }, 'Packed with Pack anyway, or when the lot check could not run. Give each the lot its boxes came from, so a recall finds the buyer.'), lines));
+      if (held.length) body.push(section('Lots on hold', h('p', { class: 'muted', style: 'margin-top:0' }, 'On the shelf, but not on the website and not packed until someone tastes, weighs and releases them.'), heldCards));
+      if (ups === null) body.push(section('Packs not checked against lots', h('p', { class: 'muted' }, 'Could not read these just now. Try again later.')));
+      else if (ups.length) body.push(section('Packs not checked against lots', h('p', { class: 'muted', style: 'margin-top:0' }, 'Packed while the lot check could not run, so nothing was blocked. Look at each one' + (own ? ', then mark it checked.' : '; the owner marks it checked.')), ups));
+      if (!lines.length && !held.length && ups && !ups.length) body.push(h('p', { class: 'muted' }, 'Nothing in stock needs attention right now.'));
+      body.push(h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openLots(); } }, 'Lots'), h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock')));
+      invShow('Needs attention', body);
+    }, function () { toast('No signal. Try again.', 6000); });
+  }
+  // The Packed refusal (spec 6.6): why the boxes cannot come from a lot. The owner can Pack anyway with a note (3 characters or more):
+  // the short boxes go out without a lot and wait in Needs attention for Assign lot. Staff see the reason only (the server refuses them).
+  function packRefusal(o, msg, after, cancel) {
+    var own = state.role === 'owner', stop = function (e) { e.stopPropagation(); };
+    var text = h('span', {}, msg), box = h('div', { class: 'refuse', role: 'alert', onclick: stop }, h('b', {}, 'Not packed. '), text);
+    if (!own) {
+      box.appendChild(h('p', { class: 'muted', style: 'margin:6px 0 0' }, 'Release the lot first (Stock, Lots), then pack again. Only the owner can pack anyway.'));
+      box.appendChild(h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function (e) { stop(e); cancel(); } }, 'OK')));
+      return box;
+    }
+    var id = 'pk-' + o.id, note = h('input', { class: 'pknote', id: id, autocomplete: 'off', placeholder: 'For example fair stock' });
+    var go = h('button', { class: 'btn red small', type: 'button', disabled: 'disabled', onclick: function (e) {
+      stop(e);
+      var t = dlTrim(note.value); if (t.length < 3) return;
+      stockSend(go, '/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'packed', override: t }, function () {
+        delete state.refused[o.id];
+        after('Packed anyway. The boxes with no lot wait in Needs attention until you assign a lot.');
+      }, function (j) { if (j.stockShort) { text.textContent = j.error; state.refused[o.id] = j.error; } toast(j.error || 'Something went wrong. Try again.', 6000); sync(); });
+    } }, 'Pack anyway');
+    var sync = function () { go.disabled = dlTrim(note.value).length < 3; };
+    note.addEventListener('input', sync); note.addEventListener('change', sync);
+    box.appendChild(h('label', { for: id }, 'Pack anyway: note (needed)')); box.appendChild(note);
+    box.appendChild(h('div', { class: 'acts' }, go, h('button', { class: 'btn ghost small', type: 'button', onclick: function (e) { stop(e); cancel(); } }, 'Cancel')));
+    return box;
+  }
+  // Mark packed (card and order sheet): a 409 with stockShort is the refusal, shown in place; anything else is a toast.
+  function packNow(o, btn, refused, after) {
+    stockSend(btn, '/admin/api/orders/' + encodeURIComponent(o.id) + '/advance', { to: 'packed' }, function () { delete state.refused[o.id]; after(o.id + ' packed'); }, function (j) {
+      if (j.stockShort) { state.refused[o.id] = j.error; return refused(j.error); }
+      toast(j.error || 'Failed', 6000);
+    });
   }
   function invForm(title, it, fields, onSave, saveLabel) {
     var save = h('button', { class: 'btn small', onclick: function (e) { e.target.disabled = true; onSave(function () { e.target.disabled = false; }); } }, saveLabel || 'Save');

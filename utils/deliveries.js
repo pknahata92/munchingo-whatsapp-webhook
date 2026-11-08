@@ -525,9 +525,12 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     const onHand = new Map();
     for (const r of w.ledger) if (r.lot_code != null) onHand.set(`${r.item_slug}|${r.lot_code}`, (onHand.get(`${r.item_slug}|${r.lot_code}`) || 0) + r.qty);
     const sumOf = (slug, codes) => codes.reduce((a, c) => a + (onHand.get(`${slug}|${c}`) || 0), 0);
+    // canShip: a website order can still be packed from it (released or legacy, today on or before the last ship date), so Assign lot
+    // offers only those lots (Task 12)
     const entry = (slug, code, status, bake, bb, qty) => {
-      const stop = bb ? lots.cutoffs(bb, w.s).websiteStop : null;
-      return { code, slug, name: w.products.get(slug), status, onHand: qty, bakeDate: bake, bestBefore: bb, websiteStop: stop, daysToStop: stop ? daysBetween(today, stop) : null };
+      const cut = bb ? lots.cutoffs(bb, w.s) : null;
+      return { code, slug, name: w.products.get(slug), status, onHand: qty, bakeDate: bake, bestBefore: bb, websiteStop: cut ? cut.websiteStop : null, daysToStop: cut ? daysBetween(today, cut.websiteStop) : null,
+        lastShip: cut ? cut.lastShip : null, canShip: lots.eligible({ status, best_before: bb }, 'pack', today, w.s) };
     };
     const out = [], covered = new Set();
     for (const l of w.lotRows) {
@@ -561,7 +564,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
         qty -= late.filter((r) => r.type === 'SALE' || lateSales.has(`${r.ref}|${r.item_slug}`)).reduce((a, r) => a + r.qty, 0);
       }
       const when = Number.isFinite(from) ? (() => { const d = lots.todayIst(from); return `${parseInt(d.slice(8, 10), 10)} ${MONTHS[parseInt(d.slice(5, 7), 10) - 1]} ${d.slice(0, 4)}`; })() : null;
-      out.push({ code: null, slug: null, name: when ? `Untraced (before ${when})` : 'Untraced (before lots began)', status: null, onHand: qty, bakeDate: null, bestBefore: null, websiteStop: null, daysToStop: null });
+      out.push({ code: null, slug: null, name: when ? `Untraced (before ${when})` : 'Untraced (before lots began)', status: null, onHand: qty, bakeDate: null, bestBefore: null, websiteStop: null, daysToStop: null, lastShip: null, canShip: false });
     }
     return out;
   }

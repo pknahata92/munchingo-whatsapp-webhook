@@ -192,6 +192,8 @@ router.post('/admin/api/inventory/item', owner, sw((req, inv) => inv.addItem(req
 router.post('/admin/api/inventory/item/remove', owner, sw((req, inv) => inv.removeItem({ slug: (req.body || {}).slug, isOwner: req.admin.role === 'owner' })));   // packaging only; archives, never deletes
 router.post('/admin/api/inventory/rename-lot', owner, sw((req, inv) => inv.renameLot({ ...(req.body || {}), actor: req.admin, isOwner: true })));
 router.post('/admin/api/inventory/level', owner, sw((req, inv) => inv.setLevel({ slug: (req.body || {}).slug, lowLevel: (req.body || {}).lowLevel })));
+// Owner: a pack whose lots were not checked (Needs attention) has been looked at. isOwner from the session, after the body is read.
+router.post('/admin/api/orders/:id/stock-checked', owner, wrap(async (req) => actions.markStockChecked({ ...enc(req), isOwner: req.admin.role === 'owner' })));
 router.post('/admin/api/orders/:id/assign-lot', owner, sw((req, inv) => inv.assignLot({ ...(req.body || {}), orderId: req.params.id, actor: req.admin, isOwner: req.admin.role === 'owner' })));   // { slug, lot }; isOwner after the spread
 router.post('/admin/api/orders/bulk-pack', wrap(async (req) => actions.bulkPack({ ids: (req.body || {}).ids, actor: req.admin })));
 router.post('/admin/api/picklist', wrap(async (req) => actions.pickList((req.body || {}).ids)));

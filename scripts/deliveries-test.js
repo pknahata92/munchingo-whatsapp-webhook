@@ -820,7 +820,10 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     // list order: newest bake first, hold lot first, Untraced last
     const names = lots0.map((l) => [l.code, l.slug]);
     eq(names, [[KC, 'atta-kesari'], ['15OCT26', 'atta-kesari'], ['15OCT26', 'atta-original'], [null, null]], 'newest bake first, undated legacy after, Untraced last');
-    eq(lots0[0], { code: KC, slug: 'atta-kesari', name: 'Atta Kesari', status: 'hold', onHand: 81, bakeDate: '2026-11-05', bestBefore: '2027-02-03', websiteStop: '2026-12-13', daysToStop: 36 }, 'list entry fields');
+    // Task 12 changed this check: each entry also says its last ship date and whether a website order can still be packed from it
+    // (released or legacy, and today on or before the last ship date), so Assign lot can offer only the lots that can ship
+    eq(lots0[0], { code: KC, slug: 'atta-kesari', name: 'Atta Kesari', status: 'hold', onHand: 81, bakeDate: '2026-11-05', bestBefore: '2027-02-03', websiteStop: '2026-12-13', daysToStop: 36, lastShip: '2026-12-15', canShip: false }, 'list entry fields');
+    eq([lots0[1].canShip, lots0[1].lastShip, lots0[2].canShip, lots0[2].lastShip, lots0[3].canShip, lots0[3].lastShip], [true, '2026-11-24', true, '2026-11-24', false, null], 'released and legacy lots before their last ship date can ship; Untraced never');
     eq([lots0[1].status, lots0[1].onHand, lots0[2].status, lots0[2].onHand, lots0[2].websiteStop], ['released', 49, null, 50, '2026-11-22'], 'legacy entries (Kesari 50 less the pack of 1; Original from the ledger)');
     eq([lots0[3].name, lots0[3].onHand, lots0[3].status], ['Untraced (before 30 Oct 2026)', 27, null], 'Untraced entry sums the lot-less rows');
 
@@ -833,6 +836,18 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     const n2 = lp2.numbers;
     eq(n2.received - n2.broken - n2.damaged - n2.website - n2.offline - n2.fairs - n2.gifts - n2.samples - n2.returned - n2.expired + n2.fixes, n2.onHand, 'numbers still balance after Fix lot');
     eq(await L.search('MNG-BBBB-1010'), { orderLots: [{ slug: 'atta-kesari', code: KN, boxes: 2 }] }, 'order search maps the old code to the fixed lot');
+  }
+  // Task 12: canShip in the lots list follows the packing rule (released or legacy, today on or before the last ship date)
+  {
+    const { st } = fresh(); const LR = require('../utils/lots');
+    const L = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    await st.insertLots([
+      { item_slug: 'atta-original', lot_code: 'MNGO-260920-01', bake_date: '2026-09-20', best_before: '2026-12-19', status: 'released' },   // last ship 30 Oct: past
+      { item_slug: 'atta-original', lot_code: 'MNGO-260928-01', bake_date: '2026-09-28', best_before: '2026-12-27', status: 'released' },   // last ship 7 Nov: today
+      { item_slug: 'atta-original', lot_code: 'MNGO-261101-01', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'rejected' }]);
+    await st.insert(['MNGO-260920-01', 'MNGO-260928-01', 'MNGO-261101-01'].map((c) => ({ item_slug: 'atta-original', qty: 5, type: 'RECEIVE', lot_code: c, best_before: LR.datesFor(LR.parseCode(c).bakeDate, LR.DEFAULTS).bestBefore, ref: 'b' })));
+    const by = Object.fromEntries((await L.listLots()).filter((l) => l.code).map((l) => [l.code, [l.lastShip, l.canShip]]));
+    eq(by, { 'MNGO-261101-01': ['2026-12-11', false], 'MNGO-260928-01': ['2026-11-07', true], 'MNGO-260920-01': ['2026-10-30', false] }, 'past its last ship date: no; on its last ship date: yes; rejected: no');
   }
   // Untraced: an undo of an old lot-less pack raises it back; a pack made after lots began (and its undo) stays out
   {

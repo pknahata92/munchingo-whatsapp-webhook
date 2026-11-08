@@ -383,6 +383,25 @@ async function login(email) {
     const u2 = await unplannedOf();
     ok(u2 && u2.length === 1 && /not taken off stock/i.test(u2[0].reason || '') && u2[0].note === 'stall stock', 'and it is listed as unplanned with the owner\'s note, since no lot-less line was written (' + JSON.stringify(u2) + ')');
     ok(!(await call('/stock/needs-lot', s.token)).j.lines.some((l) => l.orderId === I), 'the failed write left no lot-less line behind');
+    // Task 12: each unplanned pack says why ('plan': the lots were not checked; 'write': the boxes were not taken off), and the owner
+    // marks it checked (POST /orders/:id/stock-checked, owner only), which hides that pack until it is packed again
+    ok(u1 && u1[0] && u1[0].kind === 'plan' && u2 && u2[0] && u2[0].kind === 'write', 'each unplanned pack says why: plan or write (' + JSON.stringify([u1 && u1[0] && u1[0].kind, u2 && u2[0] && u2[0].kind]) + ')');
+    ok((await call(`/orders/${I}/stock-checked`, s.token, {})).s === 403, 'staff cannot mark a pack checked');
+    ok((await call(`/orders/${I}/stock-checked`, s.token, { isOwner: true, role: 'owner' })).s === 403, 'a claimed isOwner or role changes nothing');
+    const oc = await call(`/orders/${I}/stock-checked`, o.token, {});
+    ok(oc.j.ok && JSON.stringify(await unplannedOf()) === '[]', 'the owner marks it checked and it leaves the unplanned list (' + oc.s + ' ' + JSON.stringify(oc.j) + ')');
+    const ce = ((await call(`/orders/${I}`, o.token)).j.order.events || []).filter((e) => e.event === 'stock_unplanned_checked');
+    ok(ce.length === 1 && ce[0].by === 'owner@example.com' && ce[0].meta && u2 && u2[0] && ce[0].meta.at === u2[0].at, 'the timeline records who checked it, for that pack (' + JSON.stringify(ce) + ')');
+    const twice = await call(`/orders/${I}/stock-checked`, o.token, {});
+    ok(twice.s === 409 && /no pack/i.test(twice.j.error || ''), 'marking it again is refused in plain words (' + twice.s + ' ' + twice.j.error + ')');
+    ok((await call('/orders/MNG-NOPE-0000/stock-checked', o.token, {})).s === 404, 'an unknown order is a 404');
+    // packed again after an undo, and again not checked: the old check does not hide the new pack
+    ok((await call(`/orders/${I}/undo`, o.token, {})).j.state === 'topack', 'setup: the pack is undone');
+    await devStock({ planFails: true });
+    const tp = await call(`/orders/${I}/advance`, s.token, { to: 'packed' });
+    await devStock({ planFails: false });
+    const u3 = await unplannedOf();
+    ok(tp.j.ok && u3 && u3.length === 1 && u3[0].kind === 'plan', 'the new pack is listed again (' + JSON.stringify(u3) + ')');
   }
   // Task 6b: packaging is a hand-kept list. Remove = archive, owner only; adding the same name brings it back.
   {
@@ -477,6 +496,11 @@ async function login(email) {
     ok(sh.s === 409 && Array.isArray(sh.j.choose) && sh.j.choose.length >= 2 && sh.j.choose[0].code === '15OCT26' && sh.j.choose[0].slug && sh.j.choose[0].name, 'a shared code answers 409 with the choose list (' + sh.s + ' ' + JSON.stringify(sh.j).slice(0, 200) + ')');
     const sh1 = await call('/stock/lots/15OCT26?slug=atta-kesari', s.token);
     ok(sh1.s === 200 && sh1.j.lot.slug === 'atta-kesari', 'with ?slug= the shared code opens that flavour');
+    // Task 12: the practice admin mirrors the migration's backfill: lot 15OCT26 has a released row per flavour, the sticker code an alias
+    const al = await call('/stock/search?q=' + enc('MNGK-261016-01'), s.token);
+    ok(al.s === 200 && al.j.lot && al.j.lot.code === '15OCT26' && al.j.lot.slug === 'atta-kesari', 'search by the sticker code MNGK-261016-01 finds lot 15OCT26 of Kesari (' + JSON.stringify(al.j) + ')');
+    const alp = await call('/stock/lots/' + enc('MNGK-261016-01'), s.token);
+    ok(alp.s === 200 && alp.j.lot.code === '15OCT26' && alp.j.lot.status === 'released' && alp.j.lot.legacy === false && (alp.j.lot.aliases || []).includes('MNGK-261016-01') && alp.j.dates.bakeDate === '2026-10-15', 'its lot page: released, bake date from the code, the sticker code as an alias (' + JSON.stringify(alp.j.lot) + ')');
     // CSV
     const csvRes = await fetch(B + `/stock/lots/${enc(lo.code)}/buyers.csv`, { headers: { Authorization: 'Bearer ' + s.token } });
     const csvText = await csvRes.text();

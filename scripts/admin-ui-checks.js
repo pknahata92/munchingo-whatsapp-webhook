@@ -988,5 +988,313 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     t.close();
   });
 
+  // Task 12: the delivery page (Release, photos, Correct), Lots and the lot page with its buttons, the Release and Fix lot forms, the
+  // Packed refusal with the owner's Pack anyway, Assign lot, and the stock items in Needs attention. Phone width 375 px. Lots are made
+  // the real way (deliveries saved by staff through the API); bake dates are counted back from today's IST date, never fixed.
+  list.push(async () => {
+    const IST = 330 * 60000;
+    const istDay = (n) => new Date(Date.now() + IST - n * 86400000).toISOString().slice(0, 10);
+    const yymmdd = (iso) => iso.slice(2, 4) + iso.slice(5, 7) + iso.slice(8, 10);
+    const stamp = String(Date.now()).slice(-7);
+    const JPEG = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]).toString('base64');
+    // the same proxy for "no horizontal scroll" as the Task 11 check (jsdom draws nothing; the browser QA measures the real page)
+    const tooWide = (w) => {
+      const bad = [];
+      w.qa('#viewStock *').forEach((el) => {
+        const cs = w.win.getComputedStyle(el), name = el.id || el.className || el.tagName;
+        for (const p of ['width', 'minWidth']) { const m = /^([\d.]+)px$/.exec(cs[p] || ''); if (m && Number(m[1]) > 343) bad.push(name + ' ' + p + ' ' + cs[p]); }
+        if (/grid/.test(cs.display) && !/minmax\(0/.test(cs.gridTemplateColumns || '')) bad.push(name + ' grid ' + cs.gridTemplateColumns);
+        if (cs.whiteSpace === 'nowrap' && w.text(el).length > 24) bad.push(name + ' nowrap ' + w.text(el).slice(0, 30));
+      });
+      return bad;
+    };
+    const o = await openAdmin('owner', { width: 375 }), s = await openAdmin('staff', { width: 375 });
+    const tok = { o: o.win.localStorage.getItem('mngAdminToken'), s: s.win.localStorage.getItem('mngAdminToken') };
+    const api = async (p, who, body) => { const r = await fetch(BASE + p, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok[who] }, body: body ? JSON.stringify(body) : undefined }); return { s: r.status, j: await r.json().catch(() => ({})) }; };
+    const CONFIRM = ['cost_jump', 'invoice_mismatch', 'stop_soon', 'no_freight', 'large'];
+    let seq = 0;
+    const deliver = async (rows, extra) => {
+      const id = 'practice-t12-' + (++seq) + '-' + stamp, bill = 'T12-' + seq + '-' + stamp;
+      const r = await api('/admin/api/stock/deliveries', 's', { id, billNo: bill, bakeDate: istDay(1), cartons: 1, invoiceRupees: 1, freight: { porter: 100 }, confirm: CONFIRM, rows, ...(extra || {}) });
+      return { id, bill, r, code: (slug) => ((r.j.lots || []).find((l) => l.slug === slug) || {}).code };
+    };
+    const none = (w) => w.doc.createElement('i');
+    const page = (w) => w.text(w.q('#viewStock .pagehead'));
+    const btn = (w, re, root) => Array.from((root || w.q('#viewStock')).querySelectorAll('button')).find((b) => re.test(w.text(b)));
+    const toStock = async (w) => { w.q('#viewStock').textContent = ''; w.click(w.byText('#tabs .tab', /^Stock$/)); await until(() => page(w) === 'Stock' && !!btn(w, /^Lots$/), 5000, 'the stock page'); };
+    const toLots = async (w) => { await toStock(w); w.click(btn(w, /^Lots$/)); await until(() => page(w) === 'Lots' && w.qa('#viewStock .lotcard').length > 0, 5000, 'the Lots list'); };
+    const openLotCard = async (w, code) => { await toLots(w); w.click(w.qa('#viewStock .lotcard').find((x) => x.getAttribute('data-code') === code)); await until(() => page(w) === code, 5000, 'the lot page of ' + code); };
+    const rowText = (w, name) => { const l = w.qa('#viewStock .line').find((x) => w.text(x).indexOf(name) === 0); return l ? w.text(l) : ''; };
+    const webOf = (w, name) => { const t = rowText(w, name), m = /Website: (\d+) can still be ordered/.exec(t); return m ? Number(m[1]) : /Website: sold out/.test(t) ? 0 : null; };
+    const heldOf = (w, name) => { const m = /(\d+) box(?:es)? on hold/.exec(rowText(w, name)); return m ? Number(m[1]) : 0; };
+    const num = (w, label) => { const d = w.qa('#viewStock .lotnums div').find((x) => w.text(x.querySelector('span')) === label); return d ? Number(w.text(d.querySelector('b'))) : null; };
+    const cardOf = (w, id) => w.qa('#list .card').find((c) => w.text(c).includes(id));
+    const devStock = (b) => fetch(BASE + '/dev/stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+    let v, bad;
+
+    // ── Lots, search and the lot page of the old shared lot 15OCT26 (owner) ──
+    await toLots(o);
+    const kc = o.qa('#viewStock .lotcard').find((c) => c.getAttribute('data-code') === '15OCT26' && c.getAttribute('data-slug') === 'atta-kesari');
+    ok(!!kc && /Atta Kesari/.test(o.text(kc)) && /Released/.test(o.text(kc)) && /\d+ on hand/.test(o.text(kc)) && /website stops in \d+ days/.test(o.text(kc)), 'a lot card shows the code, flavour, chip, boxes on hand and days to the website stop (' + (kc ? o.text(kc) : 'missing') + ')');
+    ok(!!o.q('#lotQ') && !!btn(o, /^Find$/) && !!btn(o, /^Throw away expired$/), 'the Lots page has the search box, Find and (owner) Throw away expired');
+    bad = tooWide(o); ok(bad.length === 0, 'the Lots list has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
+    o.set(o.q('#lotQ'), 'MNGK-261016-01'); o.click(btn(o, /^Find$/));
+    await until(() => page(o) === '15OCT26', 5000, 'the lot page').catch(() => {});
+    v = o.text(o.q('#viewStock'));
+    ok(page(o) === '15OCT26' && /Atta Kesari/.test(o.text(o.q('#lotHead'))), 'search MNGK-261016-01 opens the 15OCT26 lot page of Kesari (' + page(o) + ')');
+    ok(/Sticker code MNGK-261016-01/.test(v) && /Released/.test(o.text(o.q('#lotHead'))), 'it shows the sticker code and the Released chip');
+    ok(['Baked', 'Website stops', 'Last ship', 'Best before'].every((x) => v.includes(x)) && ['Received', 'Broken', 'Good', 'On hand', 'Website', 'Offline', 'Fairs', 'Gifts', 'Samples', 'Damaged', 'Returned', 'Expired'].every((x) => num(o, x) != null), 'the four dates and the twelve numbers');
+    ok(/Website buyers/.test(v), 'the website buyers section');
+    ok(!!btn(o, /^Hold this lot$/) && !!btn(o, /^Fix lot$/) && !!btn(o, /^Broken while cartoning$/) && !!btn(o, /^Print stickers$/) && !!btn(o, /^Copy buyer list$/) && !btn(o, /^Release$/) && !btn(o, /^Reject$/), 'a released lot: the owner has Hold this lot, Fix lot, Broken while cartoning, Print stickers and Copy buyer list; no Release or Reject');
+    bad = tooWide(o); ok(bad.length === 0, 'the lot page has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
+    o.click(btn(o, /^Print stickers$/));
+    ok(/This lot has no sticker code\. Fix the lot first\./.test(o.text(o.q('#viewStock'))), 'an old lot with no MNG code says it has no sticker code');
+    const got = []; o.win.HTMLAnchorElement.prototype.click = function () { got.push(this.getAttribute('download') || ''); };
+    o.click(btn(o, /^Copy buyer list$/)); await until(() => got.length > 0, 5000, 'the buyer list').catch(() => {});
+    ok(got.length === 1 && /\.csv$/.test(got[0]), 'Copy buyer list downloads a file whose name ends in .csv (' + got.join(',') + ')');
+    await toLots(o); o.set(o.q('#lotQ'), '15OCT26'); o.click(btn(o, /^Find$/));
+    await until(() => !!btn(o, /^Atta Original$/), 5000, 'the flavour picker').catch(() => {});
+    ok(['Atta Original', 'Atta Kesari', 'Atta Ajwain', 'Atta Sugar-Lite'].every((n) => !!btn(o, new RegExp('^' + n + '$'))), 'a code on four flavours asks which one');
+    if (btn(o, /^Atta Original$/)) o.click(btn(o, /^Atta Original$/));
+    await until(() => page(o) === '15OCT26' && /Atta Original/.test(o.text(o.q('#lotHead'))), 5000, 'the Original lot page').catch(() => {});
+    ok(page(o) === '15OCT26' && /Atta Original/.test(o.text(o.q('#lotHead'))), 'choosing Original opens its lot page');
+    await toLots(o); o.set(o.q('#lotQ'), 'ZZ-NOTHING'); o.click(btn(o, /^Find$/));
+    await until(() => /Nothing found for ZZ-NOTHING\./.test(o.text(o.q('#viewStock'))), 5000, 'the empty answer').catch(() => {});
+    ok(/Nothing found for ZZ-NOTHING\./.test(o.text(o.q('#viewStock'))), 'a search that finds nothing says so');
+
+    // ── two deliveries saved by staff: all four flavours with a bill photo (D), and one Original box (C, corrected later) ──
+    const ph = await api('/admin/api/stock/photo', 's', { dataUrl: JPEG });
+    const D = await deliver([{ slug: 'atta-ajwain', invoiceBoxes: 10, counted: 10, rateRupees: 85 }, { slug: 'atta-kesari', invoiceBoxes: 10, counted: 10, rateRupees: 100 }, { slug: 'atta-original', invoiceBoxes: 6, counted: 6, rateRupees: 85 }, { slug: 'atta-lite-sugar', invoiceBoxes: 4, counted: 4, rateRupees: 125 }], { photos: [ph.j.path], cartons: 2 });
+    const C = await deliver([{ slug: 'atta-original', invoiceBoxes: 1, counted: 1, rateRupees: 85 }]);
+    const KA = D.code('atta-ajwain'), KK = D.code('atta-kesari'), KO = D.code('atta-original'), KL = D.code('atta-lite-sugar'), KC = C.code('atta-original');
+    ok(D.r.j.ok && C.r.j.ok && [KA, KK, KO, KL, KC].every((c) => /^MNG[OKAL]-\d{6}-\d{2}$/.test(c || '')), 'setup: staff save two deliveries through the API (' + JSON.stringify([D.r.s, D.r.j.error, C.r.s, C.r.j.error]) + ')');
+
+    // ── owner: Release from the delivery page (tick, 252 g); the chip turns Released and the Website line counts the boxes ──
+    await toStock(o);
+    const webA0 = webOf(o, 'Atta Ajwain'), heldA0 = heldOf(o, 'Atta Ajwain');
+    ok(webA0 != null && heldA0 >= 10, 'setup: the Stock screen shows Ajwain\'s website number and its boxes on hold (' + webA0 + ', ' + heldA0 + ' on hold: ' + rowText(o, 'Atta Ajwain').slice(0, 200) + ')');
+    ok(o.qa('#needs .need, #stockNeeds .need').some((b) => /\d+\s*lots? on hold/.test(o.text(b))), 'Needs attention counts the lots on hold');
+    await openLotCard(o, KA);
+    v = o.text(o.q('#viewStock'));
+    ok(/On hold/.test(o.text(o.q('#lotHead'))) && !!btn(o, /^Release$/) && !!btn(o, /^Reject$/) && !!btn(o, /^Fix lot$/) && !btn(o, /^Hold this lot$/), 'a held lot (owner): On hold, with Release, Reject and Fix lot; no Hold');
+    ok(v.includes('Bill ' + D.bill) && !!btn(o, /^Open the delivery$/), 'the lot page names its delivery and links to it');
+    o.click(btn(o, /^Open the delivery$/));
+    await until(() => page(o).indexOf('Delivery ' + D.bill) === 0 && o.qa('#viewStock .dlotline').length === 4, 5000, 'the delivery page').catch(() => {});
+    let lines = o.qa('#viewStock .dlotline');
+    ok(lines.length === 4 && lines.every((l) => /On hold/.test(o.text(l.querySelector('.badge'))) && !!btn(o, /^Release$/, l)), 'the delivery page: four lots On hold, each with Release (' + lines.map((l) => o.text(l).slice(0, 40)).join(' | ') + ')');
+    await until(() => o.qa('#viewStock img.dlthumb').some((i) => /^data:image\/jpeg/.test(i.getAttribute('src') || '')), 4000, 'the photo').catch(() => {});
+    ok(o.qa('#viewStock img.dlthumb').some((i) => /^data:image\/jpeg/.test(i.getAttribute('src') || '')), 'the bill photo is shown through its signed link');
+    ok(!!btn(o, /^Correct whole delivery$/), 'Correct whole delivery is offered while every lot is on hold');
+    o.click(btn(o, /^Release$/, lines.find((l) => l.getAttribute('data-code') === KA)));
+    await until(() => !!o.q('#rel-go'), 4000, 'the release form');
+    ok(page(o) === 'Release ' + KA && o.q('#rel-go').disabled, 'the Release form opens, and Release waits for the tick and the weight');
+    ok(!/packaging|mono carton|stamp label/i.test(o.text(o.q('#viewStock'))), 'the Release form has no packaging lines (packaging is a hand-kept list)');
+    o.click(o.q('#rel-tasted')); ok(o.q('#rel-go').disabled, 'ticked but no weight: still disabled');
+    o.set(o.q('#rel-weight'), '252'); ok(!o.q('#rel-go').disabled && o.q('#rel-wwarn').hidden, 'tick and 252 g: Release is enabled, no weight warning');
+    bad = tooWide(o); ok(bad.length === 0, 'the Release form has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
+    o.click(o.q('#rel-go'));
+    ok(!o.q('#rel-go') || o.q('#rel-go').disabled, 'Release disables itself while sending');
+    const lineOf = (w, code) => w.qa('#viewStock .dlotline').find((l) => l.getAttribute('data-code') === code);
+    await until(() => page(o).indexOf('Delivery ') === 0 && /Released/.test(o.text((lineOf(o, KA) || none(o)).querySelector('.badge') || none(o))), 5000, 'the delivery page again').catch(() => {});
+    const la = lineOf(o, KA);
+    ok(!!la && /^Released$/.test(o.text(la.querySelector('.badge'))) && !btn(o, /^Release$/, la), 'the chip turns Released and its Release button goes');
+    await toStock(o);
+    await until(() => webOf(o, 'Atta Ajwain') === webA0 + 10, 4000, 'the website count').catch(() => {});
+    ok(webOf(o, 'Atta Ajwain') === webA0 + 10 && heldOf(o, 'Atta Ajwain') === heldA0 - 10, 'the Stock screen\'s Website line counts the 10 boxes, and 10 fewer are on hold (' + webA0 + ' -> ' + webOf(o, 'Atta Ajwain') + '; ' + heldA0 + ' -> ' + heldOf(o, 'Atta Ajwain') + ')');
+
+    // ── staff: Release (staff may release) shows the server's under-250 g warning; no owner buttons anywhere ──
+    await toLots(s);
+    ok(!btn(s, /^Throw away expired$/), 'staff have no Throw away expired');
+    await openLotCard(s, KO);
+    ok(!!btn(s, /^Release$/) && !!btn(s, /^Print stickers$/) && !btn(s, /^Reject$/) && !btn(s, /^Hold this lot$/) && !btn(s, /^Fix lot$/) && !btn(s, /^Broken while cartoning$/), 'staff on a held lot: Release and Print stickers; no Reject, Hold or Fix lot, and no Broken while cartoning (held boxes are not cartoned; the server refuses it)');
+    s.click(btn(s, /^Release$/)); await until(() => !!s.q('#rel-go'), 4000, 'the release form');
+    s.click(s.q('#rel-tasted')); s.set(s.q('#rel-weight'), '245');
+    ok(!s.q('#rel-wwarn').hidden && !s.q('#rel-go').disabled, 'under 250 g the form warns, and Release can still be sent');
+    const realS = s.win.fetch; let once = 0;
+    s.win.fetch = (u, opt) => { if (!once && /\/release$/.test(String(u)) && opt && opt.method === 'POST') { once++; return Promise.resolve(new Response(JSON.stringify({ ok: false, error: 'Practice: the server said no.' }), { status: 400, headers: { 'Content-Type': 'application/json' } })); } return realS(u, opt); };
+    s.click(s.q('#rel-go'));
+    await until(() => /Practice: the server said no\./.test(s.text(s.q('#rel-err'))), 4000, 'the refusal').catch(() => {});
+    ok(/Practice: the server said no\./.test(s.text(s.q('#rel-err'))) && !s.q('#rel-go').disabled, 'a refused Release shows the reason and the button comes back');
+    s.win.fetch = realS;
+    s.click(s.q('#rel-go'));
+    await until(() => page(s) === KO && /Released/.test(s.text(s.q('#lotHead'))), 5000, 'the released lot').catch(() => {});
+    ok(/One box weighed 245 g, under the 250 g on the pack\. Weigh a second box\./.test(s.text(s.q('#viewStock'))) && /Released/.test(s.text(s.q('#lotHead'))), 'staff release with 245 g: Released, with the server\'s warning on the lot page');
+    ok(!btn(s, /^Hold this lot$/) && !btn(s, /^Fix lot$/) && !btn(s, /^Release$/) && !!btn(s, /^Broken while cartoning$/), 'staff on a released lot: Broken while cartoning, and no Hold this lot or Fix lot');
+    s.click(btn(s, /^Broken while cartoning$/)); await until(() => !!s.q('#bk-go'), 4000, 'the broken form');
+    s.set(s.q('#bk-qty'), '1'); s.set(s.q('#bk-note'), 'dropped while cartoning');
+    s.win.__shrinkPhoto = () => Promise.resolve(JPEG);   // jsdom has no canvas; the server still checks the photo
+    const bf = s.q('#bk-photo'); Object.defineProperty(bf, 'files', { value: [new s.win.File(['x'], 'b.jpg', { type: 'image/jpeg' })], configurable: true }); bf.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+    await until(() => /Photo added/.test(s.text(s.q('#viewStock'))), 4000, 'the photo').catch(() => {});
+    ok(/Photo added/.test(s.text(s.q('#viewStock'))), 'the photo of the broken box goes through the same shrink and upload as New delivery');
+    s.click(s.q('#bk-go'));
+    await until(() => page(s) === KO && num(s, 'Damaged') === 1, 5000, 'the lot page').catch(() => {});
+    ok(num(s, 'Damaged') === 1 && num(s, 'On hand') === 5, 'Broken while cartoning: 1 damaged, 5 on hand (' + num(s, 'Damaged') + ', ' + num(s, 'On hand') + ')');
+    s.click(btn(s, /^Print stickers$/));
+    ok(s.text(s.q('#lotCmd')).indexOf('python3 make_stamp_labels.py --lot ' + KO + ' --qty original=5 --cols 3') === 0 && !!btn(s, /^Copy$/), 'Print stickers shows the command for this lot with a Copy button (' + s.text(s.q('#lotCmd')) + ')');
+
+    // ── owner: Hold this lot, Fix lot, Reject ──
+    await openLotCard(o, KO);
+    o.click(btn(o, /^Hold this lot$/)); await until(() => !!o.q('#lr-go'), 4000, 'the hold form');
+    o.click(o.q('#lr-go')); ok(/Add a reason/.test(o.text(o.q('#lr-err'))), 'Hold needs a reason');
+    o.set(o.q('#lr-reason'), 'a customer complaint'); o.click(o.q('#lr-go'));
+    await until(() => page(o) === KO && /On hold/.test(o.text(o.q('#lotHead'))), 5000, 'the held lot').catch(() => {});
+    ok(/On hold/.test(o.text(o.q('#lotHead'))) && /a customer complaint/.test(o.text(o.q('#viewStock'))) && !!btn(o, /^Release$/), 'Hold this lot: On hold with the reason, and Release to undo it');
+    o.click(btn(o, /^Fix lot$/)); await until(() => !!o.q('#fx-go'), 4000, 'the Fix lot form');
+    bad = tooWide(o); ok(bad.length === 0, 'the Fix lot form has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
+    o.set(o.q('#fx-bake'), istDay(2)); o.click(o.q('#fx-go'));
+    await until(() => /^MNGO-/.test(page(o)) && page(o) !== KO, 5000, 'the fixed lot').catch(() => {});
+    v = o.text(o.q('#viewStock'));
+    ok(page(o).indexOf('MNGO-' + yymmdd(istDay(2)) + '-') === 0 && /Stickers already printed carry the old code or date: reprint them\./.test(v) && v.includes('Sticker code ' + KO), 'Fix lot: a new code from the new bake date, the reprint warning, and the old code kept (' + page(o) + ')');
+    await openLotCard(o, KL);
+    o.click(btn(o, /^Reject$/)); await until(() => !!o.q('#lr-go'), 4000, 'the reject form');
+    o.set(o.q('#lr-reason'), 'stale smell'); o.click(o.q('#lr-go'));
+    await until(() => page(o) === KL && /Rejected/.test(o.text(o.q('#lotHead'))), 5000, 'the rejected lot').catch(() => {});
+    ok(/Rejected/.test(o.text(o.q('#lotHead'))) && /stale smell/.test(o.text(o.q('#viewStock'))) && !btn(o, /^Release$/) && !btn(o, /^Reject$/) && !btn(o, /^Hold this lot$/), 'Reject: Rejected with the reason; no Release, Reject or Hold');
+
+    // ── the Packed refusal: Kesari is made short the real way (the shippable Kesari is taken out; lot KK stays on hold) ──
+    const k0 = ((await api('/admin/api/inventory', 'o')).j.items || []).find((i) => i.slug === 'atta-kesari');
+    if (k0 && k0.usable > 0) ok((await api('/admin/api/inventory/take', 'o', { slug: 'atta-kesari', qty: k0.usable, type: 'SAMPLE', note: 'practice: no shippable Kesari left' })).j.ok, 'setup: the shippable Kesari is taken out (' + k0.usable + ')');
+    const kesariIn = (x) => x.items.some((i) => /Kesari/.test(i.name + ' ' + (i.contents || '')));
+    let orders = (await api('/admin/api/orders', 'o')).j.orders || [];
+    const trios = orders.filter((x) => x.state === 'topack' && x.items.length === 1 && x.items[0].qty === 1 && x.boxes === 3 && kesariIn(x));
+    const plain = orders.filter((x) => x.state === 'topack' && !kesariIn(x));
+    ok(trios.length >= 2, 'setup: practice orders to pack with one Kesari box each (' + trios.map((x) => x.id).join(',') + ')');
+    const G1 = (trios[0] || {}).id, G2 = (trios[1] || {}).id;
+    const SHORT = /Kesari: 1 box short\. Lot MNGK-\d{6}-\d{2} is on hold \(release it\), or receive the delivery first\./;
+    s.click(s.byText('#tabs .tab', /^Orders$/)); s.click(s.q('#reload')); await sleep(400);
+    s.click(s.byText('#flow .step', /To pack/)); await until(() => !!cardOf(s, G1), 4000, 'the staff order list');
+    s.click(btn(s, /^Mark packed$/, cardOf(s, G1)));
+    await until(() => !!(cardOf(s, G1) || none(s)).querySelector('.refuse'), 5000, 'the refusal').catch(() => {});
+    let rf = (cardOf(s, G1) || none(s)).querySelector('.refuse');
+    ok(!!rf && /Not packed\./.test(s.text(rf)) && SHORT.test(s.text(rf)), 'staff: Mark packed on a short order shows the refusal on the card (' + (rf ? s.text(rf) : 'none') + ')');
+    ok(!!rf && !btn(s, /Pack anyway/, rf) && !rf.querySelector('input') && /Only the owner can pack anyway/.test(s.text(rf)), 'staff see no Pack anyway');
+    ok((await api('/admin/api/orders/' + G1, 'o')).j.order.state === 'topack', 'the refused order stays To pack');
+    // owner, in the order sheet: Pack anyway with a note
+    o.click(o.byText('#tabs .tab', /^Orders$/)); o.click(o.q('#reload')); await sleep(400);
+    o.click(o.byText('#flow .step', /To pack/)); await until(() => !!cardOf(o, G1), 4000, 'the owner order list');
+    o.click(cardOf(o, G1)); await until(() => !!o.q('#sheet.on') && !!btn(o, /^Mark packed$/, o.q('#panel')), 4000, 'the order sheet');
+    o.click(btn(o, /^Mark packed$/, o.q('#panel')));
+    await until(() => !!o.q('#panel .refuse'), 5000, 'the refusal in the sheet').catch(() => {});
+    rf = o.q('#panel .refuse');
+    const go = rf && btn(o, /^Pack anyway$/, rf), nt = rf && rf.querySelector('.pknote');
+    ok(!!rf && SHORT.test(o.text(rf)) && !!go && !!nt && go.disabled, 'owner: the refusal in the order sheet, with a note box and Pack anyway, disabled until the note (' + (rf ? o.text(rf) : 'none') + ')');
+    if (nt) { o.set(nt, 'ab'); ok(go.disabled, 'a 2-letter note is not enough'); o.set(nt, 'fair stock'); ok(!go.disabled, 'with the note "fair stock" Pack anyway is enabled'); }
+    if (go) { o.click(go); ok(go.disabled, 'Pack anyway disables itself while sending'); }
+    await until(async () => (await api('/admin/api/orders/' + G1, 'o')).j.order.state === 'packed', 5000, 'the order to be packed').catch(() => {});
+    ok((await api('/admin/api/orders/' + G1, 'o')).j.order.state === 'packed', 'Pack anyway with a note moves the order to Packed');
+    await until(() => /Packed anyway: fair stock/.test(o.text(o.q('#panel'))), 4000, 'the sheet to redraw').catch(() => {});
+    ok(/Packed anyway: fair stock/.test(o.text(o.q('#panel'))), 'the timeline says it was packed anyway, with the note');
+    if (btn(o, /^Close$/, o.q('#panel'))) o.click(btn(o, /^Close$/, o.q('#panel')));
+    await until(() => o.qa('#needs .need').some((b) => /1\s*box packed without a lot/.test(o.text(b))), 5000, 'Needs you now').catch(() => {});
+    const nb = o.qa('#needs .need').find((b) => /1\s*box packed without a lot/.test(o.text(b)));
+    ok(!!nb && /tap to assign/.test(o.text(nb)), 'Needs attention then shows 1 box packed without a lot: tap to assign (' + o.qa('#needs .need').map((b) => o.text(b)).join(' | ') + ')');
+    // bulk Mark packed lists each refused order with its reason
+    s.click(s.q('#reload')); await sleep(400); s.click(s.byText('#flow .step', /To pack/)); await until(() => !!cardOf(s, G2), 4000, 'the list');
+    s.click(cardOf(s, G2).querySelector('input[type=checkbox]')); if (plain[0] && cardOf(s, plain[0].id)) s.click(cardOf(s, plain[0].id).querySelector('input[type=checkbox]'));
+    s.click(s.byText('#bulk button', /^Mark \d+ packed$/));
+    await until(() => /not packed/i.test(s.text(s.q('#panel'))) && !!s.q('#sheet.on'), 5000, 'the bulk result').catch(() => {});
+    v = s.text(s.q('#panel'));
+    ok(!!s.q('#sheet.on') && v.includes(G2) && SHORT.test(v) && (!plain[0] || /1 packed/.test(v)), 'bulk Mark packed lists the refused order with its reason (' + v.slice(0, 260) + ')');
+    if (btn(s, /^Close$/, s.q('#panel'))) s.click(btn(s, /^Close$/, s.q('#panel')));
+
+    // ── Needs attention (stock): staff see the line but cannot assign; the owner releases KK, then Assign lot ──
+    if (nb) o.click(nb);
+    await until(() => page(o) === 'Needs attention' && !!o.q('#viewStock .nlline'), 5000, 'the stock Needs attention page').catch(() => {});
+    let ln = o.qa('#viewStock .nlline').find((l) => l.getAttribute('data-order') === G1);
+    ok(!!ln && /Atta Kesari/.test(o.text(ln)) && /1 box/.test(o.text(ln)) && /No Atta Kesari lot that can ship has 1 box/.test(o.text(ln)), 'the line for ' + G1 + ' says no Kesari lot can ship it yet (' + (ln ? o.text(ln) : 'none') + ')');
+    ok(o.qa('#viewStock .heldlot').some((c) => c.getAttribute('data-code') === KK), 'Lots on hold lists ' + KK);
+    bad = tooWide(o); ok(bad.length === 0, 'the Needs attention page has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
+    await toStock(s);
+    const sn0 = s.qa('#stockNeeds .need').find((b) => /box packed without a lot/.test(s.text(b)));
+    ok(!!sn0, 'the Stock screen shows the stock items of Needs attention too (staff)');
+    if (sn0) s.click(sn0);
+    await until(() => page(s) === 'Needs attention' && !!s.q('#viewStock .nlline'), 5000, 'the staff attention page').catch(() => {});
+    const sl = s.qa('#viewStock .nlline').find((l) => l.getAttribute('data-order') === G1);
+    ok(!!sl && !sl.querySelector('select') && !btn(s, /^Assign lot$/, sl) && /Only the owner can assign a lot\./.test(s.text(sl)), 'staff see the line, with no Assign lot');
+    const hk = o.qa('#viewStock .heldlot').find((c) => c.getAttribute('data-code') === KK);
+    if (hk) o.click(hk);
+    await until(() => page(o) === KK && !!btn(o, /^Release$/), 5000, 'the Kesari lot').catch(() => {});
+    o.click(btn(o, /^Release$/)); await until(() => !!o.q('#rel-go'), 4000, 'the release form');
+    o.click(o.q('#rel-tasted')); o.set(o.q('#rel-weight'), '252'); o.click(o.q('#rel-go'));
+    await until(() => page(o) === KK && /Released/.test(o.text(o.q('#lotHead'))), 5000, 'released').catch(() => {});
+    await toStock(o);
+    const sn = o.qa('#stockNeeds .need').find((b) => /box packed without a lot/.test(o.text(b)));
+    if (sn) o.click(sn);
+    await until(() => page(o) === 'Needs attention' && !!o.q('#viewStock .nlline select'), 5000, 'the attention page with a lot to choose').catch(() => {});
+    ln = o.qa('#viewStock .nlline').find((l) => l.getAttribute('data-order') === G1);
+    const pick = ln && ln.querySelector('select.nlpick'), as = ln && btn(o, /^Assign lot$/, ln);
+    ok(!!pick && Array.from(pick.options).some((x) => x.value === KK) && !!as, 'once ' + KK + ' is released, Assign lot offers it (' + (pick ? Array.from(pick.options).map((x) => x.value).join(',') : 'no choice') + ')');
+    if (pick) o.set(pick, KK);
+    if (as) { o.click(as); ok(as.disabled, 'Assign lot disables itself while sending'); }
+    await until(() => page(o) === 'Needs attention' && !o.qa('#viewStock .nlline').some((l) => l.getAttribute('data-order') === G1), 5000, 'the line to go').catch(() => {});
+    ok(page(o) === 'Needs attention' && !o.qa('#viewStock .nlline').some((l) => l.getAttribute('data-order') === G1), 'Assign lot: the line leaves the list');
+    await toLots(o); o.set(o.q('#lotQ'), G1); o.click(btn(o, /^Find$/));
+    await until(() => o.qa('#lotFound .lotcard').length > 0, 5000, 'the order\'s lots').catch(() => {});
+    ok(o.qa('#lotFound .lotcard').some((c) => c.getAttribute('data-code') === KK), 'search by the order ID lists its lots, ' + KK + ' among them');
+
+    // ── a pack whose lots could not be checked: listed, staff cannot clear it, the owner marks it checked ──
+    orders = (await api('/admin/api/orders', 'o')).j.orders || [];
+    const U = (orders.find((x) => x.state === 'topack' && x.id !== G2) || {}).id;
+    await devStock({ planFails: true });
+    const up = U ? await api('/admin/api/orders/' + U + '/advance', 's', { to: 'packed' }) : { j: {} };
+    await devStock({ planFails: false });
+    ok(!!U && up.j.ok, 'setup: ' + U + ' packs while the lot check fails');
+    await toStock(s);
+    const sn2 = s.qa('#stockNeeds .need').find((b) => /1\s*pack was not checked against lots/.test(s.text(b)));
+    ok(!!sn2, 'the Stock screen counts 1 pack not checked against lots (' + s.qa('#stockNeeds .need').map((b) => s.text(b)).join(' | ') + ')');
+    if (sn2) s.click(sn2);
+    await until(() => page(s) === 'Needs attention' && !!s.q('#viewStock .upline'), 5000, 'the staff attention page').catch(() => {});
+    const su = s.qa('#viewStock .upline').find((l) => l.getAttribute('data-order') === U);
+    ok(!!su && /Packed without checking lots: check which lot the boxes came from\./.test(s.text(su)) && !btn(s, /^Mark checked$/, su), 'staff see the pack in plain words, and no Mark checked (' + (su ? s.text(su) : 'none') + ')');
+    o.click(o.byText('#tabs .tab', /^Orders$/)); o.click(o.q('#reload'));
+    await until(() => o.qa('#needs .need').some((b) => /1\s*pack was not checked against lots/.test(o.text(b))), 5000, 'Needs you now').catch(() => {});
+    const nu = o.qa('#needs .need').find((b) => /1\s*pack was not checked against lots/.test(o.text(b)));
+    ok(!!nu, 'Needs you now shows 1 pack was not checked against lots');
+    if (nu) o.click(nu);
+    await until(() => page(o) === 'Needs attention' && !!o.q('#viewStock .upline'), 5000, 'the owner attention page').catch(() => {});
+    const ou = o.qa('#viewStock .upline').find((l) => l.getAttribute('data-order') === U), mc = ou && btn(o, /^Mark checked$/, ou);
+    ok(!!mc, 'the owner has Mark checked');
+    if (mc) { o.click(mc); ok(mc.disabled, 'Mark checked disables itself while sending'); }
+    await until(() => page(o) === 'Needs attention' && !o.qa('#viewStock .upline').some((l) => l.getAttribute('data-order') === U), 5000, 'the pack to leave').catch(() => {});
+    ok(!o.qa('#viewStock .upline').some((l) => l.getAttribute('data-order') === U), 'Mark checked: the pack leaves the list');
+    o.click(o.byText('#tabs .tab', /^Orders$/)); o.click(o.byText('#flow .step', /Packed/)); await until(() => !!cardOf(o, U), 4000, 'the packed card').catch(() => {});
+    if (cardOf(o, U)) o.click(cardOf(o, U));
+    await until(() => !!o.q('#sheet.on') && /Timeline/.test(o.text(o.q('#panel'))) && o.text(o.q('#panel')).includes(U), 4000, 'the order sheet').catch(() => {});
+    v = o.text(o.q('#panel'));
+    ok(/Stock not checked at packing: Packed without checking lots: check which lot the boxes came from\./.test(v) && /Stock checked by owner@example\.com/.test(v) && !!btn(o, /^Open Needs attention$/, o.q('#panel')), 'the timeline gives the reason, points at Needs attention and says who checked it');
+    if (btn(o, /^Close$/, o.q('#panel'))) o.click(btn(o, /^Close$/, o.q('#panel')));
+
+    // ── staff correct their own delivery while it is on hold: New delivery opens filled in, with a fresh receipt id ──
+    await openLotCard(s, KC);
+    s.click(btn(s, /^Open the delivery$/)); await until(() => page(s).indexOf('Delivery ' + C.bill) === 0, 5000, 'the delivery page').catch(() => {});
+    const cw = btn(s, /^Correct whole delivery$/);
+    ok(!!cw, 'staff who saved it see Correct whole delivery');
+    if (cw) s.click(cw);
+    await until(() => !!s.q('#dc-go'), 3000, 'the reason box').catch(() => {});
+    s.click(s.q('#dc-go')); ok(/Add a reason/.test(s.text(s.q('#dc-err'))), 'Correct needs a reason');
+    s.set(s.q('#dc-reason'), 'typed the wrong count'); s.click(s.q('#dc-go'));
+    await until(() => s.qa('#viewStock .dlrow').length === 4 && !!s.q('#dl-billNo') && s.q('#dl-billNo').value === C.bill, 5000, 'New delivery, filled in').catch(() => {});
+    const dr = JSON.parse(s.win.localStorage.getItem('mngDeliveryDraft') || '{}');
+    const cnt = s.q('.dlrow[data-slug="atta-original"] [data-f="counted"]');
+    ok(!!s.q('#dl-billNo') && s.q('#dl-billNo').value === C.bill && !!cnt && cnt.value === '1' && !!dr.id && dr.id !== C.id, 'Correct whole delivery opens New delivery filled in, with a fresh receipt id (' + dr.id + ')');
+    ok(((await api('/admin/api/stock/lots/' + encodeURIComponent(KC), 's')).j.lot || {}).status === 'void', 'the corrected delivery\'s lot no longer counts');
+
+    // ── owner: Throw away expired asks first, naming the lots, then says which lots and how many boxes ──
+    const E = await deliver([{ slug: 'atta-original', invoiceBoxes: 2, counted: 2, rateRupees: 85 }], { bakeDate: istDay(100), oldBakeReason: 'practice: an old lot', confirm: CONFIRM.concat(['old_bake']) });
+    const KE = E.code('atta-original');
+    ok(E.r.j.ok && !!KE, 'setup: a lot baked 100 days ago, past its best before (' + E.r.s + ' ' + E.r.j.error + ')');
+    await toLots(o);
+    const asked = []; o.win.confirm = (m) => { asked.push(m); return true; };
+    o.click(btn(o, /^Throw away expired$/));
+    await until(() => /Thrown away/.test(o.text(o.q('#viewStock'))), 5000, 'the result').catch(() => {});
+    ok(asked.length === 1 && asked[0].includes(KE), 'Throw away expired asks first, naming the lots past best before (' + asked.join(' / ') + ')');
+    ok(new RegExp('Thrown away: ' + KE + ' \\(Atta Original\\), 2 boxes').test(o.text(o.q('#viewStock'))), 'then says which lots and how many boxes (' + o.text(o.q('#lotExpired') || none(o)) + ')');
+    o.win.confirm = () => true;
+
+    ok(o.errors.length === 0, 'no page errors for the owner (' + o.errors.join(' | ').slice(0, 300) + ')');
+    ok(s.errors.length === 0, 'no page errors for staff (' + s.errors.join(' | ').slice(0, 300) + ')');
+    o.close(); s.close();
+  });
+
   return list;
 };

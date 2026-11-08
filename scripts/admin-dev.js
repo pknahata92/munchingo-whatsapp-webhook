@@ -241,11 +241,25 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
   const real = inv.makeInventory(store);
   // Best before is set relative to the start time (80 days ahead, IST date), so the practice stock never ages past a cut-off date as the calendar moves. The lot codes stay as they were.
   const bb = new Date(Date.now() + 330 * 60000 + 80 * 86400_000).toISOString().slice(0, 10);
-  real.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
-  real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: bb, note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
-  // Original and Ajwain too, like the live shop (all four flavours came in lot 15OCT26): packing now takes boxes only from lots, and a
-  // flavour with no stock at all would be packable once (lot-less) and then refused, which the practice orders would trip over.
-  for (const slug of ['atta-original', 'atta-ajwain']) real.receive({ slug, received: 120, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
+  (async () => {
+    await real.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } });
+    await real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: bb, note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } });
+    // Original and Ajwain too, like the live shop (all four flavours came in lot 15OCT26): packing now takes boxes only from lots, and a
+    // flavour with no stock at all would be packable once (lot-less) and then refused, which the practice orders would trip over.
+    for (const slug of ['atta-original', 'atta-ajwain']) await real.receive({ slug, received: 120, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } });
+    // The migration's backfill (batch_receiving_migration.sql, step 7), as on the live shop after it runs: one released lot row per
+    // flavour and code, bake date from the code, the earliest best before, and the sticker code 15OCT26 boxes carry as an alias.
+    const LETTER = { 'atta-original': 'O', 'atta-kesari': 'K', 'atta-ajwain': 'A', 'atta-lite-sugar': 'L' };
+    const pairs = new Map();
+    for (const r of await store.byLot()) {
+      if (r.lot_code == null) continue;
+      const k = r.item_slug + '|' + r.lot_code, e = pairs.get(k) || { item_slug: r.item_slug, lot_code: r.lot_code, best_before: null };
+      if (r.best_before && (!e.best_before || r.best_before < e.best_before)) e.best_before = r.best_before;
+      pairs.set(k, e);
+    }
+    await store.insertLots([...pairs.values()].map((e) => ({ ...e, status: 'released', bake_date: e.lot_code === '15OCT26' ? '2026-10-15' : null,
+      aliases: e.lot_code === '15OCT26' && LETTER[e.item_slug] ? ['MNG' + LETTER[e.item_slug] + '-261016-01'] : [] })));
+  })().catch((e) => console.error('[dev] practice stock seed failed:', e.message));
   inv.instance = () => real;
   // POST /dev/stock { planFails: true }: the packing planner throws (as if the lot table could not be read); { deductFails: true }: writing
   // the packed boxes off stock throws. Both check that packing still goes on and that the pack is raised for Needs attention.

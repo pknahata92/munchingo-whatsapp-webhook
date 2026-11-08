@@ -819,5 +819,22 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     ok((await inv2.reverse({ id: st2.mv.find((m) => m.lot_code === '15OCT26' && m.type === 'RECEIVE').id, reason: 'typo', actor: A })).ok, 'an ordinary receipt can still be cancelled');
   }
 
+  // Task 12: the Stock screen says how many boxes are on hold, so a flavour whose stock is all held never looks fine silently
+  {
+    const st = memStore('2026-10-16T00:00:00.000Z'); const inv = makeInventory(st);
+    await inv.receive({ slug: 'atta-kesari', received: 10, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+    await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261030-01', status: 'hold', best_before: '2027-01-28' }, { item_slug: 'atta-original', lot_code: 'MNGO-261030-01', status: 'hold', best_before: '2027-01-28' }]);
+    await st.insert([{ item_slug: 'atta-kesari', qty: 6, type: 'RECEIVE', lot_code: 'MNGK-261030-01', best_before: '2027-01-28', ref: 'B9' }, { item_slug: 'atta-kesari', qty: -1, type: 'DAMAGED', lot_code: 'MNGK-261030-01', best_before: '2027-01-28', ref: 'B9', reason: 'transit' },
+      { item_slug: 'atta-original', qty: 4, type: 'RECEIVE', lot_code: 'MNGO-261030-01', best_before: '2027-01-28', ref: 'B9' }]);
+    const row = async (slug) => (await inv.overview()).items.find((i) => i.slug === slug);
+    let k = await row('atta-kesari'), o = await row('atta-original');
+    ok(k.on_hand === 15 && k.on_hold === 5 && k.sellable === 10, 'overview: Kesari 15 on hand, 5 of them on hold (6 received, 1 broken), 10 on the website (' + JSON.stringify([k.on_hand, k.on_hold, k.sellable]) + ')');
+    ok(o.on_hand === 4 && o.on_hold === 4 && o.sellable === 0, 'overview: Original has only held stock: 4 on hand, 4 on hold, 0 on the website (' + JSON.stringify([o.on_hand, o.on_hold, o.sellable]) + ')');
+    ok((await row('atta-ajwain')).on_hold === 0 && (await row('packing-tape')).on_hold === null, 'a flavour with nothing on hold says 0; packaging has no hold count');
+    await st.updateLot('atta-original', 'MNGO-261030-01', { status: 'released' });
+    o = await row('atta-original');
+    ok(o.on_hold === 0 && o.sellable === 4, 'released: nothing on hold and the website counts the 4 boxes');
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

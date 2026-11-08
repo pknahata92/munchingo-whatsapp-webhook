@@ -396,15 +396,31 @@ function methodFrom(method, carrier) {
 const UNPLANNED_PLAN = 'The lots could not be checked, so the boxes came off the oldest lots, which may be on hold or past their last ship date. Check this order\'s lots.';
 const UNPLANNED_WRITE = 'The boxes were not taken off stock. Count these flavours.';
 // Packs raised as unplanned (order event stock_unplanned), for Needs attention: only an order's current pack counts, so an order that
-// was undone, or packed again since, drops off. [{ orderId, at, reason, note }], oldest first.
-async function unplannedPacks() {
-  const packed = (await db.listRecentOrders(600)).filter((o) => o.packed_at);
+// was undone, or packed again since, drops off. A pack the owner marked checked (event stock_unplanned_checked for that pack, Task 12)
+// drops off too. [{ orderId, at, reason, kind, note }], oldest first; kind 'plan' (the lots were not checked) or 'write' (the boxes
+// were not taken off stock), so the screen can say it in its own words.
+async function unplannedOf(packed) {
   if (!packed.length) return [];
+  const ids = packed.map((o) => o.order_id);
   const packedAt = Object.fromEntries(packed.map((o) => [o.order_id, Date.parse(o.packed_at)]));
-  const events = await db.listOrderEventsByName('stock_unplanned', packed.map((o) => o.order_id));
-  return events.filter((e) => e.meta && Date.parse(e.meta.at) === packedAt[e.order_id])
-    .map((e) => ({ orderId: e.order_id, at: e.meta.at, reason: e.meta.reason, note: e.meta.note || null }))
+  const [events, checks] = await Promise.all([db.listOrderEventsByName('stock_unplanned', ids), db.listOrderEventsByName('stock_unplanned_checked', ids)]);
+  const checked = (e) => (checks || []).some((c) => c.order_id === e.order_id && c.meta && Date.parse(c.meta.at) === Date.parse(e.meta.at));
+  return events.filter((e) => e.meta && Date.parse(e.meta.at) === packedAt[e.order_id] && !checked(e))
+    .map((e) => ({ orderId: e.order_id, at: e.meta.at, reason: e.meta.reason, kind: e.meta.reason === UNPLANNED_WRITE ? 'write' : 'plan', note: e.meta.note || null }))
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+async function unplannedPacks() { return unplannedOf((await db.listRecentOrders(600)).filter((o) => o.packed_at)); }
+
+// Owner: the unplanned pack of this order was looked at (which lot the boxes came from, or the shelf was counted). It only leaves the
+// list; nothing in stock changes and nothing is ever blocked. Tied to that pack (meta.at), so a later pack that is not checked shows again.
+async function markStockChecked({ orderId, actor, isOwner = false }) {
+  if (!isOwner) throw new AdminError('Only the owner can mark a pack as checked.', 403);
+  const order = await db.getOrder(orderId);
+  if (!order) throw new AdminError('No such order.', 404);
+  const open = order.packed_at ? await unplannedOf([order]) : [];
+  if (!open.length) throw new AdminError('This order has no pack waiting to be checked.', 409);
+  await logEvent(orderId, 'stock_unplanned_checked', actor, { meta: { at: open[open.length - 1].at } });
+  return { checked: true };
 }
 
 async function advance({ orderId, to, actor, carrier = '', awb = '', method = '', deliverNow = false, override }) {
@@ -672,4 +688,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { lateInfo, sendWhatsappUpdate, setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, unplannedPacks, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { lateInfo, sendWhatsappUpdate, setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, unplannedPacks, markStockChecked, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

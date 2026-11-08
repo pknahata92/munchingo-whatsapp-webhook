@@ -171,7 +171,9 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       const elig = (purpose) => (m ? m.lots.filter((l) => eligibleRow(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }, purpose)).reduce((n, l) => n + l.qty, 0) : 0);
       const usable = i.kind === 'product' ? (m ? Math.min(m.total, elig('other')) : 0) : null;
       const webBoxes = i.kind === 'product' && m && m.any ? Math.min(m.total, elig('web')) : null;
-      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, committed: committed[i.slug] || 0, sellable: webBoxes == null ? null : webBoxes - (committed[i.slug] || 0), paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), last_counted: i.kind === 'packaging' && m && m.last ? m.last : null, status: statusOf(i, m), lots: lotList };
+      // boxes in lots on hold (Task 12): on the shelf, not on the website, so a flavour whose stock is all held never looks fine silently
+      const onHold = i.kind === 'product' ? Math.max(0, lotList.filter((l) => l.status === 'hold').reduce((n, l) => n + l.qty, 0)) : null;
+      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, on_hold: onHold, committed: committed[i.slug] || 0, sellable: webBoxes == null ? null : webBoxes - (committed[i.slug] || 0), paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), last_counted: i.kind === 'packaging' && m && m.last ? m.last : null, status: statusOf(i, m), lots: lotList };
     });
     const nameOf = Object.fromEntries(items.map((i) => [i.slug, i.name]));
     const open = Object.keys(events).map((ref) => ({ ref, items: events[ref].map((x) => ({ ...x, name: nameOf[x.slug] || x.slug })) }));
