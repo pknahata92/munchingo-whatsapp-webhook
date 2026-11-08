@@ -63,7 +63,7 @@ const { boxesIn } = require('../utils/orderText');
   r = await post('/api/checkout', { ...buyer, items: cart(['atta-original', 3]), total: 777 });
   o = saved[saved.length - 1]; ok(r.j.ok && o.total === 777 && o.items.length === 1, 'three boxes (Rs 777) ship free: no shipping line');
   r = await post('/api/checkout', { ...buyer, items: cart(['trio-gift-set-ajwain-kesari-original', 1]), total: 749 });
-  o = saved[saved.length - 1]; ok(r.j.ok && o.total === 749 + 49 && o.items.length === 2, 'a Trio counts as 3 boxes, Rs 749 (under Rs 777, so Rs 49 shipping until the gift-box free-shipping rule lands)');
+  o = saved[saved.length - 1]; ok(r.j.ok && o.total === 749 && o.items.length === 1, 'a Trio counts as 3 boxes, Rs 749, and ships free (a gift box always does)');
   r = await post('/api/checkout', { ...buyer, items: cart(['atta-original', 2]), total: 518 });
   o = saved[saved.length - 1]; if (!r.j.ok || o.total !== 567) console.log('DBG', JSON.stringify(r), o.total, JSON.stringify(o.items)); ok(r.j.ok && o.total === 567, 'two boxes of the same Flavor also make a Pack of 2');
 

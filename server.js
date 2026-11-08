@@ -560,6 +560,14 @@ app.get('/internal/subscription-renewals', async (req, res) => {
         continue; // next_order_date NOT advanced — retries tomorrow
       }
 
+      // A stored item whose price cannot be worked out (e.g. an invalid Trio slug) must not make a NaN total: skip the renewal.
+      const unpriced = sub.items.find((i) => priceForSlug(i.slug) == null);
+      if (unpriced) {
+        console.warn(`[SUBSCRIPTIONS] Subscription ${sub.id} skipped — no price for "${unpriced.slug}". Will retry tomorrow.`);
+        results.push({ id: sub.id, ok: false, reason: 'invalid_item' });
+        continue; // next_order_date NOT advanced
+      }
+
       const enrichedItems = sub.items.map((i) => ({
         productName: i.name,
         quantity: i.quantity,
@@ -572,7 +580,7 @@ app.get('/internal/subscription-renewals', async (req, res) => {
       const singlesTotal = enrichedItems.filter((i) => require('./utils/catalog').BASE_SLUGS.includes(i.slug)).reduce((sum, i) => sum + i.item_price * i.quantity, 0);
       const discountAmount = Math.round(singlesTotal * (sub.discount_pct / 100));
       // Same shipping rule as the website checkout (utils/shipping.js): a fee under Rs 777 of items, never discounted.
-      const renewalShipping = require('./utils/shipping').shippingFor(realTotal);
+      const renewalShipping = require('./utils/shipping').shippingFor(realTotal, { hasGiftBox: require('./utils/shipping').hasGiftBox(enrichedItems) });
       const finalTotal = realTotal - discountAmount + renewalShipping;
 
       const orderId = generateRenewalOrderId();

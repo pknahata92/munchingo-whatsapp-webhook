@@ -15,7 +15,7 @@ const { priceCart } = require('../utils/offers');
 const { checkPincode } = require('../utils/delhivery');
 const deliveryArea = require('../utils/deliveryArea');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
-const { MIN_BOXES, goodsOnly, shippingFor, shippingItem } = require('../utils/shipping');
+const { MIN_BOXES, goodsOnly, hasGiftBox, shippingFor, shippingItem } = require('../utils/shipping');
 const { boxesIn } = require('../utils/orderText');
 
 // "Subscribe & Save" — flat discount on every renewal (see
@@ -23,7 +23,7 @@ const { boxesIn } = require('../utils/orderText');
 // link each cycle" model, not true autopay). A subscribing order always
 // gets this discount instead of any coupon code — the two are mutually
 // exclusive by design, to avoid compounding-discount margin risk.
-const SUBSCRIPTION_DISCOUNT_PCT = 8;
+const SUBSCRIPTION_DISCOUNT_PCT = 5;
 const SUBSCRIPTION_FREQUENCY_DAYS = 30;
 
 // Minimum order for the automated (nationwide courier) checkout: 2 boxes (a Pack of 2, any two Flavors; gift sets count as 3 and 4).
@@ -186,7 +186,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       }
       // Shipping: Rs 49 under Rs 777 of items (before any discount), free from there. Saved as an ordinary line so every downstream
       // total (Razorpay, invoice, Zoho, refunds, emails) carries it; goods-only lists skip it (utils/shipping.js).
-      const shippingFee = shippingFor(realTotal);
+      const shippingFee = shippingFor(realTotal, { hasGiftBox: hasGiftBox(enrichedItems) });
       const finalTotal = priced.finalTotal + shippingFee;
       const orderItems = shippingFee ? [...enrichedItems, shippingItem(shippingFee)] : enrichedItems;
       const discountAmount = priced.discount ? priced.discount.amount : 0;
@@ -333,9 +333,9 @@ router.post('/api/quote', rateLimit({ windowMs: 60_000, max: 30 }), async (req, 
     if (error) return res.status(400).json({ ok: false, error });
     const p = await priceCart({ items: enriched, couponCode: code || null, customerPhone: phone ? normalisePhone(phone) : null, subscribe: !!subscribe, subscriptionPct: SUBSCRIPTION_DISCOUNT_PCT });
     const d = p.discount;
-    const shipping = shippingFor(p.realTotal), boxes = enriched.reduce((n, i) => n + boxesIn(i) * i.quantity, 0);
+    const giftBox = hasGiftBox(enriched), shipping = shippingFor(p.realTotal, { hasGiftBox: giftBox }), boxes = enriched.reduce((n, i) => n + boxesIn(i) * i.quantity, 0);
     res.json({
-      ok: true, total: p.realTotal, singles: p.singles, finalTotal: p.finalTotal + shipping, goodsTotal: p.realTotal, shipping, boxes, minBoxes: MIN_BOXES, freeFrom: require('../utils/shipping').FREE_FROM, next: p.next, tiers: p.tiers, couponError: p.couponError,
+      ok: true, total: p.realTotal, singles: p.singles, finalTotal: p.finalTotal + shipping, goodsTotal: p.realTotal, shipping, giftBoxFree: giftBox && p.realTotal < require('../utils/shipping').FREE_FROM, boxes, minBoxes: MIN_BOXES, freeFrom: require('../utils/shipping').FREE_FROM, next: p.next, tiers: p.tiers, couponError: p.couponError,
       discount: d ? { kind: d.kind, amount: d.amount, label: d.label, code: d.code } : null,
       couponBeaten: !!(d && d.kind === 'tier' && d.beat && d.beat.kind === 'coupon'),
     });
