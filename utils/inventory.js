@@ -67,9 +67,10 @@ function boxesBySlug(items) {
 // With `ctx` (from lotContext) only boxes in lots the website may sell count: released or legacy, and today before the website stop date.
 // Without it every box counts, as before lots existed.
 function computeSellable(items, byLotRows, committed, ctx) {
-  const out = {}; const has = new Set(); const sum = {};
-  for (const r of byLotRows) { has.add(r.item_slug); if (ctx && !eligibleRow(ctx, r, 'web')) continue; sum[r.item_slug] = (sum[r.item_slug] || 0) + r.qty; }
-  for (const i of items) { if (i.kind === 'product' && i.active && has.has(i.slug)) out[i.slug] = (sum[i.slug] || 0) - ((committed || {})[i.slug] || 0); }
+  const out = {}; const has = new Set(); const sum = {}; const total = {};
+  for (const r of byLotRows) { has.add(r.item_slug); total[r.item_slug] = (total[r.item_slug] || 0) + r.qty; if (ctx && !eligibleRow(ctx, r, 'web')) continue; sum[r.item_slug] = (sum[r.item_slug] || 0) + r.qty; }
+  // never more than is on the shelf: a lot that cannot be sold may have a negative balance
+  for (const i of items) { if (i.kind === 'product' && i.active && has.has(i.slug)) out[i.slug] = (ctx ? Math.min(total[i.slug] || 0, sum[i.slug] || 0) : (sum[i.slug] || 0)) - ((committed || {})[i.slug] || 0); }
   return out;
 }
 
@@ -119,8 +120,10 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
         const info = lotInfo(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }); const c = lotRules.cutoffs(info.best_before, ctx.s);
         return { ...l, status: info.status || 'legacy', lastShip: c ? c.lastShip : null, websiteStop: c ? c.websiteStop : null };
       }) : [];
-      const usable = i.kind === 'product' ? (m ? m.lots.filter((l) => eligibleRow(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }, 'other')).reduce((n, l) => n + l.qty, 0) : 0) : null;
-      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, committed: committed[i.slug] || 0, sellable: i.kind === 'product' && m && m.any ? m.total - (committed[i.slug] || 0) : null, paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots: lotList };
+      const elig = (purpose) => (m ? m.lots.filter((l) => eligibleRow(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }, purpose)).reduce((n, l) => n + l.qty, 0) : 0);
+      const usable = i.kind === 'product' ? (m ? Math.min(m.total, elig('other')) : 0) : null;
+      const webBoxes = i.kind === 'product' && m && m.any ? Math.min(m.total, elig('web')) : null;
+      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, committed: committed[i.slug] || 0, sellable: webBoxes == null ? null : webBoxes - (committed[i.slug] || 0), paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots: lotList };
     });
     const nameOf = Object.fromEntries(items.map((i) => [i.slug, i.name]));
     const open = Object.keys(events).map((ref) => ({ ref, items: events[ref].map((x) => ({ ...x, name: nameOf[x.slug] || x.slug })) }));
@@ -144,7 +147,10 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     return { have: total, usable, held: total - usable };
   }
   const shortMsg = (item, u) => (u.held > 0 ? `Only ${u.usable} ${item.unit} can be used (${u.held} more are ${HELD_NOTE}). Count first, or confirm to go below zero.` : `Only ${u.have} ${item.unit} on hand. Count first, or confirm to go below zero.`);
-  const shortLine = (item, q, u) => `${item.name}: need ${q}, have ${u.usable}` + (u.held > 0 ? ` (${u.held} more are ${HELD_NOTE})` : '');
+  // takeMany / hamper: when any item has boxes held back the sentence says "can be used", item by item; otherwise today's wording.
+  const shortList = (short) => (short.some((x) => x.u.held > 0)
+    ? 'Not enough can be used: ' + short.map((x) => (x.u.held > 0 ? `${x.item.name}: need ${x.q}, can use ${x.u.usable} (${x.u.held} more are ${HELD_NOTE})` : `${x.item.name}: need ${x.q}, have ${x.u.usable}`)).join('; ') + '. Count first, or confirm to go below zero.'
+    : 'Not enough on hand: ' + short.map((x) => `${x.item.name}: need ${x.q}, have ${x.u.usable}`).join('; ') + '. Count first, or confirm to go below zero.');
   const who = (actor) => ({ actor_email: actor && actor.email || null, actor_name: actor && (actor.name || actor.email) || null });
 
   // Stock arrived: boxes received, how many of them damaged or not okay, lot, best-before, supplier challan, optional billing.
@@ -227,8 +233,8 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (!plan.length) throw new StockError('Enter how many of at least one item.');
     if (!allowNegative) {
       const short = []; const ctx = await lotContext(store, now());
-      for (const x of plan) { const u = await usableOf(x.item, ctx); if (x.qty > u.usable) short.push(shortLine(x.item, x.qty, u)); }
-      if (short.length) throw new StockError('Not enough on hand: ' + short.join('; ') + '. Count first, or confirm to go below zero.', 409, { needsConfirm: 'negative' });
+      for (const x of plan) { const u = await usableOf(x.item, ctx); if (x.qty > u.usable) short.push({ item: x.item, q: x.qty, u }); }
+      if (short.length) throw new StockError(shortList(short), 409, { needsConfirm: 'negative' });
     }
     const base = type === 'OFFLINE_SALE' ? { type, note: cleanText(note, 300) || null, ref: inv, party: forWhom, ...who(actor) } : { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) };
     const rows = [];
@@ -252,8 +258,8 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (!plan.length) throw new StockError('Enter how many boxes you opened for these hampers, so the biscuits are taken off stock.');
     if (!allowNegative) {
       const short = []; const ctx = await lotContext(store, now());
-      for (const x of plan) { const u = await usableOf(x.item, ctx); if (x.qty > u.usable) short.push(shortLine(x.item, x.qty, u)); }
-      if (short.length) throw new StockError('Not enough on hand: ' + short.join('; ') + '. Count first, or confirm to go below zero.', 409, { needsConfirm: 'negative' });
+      for (const x of plan) { const u = await usableOf(x.item, ctx); if (x.qty > u.usable) short.push({ item: x.item, q: x.qty, u }); }
+      if (short.length) throw new StockError(shortList(short), 409, { needsConfirm: 'negative' });
     }
     const tag = `Hamper: ${name} x ${n}`, extra = cleanText(note, 200);
     const base = { type: 'OFFLINE_SALE', ref: inv, party: who1, note: extra ? `${tag}. ${extra}` : tag, ...who(actor) };

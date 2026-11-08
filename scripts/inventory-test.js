@@ -414,8 +414,8 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261105-01', status: 'hold', best_before: '2027-02-03' }]);
       await inv.receive({ slug: 'atta-kesari', received: 100, lot: 'MNGK-261105-01', bestBefore: '2027-02-03', actor: A });
       await inv.receive({ slug: 'atta-original', received: 3, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
-      await rejects(inv.takeMany({ boxes: { 'atta-kesari': 2, 'atta-original': 5 }, type: 'EVENT_SALE', who: 'Fair', actor: A }), /Atta Kesari: need 2, have 0 \(100 more are on hold or past best before\); Atta Original: need 5, have 3\. Count first/, 'takeMany lists each item, with the held-back note only where boxes are held');
-      await rejects(inv.offlineHamper({ hamper: 'Diwali', hampers: 1, boxes: { 'atta-kesari': 2 }, buyer: 'B', invoice: 'I1', actor: A }), /Atta Kesari: need 2, have 0 \(100 more are on hold or past best before\)/, 'hamper has the same note');
+      await rejects(inv.takeMany({ boxes: { 'atta-kesari': 2, 'atta-original': 5 }, type: 'EVENT_SALE', who: 'Fair', actor: A }), /^Not enough can be used: Atta Kesari: need 2, can use 0 \(100 more are on hold or past best before\); Atta Original: need 5, have 3\. Count first, or confirm to go below zero\.$/, 'takeMany: when any item has boxes held back, the sentence says can be used, item by item');
+      await rejects(inv.offlineHamper({ hamper: 'Diwali', hampers: 1, boxes: { 'atta-kesari': 2 }, buyer: 'B', invoice: 'I1', actor: A }), /^Not enough can be used: Atta Kesari: need 2, can use 0 \(100 more are on hold or past best before\)\. Count first/, 'hamper has the same wording');
       await inv.takeMany({ boxes: { 'atta-original': 3 }, type: 'EVENT_SALE', who: 'Fair', actor: A });
       ok(await lotQty(st, 'atta-original', '15OCT26') === 0, 'takeMany still works for usable lots');
       // count: a negative difference takes from usable lots only; the rest is a lot-less line
@@ -438,6 +438,48 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       ok(held.status === 'hold' && held.lastShip === '2026-12-15' && held.websiteStop === '2026-12-13', 'overview: lot status and its last ship and website stop dates (' + JSON.stringify(held) + ')');
       ok(legacy.status === 'legacy' && legacy.lastShip === '2026-11-24' && legacy.websiteStop === '2026-11-22', 'overview: a legacy lot shows legacy and the same cut-off dates (' + JSON.stringify(legacy) + ')');
       ok((await inv.overview()).items.find((i) => i.slug === 'packing-tape').usable === null, 'packaging has no usable count');
+    }
+
+    // fix round 1
+    {
+      // 1. a lot that cannot be used with a negative balance must not inflate the website count
+      const { st, inv } = mk();
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261105-01', status: 'hold', best_before: '2027-02-03' }]);
+      await st.insert([{ item_slug: 'atta-kesari', qty: -5, type: 'USE', lot_code: 'MNGK-261105-01', best_before: '2027-02-03' }]);
+      await inv.receive({ slug: 'atta-kesari', received: 20, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      const k = (await inv.overview()).items.find((i) => i.slug === 'atta-kesari');
+      ok(k.on_hand === 15 && (await inv.sellable())['atta-kesari'] === 15 && k.usable === 15 && k.sellable === 15, 'held lot at -5 plus legacy 20: on hand 15, website 15, usable 15, screen 15 (' + [k.on_hand, (await inv.sellable())['atta-kesari'], k.usable, k.sellable] + ')');
+      await rejects(inv.take({ slug: 'atta-kesari', qty: 16, type: 'SAMPLE', actor: A }), /Only 15 boxes on hand/, 'and taking 16 is refused at 15');
+    }
+    {
+      // 2. the screen's Website number follows the website rule
+      const { st, inv } = mk();
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261105-01', status: 'hold', best_before: '2027-02-03' }]);
+      await inv.receive({ slug: 'atta-kesari', received: 100, lot: 'MNGK-261105-01', bestBefore: '2027-02-03', actor: A });
+      st.committedMap = { 'atta-kesari': 3 };
+      const sk = async () => (await inv.overview()).items.find((i) => i.slug === 'atta-kesari').sellable;
+      ok(await sk() === -3, 'screen: a held lot adds 0 to Website (0 - 3 committed)');
+      await st.updateLot('atta-kesari', 'MNGK-261105-01', { status: 'released' });
+      ok(await sk() === 97, 'screen: released, it adds its 100 boxes');
+      const ov = await inv.overview(), sl = await inv.sellable();
+      ok(ov.items.find((i) => i.slug === 'atta-original').sellable === null, 'screen: an uncounted flavour stays null');
+      // deploy-day fixture: screen equals website for every flavour
+      const d = mk();
+      await d.inv.receive({ slug: 'atta-kesari', received: 100, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      await d.inv.receive({ slug: 'atta-kesari', received: 20, lot: 'X', actor: A });
+      await d.inv.receive({ slug: 'atta-original', received: 50, lot: '27OCT26', bestBefore: '2027-01-25', actor: A });
+      await d.st.insert([{ item_slug: 'atta-kesari', qty: -2, type: 'SALE', lot_code: null, best_before: null, ref: 'MNG-Z@2026-10-30' }]);
+      d.st.committedMap = { 'atta-kesari': 3, 'atta-original': 1 };
+      const dov = await d.inv.overview(), dsl = await d.inv.sellable();
+      ok(FL.every((f) => { const o = dov.items.find((i) => i.slug === f).sellable; return o === (f in dsl ? dsl[f] : null); }), 'deploy day: screen Website equals sellable() for every flavour');
+    }
+    {
+      // 4. spec 9: 15OCT26 leaves the website on 22 Nov and stays usable for samples until 13 Jan
+      const st = memStore('2026-10-16T00:00:00.000Z'); const inv = makeInv(st, { now: () => Date.parse('2026-11-23T06:00:00Z') });
+      await inv.receive({ slug: 'atta-kesari', received: 30, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      ok((await inv.sellable())['atta-kesari'] === 0, '23 Nov: legacy 15OCT26 adds 0 to the website');
+      await inv.take({ slug: 'atta-kesari', qty: 4, type: 'SAMPLE', actor: A });
+      ok((await stockOf(st, 'atta-kesari')).filter((x) => x.lot_code === '15OCT26').reduce((n, x) => n + x.qty, 0) === 26, '23 Nov: a sample can still be taken from it');
     }
     // lots() failing is not hidden: callers decide what to do
     {
