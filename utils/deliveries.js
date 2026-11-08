@@ -41,7 +41,8 @@ function rupees(v, label, max, dflt = null) {
 const paise = (r) => Math.round(r * 100);
 const photo = (p) => { if (typeof p !== 'string' || !PHOTO_PATH.test(p)) fail('That photo did not upload. Take it again.'); return p; };
 
-function makeDeliveries(store, { now = () => Date.now() } = {}) {
+function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
+  const getDb = () => db || require('./database');
   const inventory = () => makeInventory(store, { now });
   const live = (list) => list.filter((d) => d.status !== 'void');   // a corrected (void) delivery frees its bill and part
   const nextPart = (list) => list.reduce((m, d) => Math.max(m, d.part || 1), 0) + 1;
@@ -428,7 +429,205 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     return { from: oldCode, to: newCode, warning: 'Stickers already printed carry the old code or date: reprint them.' };
   }
 
-  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, fixLot };
+  // ---- Lots list, lot page, trace search, recall CSV (spec 6.8). Everything here only reads. ----
+  const up = (v) => String(v == null ? '' : v).trim().toUpperCase();
+  const day = (v) => (v ? String(v).slice(0, 10) : null);
+  const ORDER_ID = /^MNG-[A-Z0-9]{4}-\d{4}$/;
+  const saleKey = (r) => `${r.ref}|${r.item_slug}|${r.lot_code || ''}`;   // the same match restoreForOrder uses to undo a pack
+  const orderOfRef = (ref) => { const s = String(ref || ''), i = s.indexOf('@'); return { orderId: i >= 0 ? s.slice(0, i) : s, at: i >= 0 ? s.slice(i + 1) : null }; };
+
+  async function world() {
+    const [lotRows, ledger, items, raw] = await Promise.all([store.lots(), store.byLot(), store.items(), store.settingsAll()]);
+    const products = new Map((items || []).filter((i) => i.kind === 'product').map((i) => [i.slug, i.name || NAMES[i.slug] || i.slug]));
+    return { lotRows: (lotRows || []).filter((l) => products.has(l.item_slug)), ledger: (ledger || []).filter((r) => products.has(r.item_slug)), products, s: lots.readSettings(raw) };
+  }
+  const codesOf = (l) => [l.lot_code, ...(l.aliases || [])];
+
+  // Lots a typed code can mean: `mode` 'code' (a lot's own code), 'alias', or 'any'. A code that exists only in the ledger is a legacy lot.
+  function candidates(w, c, slug, mode) {
+    const out = [], seen = new Set(), covered = new Set();
+    for (const l of w.lotRows) for (const x of codesOf(l)) covered.add(`${l.item_slug}|${up(x)}`);
+    for (const l of w.lotRows) {
+      if (slug && l.item_slug !== slug) continue;
+      const byCode = up(l.lot_code) === c, byAlias = (l.aliases || []).some((a) => up(a) === c) && !byCode;
+      if (!(mode === 'any' ? byCode || byAlias : mode === 'code' ? byCode : byAlias)) continue;
+      const k = `${l.item_slug}|${l.lot_code}`;
+      if (!seen.has(k)) { seen.add(k); out.push({ slug: l.item_slug, code: l.lot_code, row: l }); }
+    }
+    if (mode !== 'alias') for (const r of w.ledger) {
+      if (r.lot_code == null || up(r.lot_code) !== c || (slug && r.item_slug !== slug) || covered.has(`${r.item_slug}|${c}`)) continue;
+      const k = `${r.item_slug}|${r.lot_code}`;
+      if (!seen.has(k)) { seen.add(k); out.push({ slug: r.item_slug, code: r.lot_code, row: null }); }
+    }
+    return out;
+  }
+  const chooseOf = (w, list) => list.map((x) => ({ code: x.code, slug: x.slug, name: w.products.get(x.slug) })).sort((a, b) => a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
+  const ambiguous = (w, list) => new StockError('This code is on more than one flavour. Choose one.', 409, { choose: chooseOf(w, list) });
+  async function pick(code, slug) {
+    const c = up(code);
+    const w = await world();
+    const found = c ? candidates(w, c, slug || null, 'any') : [];
+    if (!found.length) throw new StockError('No lot with that code.', 404);
+    if (found.length > 1) throw ambiguous(w, found);
+    return { w, cand: found[0] };
+  }
+
+  async function listLots() {
+    const w = await world();
+    const today = lots.todayIst(now());
+    const onHand = new Map();
+    for (const r of w.ledger) if (r.lot_code != null) onHand.set(`${r.item_slug}|${r.lot_code}`, (onHand.get(`${r.item_slug}|${r.lot_code}`) || 0) + r.qty);
+    const sumOf = (slug, codes) => codes.reduce((a, c) => a + (onHand.get(`${slug}|${c}`) || 0), 0);
+    const entry = (slug, code, status, bake, bb, qty) => {
+      const stop = bb ? lots.cutoffs(bb, w.s).websiteStop : null;
+      return { code, slug, name: w.products.get(slug), status, onHand: qty, bakeDate: bake, bestBefore: bb, websiteStop: stop, daysToStop: stop ? daysBetween(today, stop) : null };
+    };
+    const out = [], covered = new Set();
+    for (const l of w.lotRows) {
+      for (const x of codesOf(l)) covered.add(`${l.item_slug}|${x}`);
+      const rows = w.ledger.filter((r) => r.item_slug === l.item_slug && codesOf(l).includes(r.lot_code) && r.best_before);
+      const bb = day(l.best_before) || rows.map((r) => day(r.best_before)).sort()[0] || null;
+      const p = lots.parseCode(l.lot_code);
+      out.push(entry(l.item_slug, l.lot_code, l.status == null ? null : l.status, day(l.bake_date) || (p && p.bakeDate) || null, bb, sumOf(l.item_slug, codesOf(l))));
+    }
+    const legacy = new Map();
+    for (const r of w.ledger) {
+      if (r.lot_code == null || covered.has(`${r.item_slug}|${r.lot_code}`)) continue;
+      const k = `${r.item_slug}|${r.lot_code}`;
+      const e = legacy.get(k) || { slug: r.item_slug, code: r.lot_code, bb: null };
+      if (r.best_before && (!e.bb || day(r.best_before) < e.bb)) e.bb = day(r.best_before);
+      legacy.set(k, e);
+    }
+    for (const e of legacy.values()) { const p = lots.parseCode(e.code); out.push(entry(e.slug, e.code, null, p ? p.bakeDate : null, e.bb, sumOf(e.slug, [e.code]))); }
+    out.sort((a, b) => (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) || (a.slug < b.slug ? -1 : 1));
+    // Rows with no lot from before lots began (lots_from), as one group. Lot-less sales after lots_from belong to Needs attention, not here.
+    const lotless = w.ledger.filter((r) => r.lot_code == null);
+    if (lotless.length) {
+      const from = Date.parse(w.s.lots_from);
+      let qty = lotless.reduce((a, r) => a + r.qty, 0);
+      if (Number.isFinite(from)) {
+        const after = (await store.lotlessSales(new Date(from).toISOString())) || [];
+        qty -= after.filter((r) => Date.parse(r.created_at) > from).reduce((a, r) => a + r.qty, 0);
+      }
+      const when = Number.isFinite(from) ? (() => { const d = lots.todayIst(from); return `${parseInt(d.slice(8, 10), 10)} ${MONTHS[parseInt(d.slice(5, 7), 10) - 1]} ${d.slice(0, 4)}`; })() : null;
+      out.push({ code: null, slug: null, name: when ? `Untraced (before ${when})` : 'Untraced (before lots began)', status: null, onHand: qty, bakeDate: null, bestBefore: null, websiteStop: null, daysToStop: null });
+    }
+    return out;
+  }
+
+  // The best plain city we can read from the order's address (the stored city, else the part before "State - PIN").
+  function cityOf(addr) {
+    if (!addr) return '';
+    if (addr.city) return String(addr.city);
+    try { return require('./invoice').parseAddress(addr).city || ''; } catch (e) { return ''; }
+  }
+
+  async function lotPage(code, slug) {
+    const { w, cand } = await pick(code, slug);
+    const lot = cand.row, today = lots.todayIst(now());
+    const codes = lot ? codesOf(lot) : [cand.code];
+    const rows = ((await store.movementsByLots(codes)) || []).filter((m) => m.item_slug === cand.slug);
+    const byId = new Map(rows.map((m) => [m.id, m]));
+    const n = { received: 0, broken: 0, good: 0, onHand: 0, website: 0, offline: 0, fairs: 0, gifts: 0, samples: 0, damaged: 0, returned: 0, expired: 0, fixes: 0 };
+    for (const m of rows) {
+      n.onHand += m.qty;
+      const o = m.type === 'REVERSAL' && m.reverses_id != null ? byId.get(m.reverses_id) || null : m;   // a reversal counts under the row it cancels
+      const t = o ? o.type : 'REVERSAL';
+      if (t === 'RECEIVE') n.received += m.qty;
+      else if (t === 'DAMAGED') { if (o.delivery_id != null && lot && lot.delivery_id === o.delivery_id) n.broken -= m.qty; else n.damaged -= m.qty; }
+      else if (t === 'SALE' || t === 'SALE_UNDO') n.website -= m.qty;
+      else if (t === 'OFFLINE_SALE') n.offline -= m.qty;
+      else if (t === 'EVENT_SALE' || t === 'EXHIBITION' || t === 'EXHIBITION_RETURN') n.fairs -= m.qty;
+      else if (t === 'GIFT') n.gifts -= m.qty;
+      else if (t === 'SAMPLE') n.samples -= m.qty;
+      else if (t === 'SUPPLIER_RETURN') n.returned -= m.qty;
+      else if (t === 'EXPIRED') n.expired -= m.qty;
+      else n.fixes += m.qty;   // COUNT_FIX (Fix lot moves too), and the rare USE / RETURN / REPLACEMENT: kept apart so the numbers balance
+    }
+    n.good = n.received - n.broken;
+
+    // dates
+    const parsed = lots.parseCode(cand.code);
+    const bb = (lot && day(lot.best_before)) || rows.map((m) => day(m.best_before)).filter(Boolean).sort()[0] || null;
+    const cut = bb ? lots.cutoffs(bb, w.s) : null;
+    const dates = { bakeDate: (lot && day(lot.bake_date)) || (parsed && parsed.bakeDate) || null, bestBefore: bb, lastShip: cut ? cut.lastShip : null, websiteStop: cut ? cut.websiteStop : null,
+      daysToStop: cut ? daysBetween(today, cut.websiteStop) : null, daysToBestBefore: bb ? daysBetween(today, bb) : null };
+
+    // delivery
+    let delivery = null;
+    if (lot && lot.delivery_id) {
+      const d = await store.delivery(lot.delivery_id);
+      if (d) delivery = { id: d.id, billNo: d.bill_no, part: d.part, arrivedOn: d.arrived_on ? day(d.arrived_on) : null, photos: Array.isArray(d.photos) ? d.photos : [], supplierBatch: lot.supplier_batch || null, savedBy: d.saved_by_name || d.saved_by_email || null };
+    }
+
+    // every website order from the lot (a pack undone is not counted: same match as restoreForOrder)
+    const sales = rows.filter((m) => m.type === 'SALE' || m.type === 'SALE_UNDO');
+    const undone = new Set(sales.filter((m) => m.type === 'SALE_UNDO').map(saleKey));
+    const byOrder = new Map();
+    for (const m of sales) {
+      if (m.type !== 'SALE' || undone.has(saleKey(m))) continue;
+      const o = orderOfRef(m.ref);
+      const e = byOrder.get(o.orderId) || { orderId: o.orderId, boxes: 0, at: o.at };
+      e.boxes += -m.qty;
+      byOrder.set(o.orderId, e);
+    }
+    const ids = [...byOrder.keys()], found = new Map();
+    for (let i = 0; i < ids.length; i += 500) for (const r of (await getDb().getOrdersByIds(ids.slice(i, i + 500))) || []) found.set(r.order_id, r);
+    const orders = ids.map((id) => {
+      const e = byOrder.get(id), o = found.get(id) || {}, a = o.delivery_address || {};
+      return { orderId: id, name: o.customer_name || '', phone: o.customer_phone || '', city: cityOf(o.delivery_address), recipientName: a.recipientName || '', recipientPhone: a.recipientPhone || '', packedAt: o.packed_at || e.at || null, boxes: e.boxes };
+    }).sort((a, b) => (Date.parse(a.packedAt) || 0) - (Date.parse(b.packedAt) || 0) || (a.orderId < b.orderId ? -1 : 1));
+
+    const current = lot ? lot.lot_code : cand.code;
+    return {
+      lot: { code: current, slug: cand.slug, name: w.products.get(cand.slug), status: lot ? (lot.status == null ? null : lot.status) : null, legacy: !lot, aliases: lot ? (lot.aliases || []) : [], supplierBatch: lot ? lot.supplier_batch || null : null,
+        holdReason: lot ? lot.hold_reason || null : null, rejectReason: lot ? lot.reject_reason || null : null, releasedAt: lot ? lot.released_at || null : null, releasedBy: lot ? lot.released_by || null : null, checkWeightG: lot ? lot.check_weight_g || null : null },
+      delivery, dates, numbers: n,
+      perGoodPaise: lot && lot.unit_cost_paise != null ? Number(lot.unit_cost_paise) : null,
+      orders,
+      sticker: parsed ? lots.stickerCommand(current, Math.max(0, n.onHand), w.s.sticker_flags) : null,
+    };
+  }
+
+  async function search(q) {
+    const c = up(q);
+    if (!c) return { none: true };
+    const w = await world();
+    const answer = (found) => (found.length === 1 ? { lot: { code: found[0].code, slug: found[0].slug } } : { choose: chooseOf(w, found) });
+    let found = candidates(w, c, null, 'code');
+    if (found.length) return answer(found);
+    found = candidates(w, c, null, 'alias');
+    if (found.length) return answer(found);
+    found = w.lotRows.filter((l) => l.supplier_batch && up(l.supplier_batch) === c).map((l) => ({ slug: l.item_slug, code: l.lot_code }));
+    if (found.length) return answer(found);
+    if (ORDER_ID.test(c)) {
+      const sales = (await store.salesOf(c)) || [];
+      const undone = new Set(sales.filter((r) => r.type === 'SALE_UNDO').map(saleKey));
+      const canon = (slug, code) => { if (code == null) return null; const l = w.lotRows.find((x) => x.item_slug === slug && codesOf(x).includes(code)); return l ? l.lot_code : code; };
+      const g = new Map();
+      for (const r of sales) {
+        if (r.type !== 'SALE' || undone.has(saleKey(r))) continue;
+        const code = canon(r.item_slug, r.lot_code), k = `${r.item_slug}|${code || ''}`;
+        const e = g.get(k) || { slug: r.item_slug, code, boxes: 0 };
+        e.boxes += -r.qty;
+        g.set(k, e);
+      }
+      if (g.size) return { orderLots: [...g.values()].sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : String(a.code || '') < String(b.code || '') ? -1 : 1)) };
+    }
+    return { none: true };
+  }
+
+  // The recall list: one line per order. A gift order carries the recipient in the recipient columns; the buyer columns stay the buyer.
+  async function buyersCsv(code, slug) {
+    const p = await lotPage(code, slug);
+    const cell = (v) => { let t = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; };
+    const on = (v) => { const t = Date.parse(v); return Number.isFinite(t) ? lots.todayIst(t) : ''; };
+    const lines = ['order_id,buyer_name,buyer_phone,city,recipient_name,recipient_phone,packed_on,boxes'];
+    for (const o of p.orders) lines.push([o.orderId, o.name, o.phone, o.city, o.recipientName, o.recipientPhone, on(o.packedAt), o.boxes].map(cell).join(','));
+    return lines.join('\n');
+  }
+
+  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, fixLot, listLots, lotPage, search, buyersCsv };
 }
 
 let real = null;

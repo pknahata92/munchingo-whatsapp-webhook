@@ -213,6 +213,19 @@ async function getOrder(orderId) {
 }
 
 /**
+ * Orders by id for the recall list (name, phone, address, packed time, items). At most 500 ids per call; an error is thrown, never
+ * swallowed, because a silently empty buyer list would hide people a recall must reach.
+ */
+async function getOrdersByIds(ids) {
+  const list = [...new Set((ids || []).filter(Boolean))];
+  if (list.length > 500) throw new Error('getOrdersByIds takes at most 500 ids');
+  if (!list.length) return [];
+  const { data, error } = await db().from('orders').select('order_id, customer_name, customer_phone, delivery_address, packed_at, items').in('order_id', list);
+  if (error) throw new Error(`Supabase getOrdersByIds failed: ${error.message}`);
+  return data || [];
+}
+
+/**
  * Orders that turned 'paid' within [sinceISO, untilISO) — the packing list
  * for the daily ops digest. Filters on the paid transition, not created_at,
  * so an order placed one day and paid the next still shows up on the day it
@@ -676,6 +689,7 @@ const client = () => db();
 module.exports = {
   setSuggestionWait, getSuggestionWait, clearSuggestionWait, insertSuggestion, listSuggestions, setSuggestionStatus, listSuggestionsBetween,
   upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
+  getOrdersByIds,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
   listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, listRecentMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,

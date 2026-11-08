@@ -693,6 +693,128 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     }
   }
 
+  // ---- Task 9: Lots list, lot page, trace search, buyer list (read-only) ----
+  {
+    const { st, dl, inv } = fresh();
+    const ORDERS = {
+      'MNG-AAAA-1010': { order_id: 'MNG-AAAA-1010', customer_name: 'Asha Rao', customer_phone: '919810000001', delivery_address: { raw: 'Flat 1, Sector 5, Gurgaon, Haryana - 122001', city: 'Gurgaon' }, packed_at: '2026-11-06T08:00:00.000Z', items: [] },
+      'MNG-BBBB-1010': { order_id: 'MNG-BBBB-1010', customer_name: 'Bob Buyer', customer_phone: '919810000002', delivery_address: { raw: '7 MG Road, Pune, Maharashtra - 411001', recipientName: 'Rita Receiver', recipientPhone: '919820000009' }, packed_at: '2026-11-06T09:00:00.000Z', items: [] },
+      'MNG-CCCC-1010': { order_id: 'MNG-CCCC-1010', customer_name: '=HYPERLINK(1)', customer_phone: '+919810000003', delivery_address: { raw: 'x' }, packed_at: null, items: [] },
+    };
+    const calls = [];
+    const db = { getOrdersByIds: async (ids) => { calls.push(ids.length); return ids.filter((i) => ORDERS[i]).map((i) => ORDERS[i]); } };
+    const L = makeDeliveries(st, { now: () => NOW, db });
+    st.setSetting('lots_from', '2026-10-30T00:00:00.000Z');
+    // old stock: 15OCT26 on Original (ledger only) and Kesari (stock_lots row with an alias); lot-less rows from before lots began
+    await inv.receive({ slug: 'atta-original', received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
+    await inv.receive({ slug: 'atta-kesari', received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
+    await st.insertLots([{ item_slug: 'atta-kesari', lot_code: '15OCT26', aliases: ['MNGK-261016-01'], bake_date: '2026-10-15', best_before: '2027-01-13', status: 'released' }]);
+    await st.insert([{ item_slug: 'atta-ajwain', qty: 20, type: 'RECEIVE', lot_code: null }, { item_slug: 'atta-original', qty: 7, type: 'RECEIVE', lot_code: null }]);
+    // the new delivery: Kesari only, 2 broken on the bus
+    const rs = await dl.save(input({ invoiceRupees: 10000, rows: [{ slug: 'atta-kesari', invoiceBoxes: 100, counted: 100, broken: 2, brokenReason: 'transit', brokenPhoto: PH, diffReason: 'x', rateRupees: 100 }] }), A);
+    const KC = rs.lots[0].code;
+    eq(KC, 'MNGK-261105-01', 'new Kesari lot code');
+    const ref = (o, t) => `${o}@${t}`;
+    const T1 = '2026-11-06T08:00:00.000Z', T3 = '2026-11-06T20:00:00.000Z';
+    const sale = (o, t, q, lot) => ({ item_slug: 'atta-kesari', qty: -q, type: 'SALE', lot_code: lot || KC, best_before: '2027-02-03', ref: ref(o, t) });
+    await st.insert([sale('MNG-AAAA-1010', T1, 3), sale('MNG-BBBB-1010', '2026-11-06T09:00:00.000Z', 2), sale('MNG-CCCC-1010', T3, 1), sale('MNG-AAAA-1010', T1, 1, '15OCT26'), sale('MNG-DDDD-1010', T1, 2)]);
+    await st.insert([{ item_slug: 'atta-kesari', qty: 2, type: 'SALE_UNDO', lot_code: KC, best_before: '2027-02-03', ref: ref('MNG-DDDD-1010', T1) }]);
+    const mvx = (type, qty, extra) => ({ item_slug: 'atta-kesari', qty, type, lot_code: KC, best_before: '2027-02-03', ref: 'x', ...(extra || {}) });
+    await st.insert([mvx('OFFLINE_SALE', -4), mvx('EVENT_SALE', -2), mvx('EXHIBITION', -3), mvx('EXHIBITION_RETURN', 1), mvx('GIFT', -1), mvx('GIFT', -1), mvx('SAMPLE', -1), mvx('DAMAGED', -1, { reason: 'repack' }), mvx('EXPIRED', -1), mvx('SUPPLIER_RETURN', -1), mvx('COUNT_FIX', 2)]);
+    const giftId = st.mv.filter((m) => m.type === 'GIFT').slice(-1)[0].id;
+    await st.insert([mvx('REVERSAL', 1, { reverses_id: giftId })]);
+
+    // no function writes anything
+    const before = JSON.stringify({ mv: st.mv, lots: await st.lots(), d: [await st.delivery(rs.delivery.id)] });
+    const lp = await L.lotPage(KC);
+    const lots0 = await L.listLots();
+    await L.search('MNGK-261016-01'); await L.search('15OCT26'); await L.search('MNG-AAAA-1010'); await L.search('nothing'); await L.buyersCsv(KC);
+    await rejects(L.lotPage('15OCT26'), /more than one flavour/, 'ambiguity throws before any write', 409);
+    eq(JSON.stringify({ mv: st.mv, lots: await st.lots(), d: [await st.delivery(rs.delivery.id)] }), before, 'lot list, lot page, search and CSV write nothing');
+
+    // lot page
+    eq([lp.lot.code, lp.lot.slug, lp.lot.status, lp.lot.name], [KC, 'atta-kesari', 'hold', 'Atta Kesari'], 'lot header');
+    eq(lp.dates, { bakeDate: '2026-11-05', bestBefore: '2027-02-03', lastShip: '2026-12-15', websiteStop: '2026-12-13', daysToStop: 36, daysToBestBefore: 88 }, 'dates and days left from the IST today');
+    eq(lp.delivery && [lp.delivery.id, lp.delivery.billNo, lp.delivery.part, lp.delivery.arrivedOn, lp.delivery.photos, lp.delivery.supplierBatch, lp.delivery.savedBy], [rs.delivery.id, 'A000300', 1, '2026-11-07', [], null, 'Staff'], 'delivery block');
+    const nums = lp.numbers;
+    eq(nums, { received: 100, broken: 2, good: 98, onHand: 81, website: 6, offline: 4, fairs: 4, gifts: 1, samples: 1, damaged: 1, returned: 1, expired: 1, fixes: 2 }, 'numbers after a sale, an undo, a reversal and a count fix');
+    eq(nums.received - nums.broken - nums.damaged - nums.website - nums.offline - nums.fairs - nums.gifts - nums.samples - nums.returned - nums.expired + nums.fixes, nums.onHand, 'the numbers balance');
+    eq(lp.perGoodPaise, rs.lots[0].perGoodPaise, 'cost per good box');
+    eq(lp.sticker, 'python3 make_stamp_labels.py --lot MNGK-261105-01 --qty kesari=81 --cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test', 'sticker command');
+    eq(lp.orders.map((o) => [o.orderId, o.name, o.phone, o.city, o.recipientName || '', o.recipientPhone || '', o.packedAt, o.boxes]), [
+      ['MNG-AAAA-1010', 'Asha Rao', '919810000001', 'Gurgaon', '', '', '2026-11-06T08:00:00.000Z', 3],
+      ['MNG-BBBB-1010', 'Bob Buyer', '919810000002', 'Pune', 'Rita Receiver', '919820000009', '2026-11-06T09:00:00.000Z', 2],
+      ['MNG-CCCC-1010', '=HYPERLINK(1)', '+919810000003', '', '', '', '2026-11-06T20:00:00.000Z', 1]], 'orders on the lot (the undone order is not there; the order with no packed_at uses the time in its ref)');
+    ok(calls.length >= 1 && calls.every((k) => k === 3), 'one lookup per page view, only the lot\'s own orders (got ' + calls + ')');
+
+    // CSV
+    const csv = await L.buyersCsv(KC);
+    const lines = csv.split('\n');
+    eq(lines[0], 'order_id,buyer_name,buyer_phone,city,recipient_name,recipient_phone,packed_on,boxes', 'CSV header');
+    eq(lines[2], '"MNG-BBBB-1010","Bob Buyer","919810000002","Pune","Rita Receiver","919820000009","2026-11-06","2"', 'Review Focus 5: the gift row carries the recipient, the buyer stays the buyer');
+    eq(lines[1], '"MNG-AAAA-1010","Asha Rao","919810000001","Gurgaon","","","2026-11-06","3"', 'plain row');
+    eq(lines[3], '"MNG-CCCC-1010","\'=HYPERLINK(1)","\'+919810000003","","","","2026-11-07","1"', 'formula-looking cells get a leading quote; packed_on is the IST date');
+    ORDERS['MNG-AAAA-1010'].customer_name = 'A "Q" Rao, Jr';
+    eq((await L.buyersCsv(KC)).split('\n')[1].split(',')[1], '"A ""Q"" Rao', 'quotes are doubled');
+    ORDERS['MNG-AAAA-1010'].customer_name = 'Asha Rao';
+    await rejects(L.buyersCsv('15OCT26'), /more than one flavour/, 'CSV of a shared code needs the flavour', 409);
+    eq((await L.buyersCsv('15OCT26', 'atta-kesari')).split('\n').length, 2, 'CSV of the legacy Kesari lot: header and Asha');
+
+    // legacy lots
+    const lo = await L.lotPage('15OCT26', 'atta-original');
+    eq([lo.lot.status, lo.lot.legacy, lo.dates.bestBefore, lo.dates.bakeDate, lo.numbers.onHand, lo.sticker, lo.delivery, lo.orders], [null, true, '2027-01-13', null, 50, null, null, []], 'a ledger-only code shows as a legacy lot');
+    await rejects(L.lotPage('15OCT26'), /^This code is on more than one flavour\. Choose one\.$/, 'ambiguous legacy code', 409);
+    try { await L.lotPage('15oct26'); ok(false, 'lower case ambiguity did not throw'); } catch (e) { eq(e.extra && e.extra.choose, [{ code: '15OCT26', slug: 'atta-kesari', name: 'Atta Kesari' }, { code: '15OCT26', slug: 'atta-original', name: 'Atta Original' }], 'choose list (lower case input works)'); }
+    await rejects(L.lotPage('NOPE-1'), /^No lot with that code\.$/, 'unknown code', 404);
+    await rejects(L.lotPage('MNGK-261105-01', 'atta-original'), /^No lot with that code\.$/, 'right code, wrong flavour', 404);
+
+    // alias and search
+    eq((await L.lotPage('MNGK-261016-01')).lot.code, '15OCT26', 'lot page by alias');
+    eq(await L.search('mngk-261016-01 '), { lot: { code: '15OCT26', slug: 'atta-kesari' } }, 'search by alias (trimmed, any case)');
+    eq(await L.search(KC), { lot: { code: KC, slug: 'atta-kesari' } }, 'search by our code');
+    const ch = await L.search('15OCT26');
+    eq(ch.choose && ch.choose.map((c) => c.slug).sort(), ['atta-kesari', 'atta-original'], 'search for a shared code asks which flavour');
+    await st.updateLot('atta-kesari', KC, { supplier_batch: 'kb-77' });
+    eq(await L.search('KB-77'), { lot: { code: KC, slug: 'atta-kesari' } }, 'search by Krazy Bakers batch');
+    eq(await L.search('MNG-AAAA-1010'), { orderLots: [{ slug: 'atta-kesari', code: '15OCT26', boxes: 1 }, { slug: 'atta-kesari', code: KC, boxes: 3 }] }, 'search by order ID lists the lots of that order (alias mapped to the lot)');
+    eq(await L.search('MNG-DDDD-1010'), { none: true }, 'an order whose packing was undone has no lots');
+    eq(await L.search('MNG-ZZZZ-0000'), { none: true }, 'unknown order');
+    eq(await L.search('nothing'), { none: true }, 'nothing found');
+    eq(await L.search('   '), { none: true }, 'blank search');
+
+    // list order: newest bake first, hold lot first, Untraced last
+    const names = lots0.map((l) => [l.code, l.slug]);
+    eq(names, [[KC, 'atta-kesari'], ['15OCT26', 'atta-kesari'], ['15OCT26', 'atta-original'], [null, null]], 'newest bake first, undated legacy after, Untraced last');
+    eq(lots0[0], { code: KC, slug: 'atta-kesari', name: 'Atta Kesari', status: 'hold', onHand: 81, bakeDate: '2026-11-05', bestBefore: '2027-02-03', websiteStop: '2026-12-13', daysToStop: 36 }, 'list entry fields');
+    eq([lots0[1].status, lots0[1].onHand, lots0[2].status, lots0[2].onHand, lots0[2].websiteStop], ['released', 49, null, 50, '2026-11-22'], 'legacy entries (Kesari 50 less the pack of 1; Original from the ledger)');
+    eq([lots0[3].name, lots0[3].onHand, lots0[3].status], ['Untraced (before 30 Oct 2026)', 27, null], 'Untraced entry sums the lot-less rows');
+
+    // Fix lot keeps the buyers, the numbers and the alias search
+    const fx = await dl.fixLot({ code: KC, newBakeDate: '2026-11-04' }, { actor: { email: 'o@x.com' }, isOwner: true });
+    const KN = fx.to;
+    eq(KN, 'MNGK-261104-01', 'lot fixed');
+    const lp2 = await L.lotPage(KC);
+    eq([lp2.lot.code, lp2.numbers.onHand, lp2.numbers.website, lp2.orders.length, lp2.dates.bakeDate], [KN, 81, 6, 3, '2026-11-04'], 'after Fix lot the old code finds the same lot with the same numbers and buyers');
+    const n2 = lp2.numbers;
+    eq(n2.received - n2.broken - n2.damaged - n2.website - n2.offline - n2.fairs - n2.gifts - n2.samples - n2.returned - n2.expired + n2.fixes, n2.onHand, 'numbers still balance after Fix lot');
+    eq(await L.search('MNG-BBBB-1010'), { orderLots: [{ slug: 'atta-kesari', code: KN, boxes: 2 }] }, 'order search maps the old code to the fixed lot');
+  }
+  // a lot with more than 500 buyers is looked up in chunks of 500
+  {
+    const { st, dl } = fresh();
+    const sizes = [];
+    const db = { getOrdersByIds: async (ids) => { sizes.push(ids.length); return ids.map((i) => ({ order_id: i, customer_name: 'B ' + i, customer_phone: '1', delivery_address: { raw: 'a, b, Delhi, Delhi - 110001' }, packed_at: '2026-11-06T08:00:00.000Z', items: [] })); } };
+    const L = makeDeliveries(st, { now: () => NOW, db });
+    await st.insertLots([{ item_slug: 'atta-original', lot_code: 'MNGO-261101-01', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'released' }]);
+    await st.insert([{ item_slug: 'atta-original', qty: 2000, type: 'RECEIVE', lot_code: 'MNGO-261101-01', best_before: '2027-01-30', ref: 'b' }]);
+    const rows = [];
+    for (let i = 0; i < 1100; i++) rows.push({ item_slug: 'atta-original', qty: -1, type: 'SALE', lot_code: 'MNGO-261101-01', best_before: '2027-01-30', ref: `MNG-A${String(i).padStart(3, '0')}-1010@2026-11-06T08:00:00.000Z` });
+    await st.insert(rows);
+    const p = await L.lotPage('MNGO-261101-01');
+    eq([p.orders.length, sizes], [1100, [500, 500, 100]], '1100 buyers: three lookups of at most 500');
+    eq(p.orders[0].city, 'Delhi', 'city guessed from the address');
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

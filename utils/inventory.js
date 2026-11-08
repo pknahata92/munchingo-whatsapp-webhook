@@ -686,7 +686,16 @@ function supabaseStore() {
     deliveriesByBill: async (supplier, billNo) => ok(await c().from('stock_deliveries').select('*').ilike('supplier', like(supplier)).ilike('bill_no', like(billNo))) || [],
     lastDelivery: async () => ok(await c().from('stock_deliveries').select('*').neq('status', 'void').order('created_at', { ascending: false }).limit(1).maybeSingle()) || null,
     updateDelivery: async (id, fields) => { ok(await c().from('stock_deliveries').update(fields).eq('id', id)); },
-    movementsByLots: async (codes) => (codes.length ? ok(await c().from('stock_movements').select('*').in('lot_code', codes)) || [] : []),
+    // Paged, so the 1000-row cap never cuts a lot's history short (the lot page and the recall list must see every sale).
+    movementsByLots: async (codes) => {
+      const out = [];
+      for (let from = 0; codes.length; from += 1000) {
+        const page = ok(await c().from('stock_movements').select('*').in('lot_code', codes).order('id', { ascending: true }).range(from, from + 999)) || [];
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      return out;
+    },
     movementsByDelivery: async (id) => ok(await c().from('stock_movements').select('*').eq('delivery_id', id)) || [],
     saveDelivery: async ({ d, lots, moves }) => ok(await c().rpc('stock_save_delivery', { d, lots: lots || [], moves: moves || [] })),
   };

@@ -74,6 +74,7 @@ stub('utils/database.js', {
   getInvoicesByOrderIds: async (ids) => Object.fromEntries(ids.filter((i) => invoices[i]).map((i) => [i, invoices[i]])),
   getCreditNotesByOrderIds: async (ids) => cns.filter((c) => ids.includes(c.order_id)),
   getOrder: async (id) => orders.find((o) => o.order_id === id) || null,
+  getOrdersByIds: async (ids) => orders.filter((o) => ids.includes(o.order_id)).map((o) => ({ order_id: o.order_id, customer_name: o.customer_name, customer_phone: o.customer_phone, delivery_address: o.delivery_address, packed_at: o.packed_at || null, items: o.items })),
   getInvoiceByOrder: async (id) => invoices[id] || null,
   getCreditNotesByOrder: async (id) => cns.filter((c) => c.order_id === id),
   updateOrderFields: async (id, f) => Object.assign(orders.find((o) => o.order_id === id), f),
