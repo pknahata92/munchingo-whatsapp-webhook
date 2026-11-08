@@ -67,6 +67,16 @@ async function login(email) {
   ok((await call('/prices', o.token, { slug: 'atta-original', price: 280, mrp: 300 })).j.ok, 'owner changes a price');
   ok((await call('/prices', o.token)).j.rows[0].price === 280, 'new price reads back');
   await call('/prices', o.token, { slug: 'atta-original', price: 300, mrp: 300 });
+  // box prices: derived from the box rule, shown read-only, never saved
+  for (const [sl, pr] of [['atta-original', 259], ['atta-ajwain', 259], ['atta-kesari', 299], ['atta-lite-sugar', 329]]) await call('/prices', o.token, { slug: sl, price: pr });   // the real single prices; the practice ones are different
+  const bx = (await call('/prices', o.token)).j.rows, trio = bx.find((r) => r.slug === 'trio-gift-set'), full = bx.find((r) => r.slug === 'full-range-set');
+  ok(trio && full && trio.derived === true && full.derived === true && !bx.slice(0, 4).some((r) => r.derived), 'both set rows are derived, the four singles are not');
+  ok(trio.price === 749 && trio.byMix && Object.keys(trio.byMix).length === 4 && trio.byMix['ajwain-lite-sugar-original'] === 779 && trio.byMix['kesari-lite-sugar-original'] === 809 && trio.byMix['ajwain-kesari-lite-sugar'] === 809 && trio.byMix['ajwain-kesari-original'] === 749, 'the Trio carries its four per-mix prices');
+  ok(full.price === 999 && full.mrp == null, 'Full Range reads 999 with no MRP');
+  const sp = await call('/prices', o.token, { slug: 'full-range-set', price: 899 });
+  ok(sp.s === 400 && /set by the box rule/.test(sp.j.error || ''), 'saving a set price is refused with "set by the box rule" (' + sp.s + ' ' + sp.j.error + ')');
+  ok((await call('/prices', o.token)).j.rows.find((r) => r.slug === 'full-range-set').price === 999, 'and Full Range still reads 999');
+  for (const [sl, pr] of [['atta-original', 300], ['atta-ajwain', 300], ['atta-kesari', 350], ['atta-lite-sugar', 350]]) await call('/prices', o.token, { slug: sl, price: pr, mrp: pr });   // back to the practice prices
 
   // no / bad token
   ok((await call('/orders', null)).s === 401, 'no token 401');

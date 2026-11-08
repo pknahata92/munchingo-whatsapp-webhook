@@ -713,5 +713,22 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await dev({ reset: true });
   });
 
+  // Prices screen: box prices are shown, read-only, with the rule in plain words
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    click(o.byText('#tabs .tab', /^More$/)); await sleep(200);
+    click(o.byText('#viewMore .morebtn', /^Prices/));
+    await until(() => /Prices/.test(text(q('#panel'))) && qa('#panel input').length > 0, 4000, 'the Prices screen');
+    const panel = text(q('#panel'));
+    ok(panel.includes('Set by the box rule (3 Flavors: 8% off singles; all 4: 12.5% off)'), 'the Prices screen shows the box rule text');
+    const cards = qa('#panel .sw'); const set = (re) => cards.find((c) => re.test(text(c.querySelector('b'))));
+    const trio = set(/Trio/), full = set(/Full Range/), single = set(/Original/);
+    ok(trio && full && trio.querySelectorAll('input').length === 0 && full.querySelectorAll('input').length === 0 && trio.querySelectorAll('button').length === 0, 'the two set rows have no editable input and no Save button');
+    ok(single && single.querySelectorAll('input').length === 2, 'a single box still has its price and MRP inputs');
+    ok(/From ₹\d+/.test(text(trio)) && (text(trio).match(/ ₹\d+/g) || []).length >= 4 && /Ajwain Kesari Original ₹\d+/.test(text(trio)) && /₹\d+/.test(text(full)), 'the set rows show the derived prices (Trio from the lowest mix with all four mixes, Full Range one price): ' + text(trio) + ' | ' + text(full));
+    ok(o.errors.length === 0, 'no page errors on the Prices screen (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };

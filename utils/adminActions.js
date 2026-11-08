@@ -620,14 +620,22 @@ async function setStock({ slug, available, actor }) {
 
 // ── Prices (owner only) ──
 const PRICE_ROWS = [['atta-original', 'Atta Original'], ['atta-ajwain', 'Atta Ajwain'], ['atta-kesari', 'Atta Kesari'], ['atta-lite-sugar', 'Atta Sugar-Lite'], ['trio-gift-set', 'Trio Gift Set (3 boxes)'], ['full-range-set', 'Full Range Gift Set (4 boxes)']];
+// Gift sets are never typed in: the server prices them from the single boxes by the box rule (catalog.priceBook).
+const DERIVED_SLUGS = ['trio-gift-set', 'full-range-set'];
+const BOX_RULE_LABEL = 'Set by the box rule (3 Flavors: 8% off singles; all 4: 12.5% off)';
 async function priceList() {
   const prices = require('./prices');
   await prices.refresh();
   const book = require('./catalog').priceBook();
-  return { live: prices.isOn(), rows: PRICE_ROWS.map(([slug, name]) => ({ slug, name, price: book[slug] ? book[slug].price : null, mrp: book[slug] ? book[slug].mrp : null })) };
+  return { live: prices.isOn(), rows: PRICE_ROWS.map(([slug, name]) => {
+    const b = book[slug], row = { slug, name, price: b ? b.price : null, mrp: b ? b.mrp : null };
+    if (DERIVED_SLUGS.includes(slug)) { row.derived = true; row.label = BOX_RULE_LABEL; if (b && b.byMix) row.byMix = b.byMix; }
+    return row;
+  }) };
 }
 async function setPrice({ slug, price, mrp, actor }) {
   if (!PRICE_ROWS.some((r) => r[0] === slug)) throw new AdminError('Unknown product.');
+  if (DERIVED_SLUGS.includes(slug)) throw new AdminError('Box prices are set by the box rule. Change a single box price instead.');
   const p = Number(price), m = mrp === '' || mrp == null ? null : Number(mrp);
   if (!Number.isInteger(p) || p < 50 || p > 10000) throw new AdminError('Price must be a whole number of rupees between 50 and 10,000.');
   if (m != null && (!Number.isInteger(m) || m < p || m > 20000)) throw new AdminError('MRP must be a whole number and not less than the price (leave it empty for no strike-through).');
