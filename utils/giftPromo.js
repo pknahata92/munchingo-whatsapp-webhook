@@ -7,9 +7,9 @@
 // against the 9 Nov price it names, which the switch makes real.
 const SWITCH_AT = Date.parse('2026-11-09T00:00:00+05:30');     // the morning after Diwali (8 Nov 2026), IST
 // LOCKED 8 Nov 2026 (Prashant + cost expert, reports/Munchingo pricing workbook review 8 Nov 2026.md): a set always costs
-// less than the same singles. Full Range goes to its locked price, Rs 1,029 (singles 1,146 less 10%, ending in 9), from 9 Nov.
+// less than the same singles. Full Range stays Rs 999 (Prashant, 8 Nov 23:45 IST: 'make the full range 999'; was locked at 1,029).
 // The Trio stays Rs 799 until per-mix box pricing (singles less 8%: 749 / 779 / 809) is built; then this LIST goes.
-const LIST = { 'trio-gift-set': 799, 'full-range-set': 1029 };
+const LIST = { 'trio-gift-set': 799, 'full-range-set': 999 };
 const LABEL = 'Early-grab price till Diwali';
 
 let clock = () => Date.now();
