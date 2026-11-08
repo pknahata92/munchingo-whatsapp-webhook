@@ -503,6 +503,13 @@ async function markMarketingSendFailed(waMessageId, error) {
   const { error: err } = await db().from('marketing_sends').update({ status: 'failed', error }).eq('wa_message_id', waMessageId);
   if (err) throw new Error(err.message);
 }
+/** Broadcast sends to one person since a time, matched on the last 10 digits (for forwarding their replies). */
+async function listRecentMarketingSends(last10, sinceIso) {
+  const { data, error } = await db().from('marketing_sends').select('phone, template, status, sent_at')
+    .like('phone', `%${String(last10).replace(/\D/g, '').slice(-10)}`).gte('sent_at', sinceIso);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
 async function insertMarketingSend(row) {
   const { error } = await db().from('marketing_sends').insert(row);
   if (error) throw new Error(error.message);
@@ -671,7 +678,7 @@ module.exports = {
   upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, listRecentMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

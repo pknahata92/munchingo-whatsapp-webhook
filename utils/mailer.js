@@ -433,4 +433,29 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
 }
 
-module.exports = { sendSuggestionAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+// A reply to a broadcast (8 Nov 2026): name, number and what they wrote, so Prashant can answer from his own phone.
+async function sendBroadcastReplyAlert({ phone, name, template, text }) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#B0413E;padding:22px 26px;"><h2 style="color:#fff;margin:0;font-size:20px;">&#128172; Reply to your broadcast</h2></div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
+          <tr><td style="padding:4px 0;color:#888;width:110px;">From</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(name) || 'No name'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Number</td><td style="padding:4px 0;">+${phone}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Broadcast</td><td style="padding:4px 0;">${escapeHtml(template)}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;vertical-align:top;">Message</td><td style="padding:4px 0;">${escapeHtml(text)}</td></tr>
+        </table>
+        <p style="margin:0;font-size:13px;color:#999;">Reply to them on WhatsApp: <a href="https://wa.me/${phone}">+${phone}</a></p>
+      </div>
+    </div>`;
+  const { error } = await resend.emails.send({
+    from: 'Munchingo Orders <orders@munchingo.com>',
+    to: [process.env.NOTIFY_EMAIL],
+    subject: `Reply from ${name || 'No name'} (+${phone})`,
+    html,
+  });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Broadcast reply alert sent for ${phone}`);
+}
+
+module.exports = { sendBroadcastReplyAlert, sendSuggestionAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };

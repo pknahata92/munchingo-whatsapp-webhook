@@ -724,6 +724,14 @@ app.post('/webhook', async (req, res) => {
     // Mark as read (double blue tick)
     await wa.markRead(msgId).catch(() => {});
 
+    // Replies to a broadcast within 3 days go to Prashant (name, number, text), not the bot menu. Not stored.
+    {
+      const replyText = type === 'text' ? message.text?.body : (message[type]?.caption || '');
+      try {
+        if (await require('./utils/broadcastReplies').maybeForward({ from, name: contactName, type, text: replyText })) return;
+      } catch (e) { console.error('[REPLY] forward check failed:', e.message); }
+    }
+
     switch (type) {
       case 'text':
         await handler.routeText(from, message.text.body, contactName);
