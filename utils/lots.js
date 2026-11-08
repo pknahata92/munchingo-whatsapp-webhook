@@ -8,7 +8,7 @@ const STICKER_SKU = { 'atta-original': 'original', 'atta-kesari': 'kesari', 'att
 
 const DEFAULTS = {
   shelf_days: 90, ship_floor_days: 50, dispatch_days: 2, old_bake_days: 7,
-  sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test',
+  sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 17.84375 --head-shift 2 --test',
   lots_from: null,
   packaging_count_from: null,   // packaging counts restart here (null = no reset)
 };

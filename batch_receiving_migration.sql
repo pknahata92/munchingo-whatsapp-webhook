@@ -70,7 +70,7 @@ insert into stock_settings (key, value) values
   ('ship_floor_days', '50'),
   ('dispatch_days', '2'),
   ('old_bake_days', '7'),
-  ('sticker_flags', '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test'),
+  ('sticker_flags', '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 17.84375 --head-shift 2 --test'),
   ('lots_from', now()::text),
   ('packaging_count_from', now()::text)   -- packaging counts restart here (8 Nov 2026): a packaging count is the sum of ledger rows on or after this time; nothing is deleted
 on conflict (key) do nothing;

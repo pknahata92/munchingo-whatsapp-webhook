@@ -18,7 +18,7 @@ function memStore(trackingFrom) {
     { slug: 'packing-tape', name: 'Packing tape', kind: 'packaging', unit: 'rolls', low_level: 0, manual_low: false, active: true, sort: 33 },
   ];
   // defaults equal batch_receiving_migration.sql (inventory-test checks it)
-  const settings = { tracking_from: trackingFrom, shelf_days: '90', ship_floor_days: '50', dispatch_days: '2', old_bake_days: '7', sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test', lots_from: new Date().toISOString(), packaging_count_from: new Date().toISOString() };
+  const settings = { tracking_from: trackingFrom, shelf_days: '90', ship_floor_days: '50', dispatch_days: '2', old_bake_days: '7', sticker_flags: '--cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 17.84375 --head-shift 2 --test', lots_from: new Date().toISOString(), packaging_count_from: new Date().toISOString() };
   const lots = [], deliveries = [];
   const lotKey = (r) => r.item_slug + '|' + r.lot_code;
   const billKey = (d) => `${String(d.supplier).toLowerCase()}|${String(d.bill_no).toLowerCase()}|${d.part}`;

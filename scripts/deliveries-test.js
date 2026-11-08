@@ -1,12 +1,15 @@
 'use strict';
 // Save one delivery (all flavours, lots on hold, every check, safe to resend).   node scripts/deliveries-test.js
-const { makeDeliveries, PHOTO_PATH } = require('../utils/deliveries');
+const { makeDeliveries, PHOTO_PATH, inr } = require('../utils/deliveries');
 const { makeInventory, StockError } = require('../utils/inventory');
 const { memStore } = require('./inventory-memstore');
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
 const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), m + ' (got ' + JSON.stringify(a) + ')');
 const rejects = async (p, re, m, status) => { try { await p; ok(false, m + ' (did not throw)'); } catch (e) { ok(e instanceof StockError && re.test(e.message) && (!status || e.status === status), m + ' (got: ' + e.message + ' / ' + e.status + ')'); } };
+
+eq([0, 5, 999, 1000, 15040, 99999, 100000, 115000, 1234567, -115000].map((v) => inr(v)), ['0', '5', '999', '1,000', '15,040', '99,999', '1,00,000', '1,15,000', '12,34,567', '-1,15,000'], 'inr groups the Indian way');
+eq([inr(1234.5), inr(138.72, true), inr(115000, true), inr(-1234.5), inr(999.999, true)], ['1,234.50', '138.72', '1,15,000.00', '-1,234.50', '1,000.00'], 'inr keeps paise and 2 decimals when asked');
 
 const NOW = Date.parse('2026-11-07T06:00:00Z');   // 7 Nov 2026, 11:30 in India
 const A = { actor: { email: 'staff@x.com', name: 'Staff' }, isOwner: false };
@@ -155,7 +158,10 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
   await warn({ bakeDate: '2026-10-25', oldBakeReason: 'Bakery held it back' }, 'old_bake', 'old bake');
   {
     const { dl } = fresh();
-    try { await dl.save(input({ bakeDate: '2026-10-25' }), A); } catch (e) { const w = e.extra.warnings.find((x) => x.key === 'old_bake'); ok(/Atta Original/.test(w.text) && /25 Oct/.test(w.text) && /13 days/.test(w.text) && /2 Dec/.test(w.text), 'old bake text names flavour, date, age and website stop: ' + w.text); }
+    try { await dl.save(input({ bakeDate: '2026-10-25' }), A); } catch (e) { const w = e.extra.warnings.find((x) => x.key === 'old_bake'); eq(w.text, 'Atta Original, Atta Kesari, Atta Ajwain and Atta Sugar-Lite were baked on 25 Oct, 13 days before they arrived. The website will stop selling them on 2 Dec.', 'old bake: four flavours on one date make one sentence'); }
+    try { await dl.save(input({ bakeDate: '2026-10-25', rows: rowsOf({ 'atta-kesari': { bakeDate: '2026-10-27' }, 'atta-ajwain': { bakeDate: '2026-10-27' } }) }), A); } catch (e) { const w = e.extra.warnings.find((x) => x.key === 'old_bake'); eq(w.text, 'Atta Original and Atta Sugar-Lite were baked on 25 Oct, 13 days before they arrived. The website will stop selling them on 2 Dec. Atta Kesari and Atta Ajwain were baked on 27 Oct, 11 days before they arrived. The website will stop selling them on 4 Dec.', 'old bake: two bake dates make two sentences, flavours in form order'); }
+    try { await dl.save(input({ bakeDate: '2026-11-05', rows: rowsOf({ 'atta-kesari': { bakeDate: '2026-10-29' } }) }), A); } catch (e) { const w = e.extra.warnings.find((x) => x.key === 'old_bake'); eq(w.text, 'Atta Kesari was baked on 29 Oct, 9 days before it arrived. The website will stop selling it on 6 Dec.', 'old bake: one flavour reads singular'); }
+    try { await dl.save(input({ invoiceRupees: 115000 }), A); } catch (e) { const w = e.extra.warnings.find((x) => x.key === 'invoice_mismatch'); ok(/\(Rs 1,15,000\)/.test(w.text) && /Rs [0-9,]+\)\.$/.test(w.text) && !/Rs \d{4,}/.test(w.text), 'rupees in warnings use Indian grouping: ' + w.text); }
     await rejects(dl.save(input({ bakeDate: '2026-10-25', confirm: ['old_bake'] }), A), /^Add a reason why the bake date is old\.$/, 'old bake confirmed without reason refused', 400);
   }
   {
@@ -769,7 +775,7 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(nums, { received: 100, broken: 2, good: 98, onHand: 81, website: 6, offline: 4, fairs: 4, gifts: 1, samples: 1, damaged: 1, returned: 1, expired: 1, fixes: 2 }, 'numbers after a sale, an undo, a reversal and a count fix');
     eq(nums.received - nums.broken - nums.damaged - nums.website - nums.offline - nums.fairs - nums.gifts - nums.samples - nums.returned - nums.expired + nums.fixes, nums.onHand, 'the numbers balance');
     eq(lp.perGoodPaise, rs.lots[0].perGoodPaise, 'cost per good box');
-    eq(lp.sticker, 'python3 make_stamp_labels.py --lot MNGK-261105-01 --qty kesari=81 --cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 18 --head-shift -54 --test', 'sticker command');
+    eq(lp.sticker, 'python3 make_stamp_labels.py --lot MNGK-261105-01 --qty kesari=81 --cols 3 --col-gap 0.7 --left 4.0 --small-mrp --pitch 17.84375 --head-shift 2 --test', 'sticker command');
     eq(lp.orders.map((o) => [o.orderId, o.name, o.phone, o.city, o.recipientName || '', o.recipientPhone || '', o.packedAt, o.boxes]), [
       ['MNG-AAAA-1010', 'Asha Rao', '919810000001', 'Gurgaon', '', '', '2026-11-06T08:00:00.000Z', 3],
       ['MNG-BBBB-1010', 'Bob Buyer', '919810000002', 'Pune', 'Rita Receiver', '919820000009', '2026-11-06T09:00:00.000Z', 2],

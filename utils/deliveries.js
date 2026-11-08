@@ -22,6 +22,13 @@ const MAX_RUPEES = 10000000, MAX_FREIGHT = 100000;
 
 const cleanText = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
 const empty = (v) => v == null || String(v).trim() === '';
+// Rupees with Indian digit grouping (1,15,000), no locale data. Whole amounts have no decimals; paise (or `two`) show 2 decimals.
+const inr = (n, two) => {
+  const neg = n < 0, fixed = Math.abs(n).toFixed(2), [i, d] = fixed.split('.');
+  const head = i.length > 3 ? i.slice(0, -3).replace(/\B(?=(\d{2})+$)/g, ',') + ',' + i.slice(-3) : i;
+  return (neg ? '-' : '') + head + (two || d !== '00' ? '.' + d : '');
+};
+const listWords = (a) => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
 const dateWords = (iso) => `${parseInt(iso.slice(8, 10), 10)} ${MONTHS[parseInt(iso.slice(5, 7), 10) - 1]}`;
 const validDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && lots.addDays(v, 0) === v;
 const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
@@ -151,14 +158,15 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     // warnings
     const warnings = [];
     const add = (key, line) => { const w = warnings.find((x) => x.key === key); if (w) w.text += ' ' + line; else warnings.push({ key, text: line }); };
+    const oldBake = new Map();   // one sentence per distinct bake date
+    for (const r of made) { const age = daysBetween(r.bake, arrivedOn); if (age <= settings.old_bake_days) continue; const g = oldBake.get(r.bake) || oldBake.set(r.bake, { age, names: [], stop: r.dates.websiteStop }).get(r.bake); if (!g.names.includes(r.name)) g.names.push(r.name); }
+    for (const [bake, g] of oldBake) { const one = g.names.length === 1; add('old_bake', `${listWords(g.names)} ${one ? 'was' : 'were'} baked on ${dateWords(bake)}, ${g.age} days before ${one ? 'it' : 'they'} arrived. The website will stop selling ${one ? 'it' : 'them'} on ${dateWords(g.stop)}.`); }
     for (const r of made) {
-      const age = daysBetween(r.bake, arrivedOn);
-      if (age > settings.old_bake_days) add('old_bake', `${r.name} was baked on ${dateWords(r.bake)}, so it was ${age} days old when it arrived. The website will stop selling it on ${dateWords(r.dates.websiteStop)}.`);
-      if (r.prev != null && r.cost.perGoodPaise != null && r.cost.perGoodPaise > r.prev * 1.1) add('cost_jump', `${r.name} costs Rs ${(r.cost.perGoodPaise / 100).toFixed(2)} a good box, more than 10% above the last lot (Rs ${(r.prev / 100).toFixed(2)}).`);
+      if (r.prev != null && r.cost.perGoodPaise != null && r.cost.perGoodPaise > r.prev * 1.1) add('cost_jump', `${r.name} costs Rs ${inr(r.cost.perGoodPaise / 100, true)} a good box, more than 10% above the last lot (Rs ${inr(r.prev / 100, true)}).`);
       if (daysBetween(today, r.dates.websiteStop) <= 14) add('stop_soon', `${r.name} (${r.code}) stops selling on the website on ${dateWords(r.dates.websiteStop)}, ${daysBetween(today, r.dates.websiteStop) < 0 ? 'which has already passed' : 'within 14 days'}.`);
     }
     const lineTotal = rows.reduce((a, r) => a + r.rate * r.invoiceBoxes, 0);
-    if (Math.abs((invoiceRupees - gstRupees) - lineTotal) > 1) add('invoice_mismatch', `The invoice total (Rs ${invoiceRupees}${gstRupees ? ', less GST Rs ' + gstRupees : ''}) does not match the boxes times the rates (Rs ${Math.round(lineTotal * 100) / 100}).`);
+    if (Math.abs((invoiceRupees - gstRupees) - lineTotal) > 1) add('invoice_mismatch', `The invoice total (Rs ${inr(invoiceRupees)}${gstRupees ? ', less GST Rs ' + inr(gstRupees) : ''}) does not match the boxes times the rates (Rs ${inr(Math.round(lineTotal * 100) / 100)}).`);
     const freightTotal = (freight.bus_per_carton + freight.delhi_per_carton) * cartons + freight.porter + freight.other;
     if (freightTotal === 0) add('no_freight', 'No freight entered, so the cost per box will look lower than it really is.');
     const totalCounted = rows.reduce((a, r) => a + r.counted, 0);
@@ -676,4 +684,4 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
 let real = null;
 const instance = () => real || (real = makeDeliveries(require('./inventory').supabaseStore()));
 
-module.exports = { makeDeliveries, instance, PHOTO_PATH };
+module.exports = { makeDeliveries, instance, PHOTO_PATH, inr };
