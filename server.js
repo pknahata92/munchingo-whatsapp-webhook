@@ -453,7 +453,7 @@ app.get('/internal/broadcast', async (req, res) => {
   const providedBuf = Buffer.from(String(req.query.secret || ''));
   if (!(expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf))) return res.sendStatus(403);
   const q = req.query;
-  try { const r = await require('./utils/broadcast').run({ template: q.template, lang: q.lang || 'en', mode: q.mode, video: q.video || '', image: q.image || '', expect: q.expect, sources: q.sources || '' }); res.status(r.ok ? 200 : 400).json(r); }
+  try { const r = await require('./utils/broadcast').run({ template: q.template, lang: q.lang || 'en', mode: q.mode, video: q.video || '', image: q.image || '', expect: q.expect, sources: q.sources || '', exclude: q.exclude || '' }); res.status(r.ok ? 200 : 400).json(r); }
   catch (e) { console.error('[BROADCAST] error:', e.message); res.status(500).json({ ok: false, error: e.message }); }
 });
 

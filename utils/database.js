@@ -498,6 +498,11 @@ async function listMarketingSends() {   // small table (one row per broadcast me
   if (error) throw new Error(error.message);
   return data || [];
 }
+/** WhatsApp reported a broadcast message as failed after accepting it: mark its log row failed (it can be sent again). */
+async function markMarketingSendFailed(waMessageId, error) {
+  const { error: err } = await db().from('marketing_sends').update({ status: 'failed', error }).eq('wa_message_id', waMessageId);
+  if (err) throw new Error(err.message);
+}
 async function insertMarketingSend(row) {
   const { error } = await db().from('marketing_sends').insert(row);
   if (error) throw new Error(error.message);
@@ -666,7 +671,7 @@ module.exports = {
   upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, insertMarketingSend, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

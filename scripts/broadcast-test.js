@@ -10,17 +10,18 @@ const b = require('../utils/broadcast');
 const DAY = 86_400_000, NOW = Date.parse('2026-11-08T12:00:00Z');
 
 function world({ contacts, sends = [], failFor = [] }) {
-  const sent = [], logged = [];
+  const sent = [], logged = [], markedFailed = [];
   b.setDeps({
     db: {
       listMarketingContacts: async () => contacts.filter((c) => c.consent_marketing === true),
       listMarketingSends: async (sinceIso) => sends.filter((s) => s.sent_at >= sinceIso || s.template),
       insertMarketingSend: async (row) => { logged.push(row); sends.push({ ...row, sent_at: new Date(NOW).toISOString() }); },
+      markMarketingSendFailed: async (waId, error) => { markedFailed.push({ waId, error }); const r = sends.find((x) => x.wa_message_id === waId); if (r) { r.status = 'failed'; r.error = error; } },
     },
-    wa: { sendTemplateWithHeader: async (to, name, lang, header, params) => { if (failFor.includes(to)) throw new Error('bad number'); sent.push({ to, name, lang, header, params }); return { messages: [{ id: 'wamid' }] }; } },
+    wa: { sendTemplateWithHeader: async (to, name, lang, header, params) => { if (failFor.includes(to)) throw new Error('bad number'); sent.push({ to, name, lang, header, params }); return { messages: [{ id: to === '919999900000' ? 'wamid' : 'wamid-' + to }] }; } },
     now: () => NOW, wait: async () => {}, ownerPhone: () => '919999900000',
   });
-  return { sent, logged, sends };
+  return { sent, logged, sends, markedFailed };
 }
 const C = (phone, name, consent = true, src = 'join:2026-10-25') => ({ phone, name, consent_marketing: consent, first_source: src, last_source: src });
 const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.mp4';
@@ -111,6 +112,25 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   b.noteStatus({ id: 'wamid', status: 'delivered', recipient_id: '919999900000' });
   r = await b.run({ template: T, mode: 'dry' });
   ok(r.recent.some((x) => x.status === 'delivered'), 'a delivered status is shown too');
+
+  // a send Meta accepts but then drops (131049) is marked failed, so it can be retried and does not count against the cap
+  w = world({ contacts: [C('919000000001', 'Asha'), C('919000000002', 'Ravi')] });
+  r = await b.run({ template: T, mode: 'send', image: 'https://munchingo.com/x.jpg', expect: 3 });
+  ok(w.logged.every((l) => l.wa_message_id), 'each logged send keeps the WhatsApp message id');
+  b.noteStatus({ id: 'wamid-919000000001', status: 'failed', errors: [{ code: 131049, title: 'healthy ecosystem' }] });
+  await new Promise((z) => setTimeout(z, 10));
+  ok(w.markedFailed.length === 1 && w.markedFailed[0].waId === 'wamid-919000000001' && /131049/.test(w.markedFailed[0].error), 'a failed delivery marks its log row failed with the code');
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 1 && r.already_sent === 2, 'the dropped person can be sent again; the two delivered are not');
+  b.noteStatus({ id: 'wamid-919000000002', status: 'delivered' });
+  await new Promise((z) => setTimeout(z, 10));
+  ok(w.markedFailed.length === 1, 'a delivered status changes nothing in the log');
+
+  // exclude: tomorrow's send skips the buyers Prashant messaged by hand today
+  w = world({ contacts: [C('919000000001', 'Asha', true, 'stall:2026-11-01'), C('919000000002', 'Ravi', true, 'join:2026-10-25'), C('919000000003', 'Neha', true, 'fair:2026-10-25'), { phone: '919000000004', name: 'Om', consent_marketing: true, first_source: 'join:2026-10-25', last_source: 'stall:2026-11-06' }] });
+  r = await b.run({ template: T, mode: 'dry', exclude: 'stall,fair' });
+  ok(r.to_send === 2, 'exclude=stall,fair leaves the sign-up who never bought plus the owner, and drops a sign-up who later bought at a stall (got ' + r.to_send + ')');
+  ok(!(await b.run({ template: T, mode: 'dry', exclude: 'x; drop' })).ok, 'an exclude list with odd characters is refused');
 
   // wiring
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');

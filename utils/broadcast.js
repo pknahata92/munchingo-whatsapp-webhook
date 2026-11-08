@@ -36,11 +36,19 @@ function resetStatuses() { sentIds.clear(); recent.length = 0; }   // tests only
 function remember(res, template) {
   const id = res && res.messages && res.messages[0] && res.messages[0].id;
   if (id) { sentIds.set(id, template); if (sentIds.size > 500) sentIds.delete(sentIds.keys().next().value); }
+  return id || null;
 }
 /** Called by the webhook for every status; keeps only results for broadcast messages. */
 function noteStatus(s) {
-  if (!s || !sentIds.has(s.id)) return;
+  if (!s) return;
   const e = (s.errors && s.errors[0]) || {};
+  // A send Meta accepted and then dropped (e.g. 131049) is marked failed in the log: it can be sent again and does not
+  // count against the monthly cap. Checked for every failed status, so it still works after a server restart.
+  if (s.status === 'failed' && s.id) {
+    Promise.resolve().then(() => D().db.markMarketingSendFailed(s.id, `${e.code || ''} ${e.title || ''}`.trim().slice(0, 300)))
+      .catch((err) => console.error('[BROADCAST] could not mark a failed send:', err.message));
+  }
+  if (!sentIds.has(s.id)) return;
   recent.unshift({ template: sentIds.get(s.id), status: s.status, code: e.code || null,
     reason: [e.title, e.message, e.error_data && e.error_data.details].filter(Boolean).join(' | ') || null, at: new Date(D().now()).toISOString() });
   recent.length = Math.min(recent.length, RECENT_MAX);
@@ -51,7 +59,7 @@ function firstName(name) {
   return /^[a-z][a-z'-]*$/i.test(w) ? w[0].toUpperCase() + w.slice(1).toLowerCase() : 'there';
 }
 
-async function audience(template, sources) {
+async function audience(template, sources, exclude = []) {
   const { db, now, ownerPhone } = D();
   const since = new Date(now() - CAP_DAYS * 86_400_000).toISOString();
   const [contacts, sends] = await Promise.all([db.listMarketingContacts(), db.listMarketingSends({ sinceIso: since, template })]);
@@ -63,7 +71,8 @@ async function audience(template, sources) {
   const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0 };
   const seen = new Set([owner]);
   if (owner) { if (done.has(owner)) out.already_sent++; else out.list.push({ phone: owner, first: 'Prashant' }); }
-  const fromSource = (c) => !sources.length || sources.some((x) => [c.first_source, c.last_source].some((v) => String(v || '').startsWith(x)));
+  const has = (c, list) => list.some((x) => [c.first_source, c.last_source].some((v) => String(v || '').startsWith(x)));
+  const fromSource = (c) => (!sources.length || has(c, sources)) && !(exclude.length && has(c, exclude));
   for (const c of contacts) {
     const p = digits(c.phone);
     if (c.consent_marketing !== true || !p || seen.has(p) || !fromSource(c)) continue;
@@ -76,18 +85,20 @@ async function audience(template, sources) {
   return out;
 }
 
-/** { template, lang, mode, video | image, expect, sources } -> counts only, never phone numbers. */
-async function run({ template, lang = 'en', mode = 'dry', video = '', image = '', expect, sources = '' } = {}) {
+/** { template, lang, mode, video | image, expect, sources, exclude } -> counts only, never phone numbers. */
+async function run({ template, lang = 'en', mode = 'dry', video = '', image = '', expect, sources = '', exclude = '' } = {}) {
   if (!/^[a-z0-9_]{1,512}$/.test(String(template || ''))) return { ok: false, error: 'template must be the approved template name (lowercase letters, numbers, _).' };
   if (!MODES.includes(mode)) return { ok: false, error: `mode must be one of ${MODES.join(', ')}.` };
   if (video && !/^https:\/\/\S+$/.test(video)) return { ok: false, error: 'video must be an https link to an .mp4.' };
   if (image && !/^https:\/\/\S+$/.test(image)) return { ok: false, error: 'image must be an https link to a .jpg or .png.' };
   if (video && image) return { ok: false, error: 'a template has one header: send a video or an image, not both.' };
   if (!/^[a-z0-9:,\- ]*$/i.test(String(sources))) return { ok: false, error: 'sources must look like stall,fair or stall:2026-11-06.' };
-  const src = String(sources).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  if (!/^[a-z0-9:,\- ]*$/i.test(String(exclude))) return { ok: false, error: 'exclude must look like stall,fair.' };
+  const list = (v) => String(v).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const src = list(sources), exc = list(exclude);
   const { db, wa, wait, ownerPhone } = D();
   const header = video ? { type: 'video', link: video } : image ? { type: 'image', link: image } : null;
-  const a = await audience(template, src);
+  const a = await audience(template, src, exc);
   const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, to_send: a.list.length, recent: recent.slice() };
 
   if (mode === 'dry') return { ok: true, mode, template, ...counts };
@@ -104,10 +115,10 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   }
   let sent = 0, failed = 0;
   for (const p of a.list) {
-    let status = 'sent', error = null;
-    try { remember(await wa.sendTemplateWithHeader(p.phone, template, lang, header, [p.first]), template); sent++; }
+    let status = 'sent', error = null, waId = null;
+    try { waId = remember(await wa.sendTemplateWithHeader(p.phone, template, lang, header, [p.first]), template); sent++; }
     catch (e) { status = 'failed'; error = metaError(e).slice(0, 300); failed++; }
-    try { await db.insertMarketingSend({ phone: p.phone, template, status, error }); }
+    try { await db.insertMarketingSend({ phone: p.phone, template, status, error, wa_message_id: waId }); }
     catch (e) { console.error('[BROADCAST] could not log a send:', e.message); }
     await wait(GAP_MS);
   }

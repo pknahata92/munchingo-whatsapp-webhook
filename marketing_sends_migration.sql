@@ -12,3 +12,7 @@ create table if not exists marketing_sends (
 create index if not exists marketing_sends_phone_idx on marketing_sends (phone, sent_at);
 create index if not exists marketing_sends_template_idx on marketing_sends (template);
 alter table marketing_sends enable row level security;
+
+-- 8 Nov 2026 (later): WhatsApp's message id, so a send Meta accepts and then drops (e.g. 131049) can be marked failed.
+alter table marketing_sends add column if not exists wa_message_id text;
+create index if not exists marketing_sends_wa_message_id_idx on marketing_sends (wa_message_id);
