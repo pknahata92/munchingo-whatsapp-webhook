@@ -44,6 +44,7 @@ app.set('trust proxy', 3);   // hops in front of us on Render: loopback + Render
 app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));   // 1 MB: a stall day snapshot can pass the 100 kb default
 
 // Private admin page (login by emailed code; see utils/adminAuth.js and routes/admin.js)
+app.use('/admin/api/stock/photo', require('./routes/admin').photoTooLarge);   // a photo over the 1 MB body limit: plain words, not a raw 413
 app.use(require('./routes/admin'));
 
 // CORS - the checkout/contact pages call this backend from the browser, from

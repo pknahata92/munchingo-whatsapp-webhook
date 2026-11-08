@@ -341,22 +341,10 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     const reason = reasonOf(input.reason);
     const d = await store.delivery(String(input.id == null ? '' : input.id));
     if (!d) throw new StockError('No such delivery.', 404);
-    if (d.status === 'void') throw new StockError('This delivery was already corrected.', 409);
-    const email = String((actor && actor.email) || '').toLowerCase();
-    if (!isOwner) {
-      if (now() - Date.parse(d.created_at) > REVERSE_FREE_MS) throw new StockError('Only the owner can correct a delivery older than a day.', 403);
-      if (!email || email !== String(d.saved_by_email || '').toLowerCase()) throw new StockError('Only the person who saved this delivery, or the owner, can correct it.', 403);
-    }
+    const block = await correctBlock(d, actor, isOwner);
+    if (block) throw new StockError(block.message, block.status);
     const mine = ((await store.lots()) || []).filter((l) => l.delivery_id === d.id);
-    if (mine.some((l) => l.status === 'released' || l.released_at)) throw new StockError('Released lots cannot be corrected here. Use Fix lot.', 409);
-    const USED = 'Boxes from this delivery have already been used. Correct it with Fix lot or a count instead.';
-    if (mine.some((l) => l.status !== 'hold' && l.status !== 'void')) throw new StockError(USED, 409);
     const own = (await store.movementsByDelivery(d.id)) || [];
-    const ownIds = new Set(own.map((m) => m.id));
-    const pairs = new Set(mine.map((l) => `${l.item_slug}|${l.lot_code}`));
-    const onLots = ((await store.movementsByLots([...new Set(mine.map((l) => l.lot_code))])) || []).filter((m) => pairs.has(`${m.item_slug}|${m.lot_code}`));
-    if (onLots.some((m) => !ownIds.has(m.id) && !(m.reverses_id && ownIds.has(m.reverses_id)))) throw new StockError(USED, 409);
-
     const rows = own.filter((m) => m.type !== 'REVERSAL' && !m.reverses_id);
     const done = new Set((await store.reversedAmong(rows.map((m) => m.id))) || []);
     const who = { actor_email: (actor && actor.email) || null, actor_name: (actor && (actor.name || actor.email)) || null };
@@ -367,6 +355,49 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     const prefill = JSON.parse(JSON.stringify(d.input || {}));
     delete prefill.id;
     return { prefill };
+  }
+
+  // Why this actor cannot correct this delivery now (the Task 8 rules), or null when they can. Reads only; correctDelivery and the
+  // delivery page (canCorrect) share it so the button and the refusal always agree.
+  async function correctBlock(d, actor, isOwner) {
+    if (d.status === 'void') return { message: 'This delivery was already corrected.', status: 409 };
+    const email = String((actor && actor.email) || '').toLowerCase();
+    if (!isOwner) {
+      if (now() - Date.parse(d.created_at) > REVERSE_FREE_MS) return { message: 'Only the owner can correct a delivery older than a day.', status: 403 };
+      if (!email || email !== String(d.saved_by_email || '').toLowerCase()) return { message: 'Only the person who saved this delivery, or the owner, can correct it.', status: 403 };
+    }
+    const mine = ((await store.lots()) || []).filter((l) => l.delivery_id === d.id);
+    if (mine.some((l) => l.status === 'released' || l.released_at)) return { message: 'Released lots cannot be corrected here. Use Fix lot.', status: 409 };
+    const USED = { message: 'Boxes from this delivery have already been used. Correct it with Fix lot or a count instead.', status: 409 };
+    if (mine.some((l) => l.status !== 'hold' && l.status !== 'void')) return USED;
+    const own = (await store.movementsByDelivery(d.id)) || [];
+    const ownIds = new Set(own.map((m) => m.id));
+    const pairs = new Set(mine.map((l) => `${l.item_slug}|${l.lot_code}`));
+    const onLots = ((await store.movementsByLots([...new Set(mine.map((l) => l.lot_code))])) || []).filter((m) => pairs.has(`${m.item_slug}|${m.lot_code}`));
+    if (onLots.some((m) => !ownIds.has(m.id) && !(m.reverses_id && ownIds.has(m.reverses_id)))) return USED;
+    return null;
+  }
+
+  // The delivery page (read only): the saved bill, its lots as they are now, what to raise with the supplier, and whether this actor may
+  // still use Correct whole delivery.
+  async function deliveryPage(id, { actor, isOwner } = {}) {
+    const d = await store.delivery(String(id == null ? '' : id));
+    if (!d) throw new StockError('No such delivery.', 404);
+    const [lotRows, ledger, raw] = await Promise.all([store.lots(), store.byLot(), store.settingsAll()]);
+    const s = lots.readSettings(raw), stored = (d.result && d.result.lots) || [];
+    const out = [];
+    for (const l of (lotRows || []).filter((x) => x.delivery_id === d.id)) {
+      const was = stored.find((x) => x.slug === l.item_slug) || {};
+      const bb = l.best_before ? String(l.best_before).slice(0, 10) : null, cut = bb ? lots.cutoffs(bb, s) : null;
+      out.push({ code: l.lot_code, slug: l.item_slug, name: await nameOf(l.item_slug), status: l.status, good: was.good != null ? was.good : null, onHand: onHandOf(ledger, l.item_slug, l.lot_code),
+        bakeDate: l.bake_date ? String(l.bake_date).slice(0, 10) : null, bestBefore: bb, websiteStop: cut ? cut.websiteStop : null, lastShip: cut ? cut.lastShip : null,
+        perGoodPaise: l.unit_cost_paise != null ? Number(l.unit_cost_paise) : (was.perGoodPaise != null ? was.perGoodPaise : null) });
+    }
+    const res = d.result || {};
+    return {
+      delivery: { id: d.id, billNo: d.bill_no, part: d.part, supplier: d.supplier, arrivedOn: d.arrived_on ? String(d.arrived_on).slice(0, 10) : null, cartons: d.cartons, photos: Array.isArray(d.photos) ? d.photos : [], note: d.note || null, status: d.status, savedBy: d.saved_by_name || d.saved_by_email || null, savedAt: d.created_at || null },
+      lots: out, toRaise: res.toRaise || [], notes: res.notes || [], canCorrect: !(await correctBlock(d, actor, isOwner)),
+    };
   }
 
   // Fix lot (owner): change a lot's code and/or bake date after the fact. Remaining stock moves with COUNT_FIX pairs (as renameLot
@@ -631,7 +662,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     return lines.join('\n');
   }
 
-  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, fixLot, listLots, lotPage, search, buyersCsv };
+  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, deliveryPage, fixLot, listLots, lotPage, search, buyersCsv };
 }
 
 let real = null;

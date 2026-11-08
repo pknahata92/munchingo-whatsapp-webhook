@@ -80,7 +80,10 @@ const channelsOrNull = async () => { try { return await chan().status(); } catch
 router.get('/admin/api/inventory', sw(async (req, inv) => { const [overview, channels] = await Promise.all([inv.overview(), channelsOrNull()]); return { ...overview, channels }; }));
 router.get('/admin/api/inventory/history', sw((req, inv) => inv.history({ slug: req.query.slug, limit: Number(req.query.limit) || 40, types: req.query.types ? String(req.query.types).split(',') : null })));
 router.get('/admin/api/inventory/receipt', sw((req, inv) => inv.receipt({ id: Number(req.query.id) })));
-router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin, isOwner: req.admin.role === 'owner' })));   // isOwner after the spread: a client can never claim it
+// Biscuits arrive only through Stock, New delivery (every box gets its lot and the hold check): inventory.receive refuses a new biscuit
+// receipt when this flag is set. Packaging receipts and corrections of an old receipt (`replaces`) work as before; internal callers
+// (the practice seed, tests) call inventory.receive directly and are not blocked.
+router.post('/admin/api/inventory/receive', sw((req, inv) => inv.receive({ ...(req.body || {}), actor: req.admin, isOwner: req.admin.role === 'owner', biscuitsViaDelivery: true })));   // flags after the spread: a client can never claim isOwner or lift the block
 router.post('/admin/api/inventory/take', sw((req, inv) => inv.take({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/take-many', sw((req, inv) => inv.takeMany({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/event-return', sw((req, inv) => inv.eventReturn({ ...(req.body || {}), actor: req.admin })));
@@ -100,6 +103,38 @@ router.get('/admin/api/stock/needs-lot', sw(async (req, inv) => {
   const [lines, unplanned] = await Promise.all([inv.needsLot(), actions.unplannedPacks().catch((e) => { console.error('[STOCK] could not read the unplanned packs:', e.message); return null; })]);
   return { lines, unplanned };
 }));
+// Batch receiving, Task 10: deliveries, lots, trace search, photos (spec 6.3-6.9). Staff and owner unless marked; the owner-only routes use
+// the `owner` guard AND set isOwner from the session after the body spread. utils/deliveries.js throws the inventory's StockError.
+const dl = () => require('../utils/deliveries').instance();
+const who = (req) => ({ actor: req.admin, isOwner: req.admin.role === 'owner' });
+const slugOf = (req) => (req.query.slug ? String(req.query.slug) : ((req.body || {}).slug ? String((req.body || {}).slug) : undefined));
+const lotIn = (req) => ({ ...(req.body || {}), code: req.params.code, slug: slugOf(req) });   // the code is in the URL, the flavour may be in the query or the body
+router.get('/admin/api/stock/deliveries/prefill', sw(async () => dl().lastPrefill()));   // before :id, or "prefill" would be read as a delivery number
+router.get('/admin/api/stock/deliveries/:id', sw((req) => dl().deliveryPage(req.params.id, who(req))));
+router.post('/admin/api/stock/deliveries/:id/correct', sw((req) => dl().correctDelivery({ ...(req.body || {}), id: req.params.id }, who(req))));
+router.get('/admin/api/stock/lots', sw(async () => ({ lots: await dl().listLots() })));
+router.get('/admin/api/stock/lots/:code/buyers.csv', async (req, res) => {   // raw: the answer is a file, not JSON
+  try {
+    const csv = await dl().buyersCsv(req.params.code, slugOf(req));
+    const name = String(req.params.code).replace(/[^A-Za-z0-9-]/g, '') || 'lot';
+    res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="buyers-${name}.csv"`, 'Cache-Control': 'no-store' }).send(csv);
+  } catch (e) {
+    if (e instanceof stock().StockError) return res.status(e.status).json({ ok: false, error: e.message, ...e.extra });
+    console.error('[ADMIN] buyers.csv error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+router.get('/admin/api/stock/lots/:code', sw((req) => dl().lotPage(req.params.code, slugOf(req))));
+router.get('/admin/api/stock/search', sw((req) => dl().search(req.query.q)));
+router.post('/admin/api/stock/lots/:code/release', sw((req) => dl().release(lotIn(req), who(req))));
+router.post('/admin/api/stock/lots/:code/reject', owner, sw((req) => dl().reject(lotIn(req), who(req))));
+router.post('/admin/api/stock/lots/:code/hold', owner, sw((req) => dl().hold(lotIn(req), who(req))));
+router.post('/admin/api/stock/lots/:code/fix', owner, sw((req) => dl().fixLot(lotIn(req), who(req))));
+router.post('/admin/api/stock/lots/:code/broken', sw((req) => dl().brokenWhileCartoning(lotIn(req), who(req))));
+router.post('/admin/api/stock/expired', owner, sw((req) => dl().throwExpired(req.body || {}, who(req))));
+// Photos live in a private bucket (utils/stockPhotos.js). The phone sends the shrunk JPEG as a data URL; a link to see one lasts 10 minutes.
+router.post('/admin/api/stock/photo', sw((req) => require('../utils/stockPhotos').upload((req.body || {}).dataUrl)));
+router.get('/admin/api/stock/photo', sw(async (req) => ({ url: await require('../utils/stockPhotos').url(String(req.query.path || '')) })));
 router.post('/admin/api/inventory/hamper', sw((req, inv) => inv.offlineHamper({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
@@ -193,5 +228,12 @@ router.get('/admin/api/orders/:id/invoice.pdf', async (req, res) => {
     res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="Munchingo-Invoice-${invoice.invoice_no.replace(/\//g, '-')}.pdf"` }).send(pdf);
   } catch (err) { res.status(err.status || 500).json({ ok: false, error: err.message }); }
 });
+
+// A photo that is too big for the body parser (413) reads like our own size message. Mounted by server.js (and the practice admin) right
+// after express.json, because a parser error never reaches the router.
+router.photoTooLarge = (err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) return res.status(413).json({ ok: false, error: 'The photo is too large. Take it again.' });
+  next(err);
+};
 
 module.exports = router;

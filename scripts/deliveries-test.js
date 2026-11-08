@@ -831,6 +831,34 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(p.orders[0].city, 'Delhi', 'city guessed from the address');
   }
 
+  // Task 10: the delivery page (read only)
+  {
+    const { st, dl } = fresh();
+    const OWN = { actor: { email: 'owner@x.com', name: 'Owner' }, isOwner: true }, OTHER = { actor: { email: 'other@x.com', name: 'Other' }, isOwner: false };
+    const inp = input({ rows: rowsOf({ 'atta-ajwain': { invoiceBoxes: 100, counted: 98, diffReason: 'short', broken: 2, brokenReason: 'transit', brokenPhoto: PH } }), photos: [PH], note: 'bus late' });
+    const r = await dl.save(inp, A);
+    const mv = st.mv.length, lotsBefore = JSON.stringify(await st.lots());
+    const pg = await dl.deliveryPage(inp.id, A);
+    eq([pg.delivery.id, pg.delivery.billNo, pg.delivery.part, pg.delivery.supplier, pg.delivery.arrivedOn, pg.delivery.cartons, pg.delivery.photos, pg.delivery.note, pg.delivery.status, pg.delivery.savedBy], [inp.id, 'A000300', 1, 'Krazy Bakers', '2026-11-07', 10, [PH], 'bus late', 'received', 'Staff'], 'delivery fields');
+    ok(typeof pg.delivery.savedAt === 'string' && pg.delivery.savedAt.length > 10, 'savedAt is a time');
+    eq(pg.lots.map((l) => l.code), r.lots.map((l) => l.code), 'its four lots, as they are now');
+    const aj = pg.lots.find((l) => l.slug === 'atta-ajwain');
+    eq([aj.status, aj.good, aj.onHand, aj.bakeDate, aj.bestBefore, aj.lastShip, aj.websiteStop, aj.name], ['hold', 96, 96, '2026-11-05', '2027-02-03', '2026-12-15', '2026-12-13', 'Atta Ajwain'], 'a lot row: status, good, on hand and dates');
+    ok(aj.perGoodPaise > 0, 'cost per good box');
+    eq(pg.toRaise, r.toRaise, 'toRaise from the stored result'); eq(pg.notes, r.notes, 'notes from the stored result');
+    eq(pg.canCorrect, true, 'the saver may still correct it');
+    eq((await dl.deliveryPage(inp.id, OTHER)).canCorrect, false, 'another staff member may not');
+    eq((await dl.deliveryPage(inp.id, OWN)).canCorrect, true, 'the owner may');
+    ok(st.mv.length === mv && JSON.stringify(await st.lots()) === lotsBefore, 'reading the page writes nothing');
+    await rejects(dl.deliveryPage('nope', A), /^No such delivery\.$/, 'unknown delivery', 404);
+    await dl.release({ code: r.lots[0].code, slug: r.lots[0].slug, tasted: true, weightG: 260 }, A);
+    const rel = await dl.deliveryPage(inp.id, A);
+    eq([rel.canCorrect, rel.lots.find((l) => l.slug === r.lots[0].slug).status], [false, 'released'], 'once a lot is released it cannot be corrected and shows released');
+    const inp2 = input({ billNo: 'A000301' }); await dl.save(inp2, A); await dl.correctDelivery({ id: inp2.id, reason: 'redo' }, A);
+    const v = await dl.deliveryPage(inp2.id, OWN);
+    eq([v.delivery.status, v.canCorrect, v.lots.every((l) => l.status === 'void')], ['void', false, true], 'a corrected delivery shows void and cannot be corrected again');
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

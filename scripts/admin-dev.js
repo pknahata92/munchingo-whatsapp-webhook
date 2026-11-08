@@ -125,6 +125,21 @@ stub('utils/database.js', {
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
+// Private photos in memory (no storage): url() gives back a data: link of the stored image, like a signed link would show it.
+{
+  const photos = new Map(); const crypto = require('crypto');
+  stub('utils/stockPhotos.js', {
+    upload: async (dataUrl) => {
+      const { StockError } = require(path.join(root, 'utils/inventory.js'));
+      const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(dataUrl || ''));
+      if (!m) throw new StockError('Only a photo (JPEG) can be added.', 400);
+      if (Buffer.from(m[1], 'base64').length > 750 * 1024) throw new StockError('The photo is too large. Take it again.', 400);
+      const ist = new Date(Date.now() + 330 * 60000).toISOString(); const p = `${ist.slice(0, 4)}/${ist.slice(5, 7)}/${crypto.randomBytes(8).toString('hex')}.jpg`;
+      photos.set(p, dataUrl); return { path: p };
+    },
+    url: async (p) => { const { StockError } = require(path.join(root, 'utils/inventory.js')); if (!/^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/.test(String(p))) throw new StockError('That photo could not be found.', 400); if (!photos.has(p)) throw new StockError('That photo could not be found.', 404); return photos.get(p); },
+  });
+}
 stub('utils/mailer.js', {
   sendAdminCode: async (email, code) => { fs.writeFileSync(CODE_BASE + '-' + email.split('@')[0] + '.txt', code); fs.writeFileSync(CODE_BASE + '.txt', code); console.log('[dev] login code for', email, '=', code); },
   sendShippedEmail: async ({ order }) => console.log('[dev] shipped email ->', order.customer_email),
@@ -201,6 +216,7 @@ app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body &&
     res.json({ ok: true });
   });
 }
+app.use('/admin/api/stock/photo', require('../routes/admin').photoTooLarge);   // same as server.js
 app.use(require('../routes/admin'));
 // Practice-only stand-in for Delhivery's API (shipment creation and labels) so the ship and label buttons can be clicked through.
 process.env.DELHIVERY_API_TOKEN = 'tok_dev';

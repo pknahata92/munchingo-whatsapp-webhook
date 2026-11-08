@@ -346,8 +346,12 @@ async function login(email) {
     ok((await call(`/orders/${G}/assign-lot`, s.token, { slug: 'atta-kesari', lot: code })).s === 403, 'staff cannot assign a lot');
     const ah = await call(`/orders/${G}/assign-lot`, o.token, { slug: 'atta-kesari', lot: code });
     ok(ah.s === 409 && /on hold/.test(ah.j.error || ''), 'a held lot cannot be assigned: ' + ah.s + ' ' + ah.j.error);
-    ok((await call('/inventory/receive', o.token, { slug: 'atta-kesari', received: 2, lot: 'PRACTICE-T6', bestBefore: bbIn80 })).j.ok, 'setup: 2 Kesari arrive the old way (a legacy lot, counts as released)');
-    const ag = await call(`/orders/${G}/assign-lot`, o.token, { slug: 'atta-kesari', lot: 'PRACTICE-T6' });
+    // Task 10: biscuits can no longer be received through /inventory/receive, so the setup is a delivery plus Release (staff may release)
+    const d2 = await call('/stock/deliveries', s.token, { id: 'practice-t6b-' + stamp, billNo: 'T6B-' + stamp, bakeDate: istToday, cartons: 1, invoiceRupees: 200, freight: { porter: 10 }, rows: [{ slug: 'atta-kesari', invoiceBoxes: 2, counted: 2, rateRupees: 100 }] });
+    const code2 = d2.j.lots && d2.j.lots[0] && d2.j.lots[0].code;
+    const rl2 = await call(`/stock/lots/${encodeURIComponent(code2)}/release`, s.token, { slug: 'atta-kesari', tasted: true, weightG: 260 });
+    ok(d2.j.ok && rl2.j.ok, 'setup: 2 Kesari arrive as a delivery and staff release the lot ' + code2 + ' (' + JSON.stringify([d2.s, rl2.s, rl2.j.error]) + ')');
+    const ag = await call(`/orders/${G}/assign-lot`, o.token, { slug: 'atta-kesari', lot: code2 });
     ok(ag.j.ok && ag.j.moved === 1 && !(await call('/stock/needs-lot', s.token)).j.lines.some((l) => l.orderId === G && l.slug === 'atta-kesari'), 'the owner assigns a lot and the box leaves the list (' + JSON.stringify(ag.j) + ')');
     // bulk pack of 3 with 1 Kesari box left: the first Trio and the Original order pack, the second Trio is refused with the reason
     ok((await call('/orders/MNG-BBBB-1010/undo', o.token, {})).j.state === 'topack', 'setup: an Original order goes back to To pack');
@@ -416,6 +420,88 @@ async function login(email) {
     ok(z.j.ok && z.j.onHand === 0 && ls.counted === true && ls.on_hand === 0 && typeof ls.last_counted === 'string' && ls.status === 'ok', 'staff types 0 for labels: recorded as a count (' + JSON.stringify([ls.counted, ls.status]) + ')');
     await call('/inventory/level', o.token, { slug: 'label-stamp', lowLevel: 5 });
     ok((await list()).find((i) => i.slug === 'label-stamp').status === 'out', 'with a low level of 5 the counted 0 shows OUT');
+  }
+
+  // ── Batch receiving, Task 10: lot and delivery routes, private photos, biscuit receipts only through New delivery ──
+  {
+    const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const stamp = Date.now() + 7;
+    const jpeg = (kb) => 'data:image/jpeg;base64,' + Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0]), Buffer.alloc(Math.round(kb * 1024), 7), Buffer.from([0xff, 0xd9])]).toString('base64');
+    // product receipts are blocked, packaging works
+    const BLOCK = 'Biscuits are received with Stock, New delivery, so every box gets its lot and the hold check.';
+    const rb = await call('/inventory/receive', s.token, { slug: 'atta-original', received: 3, lot: 'X1', bestBefore: '2027-01-01' });
+    ok(rb.s === 409 && rb.j.error === BLOCK, 'a biscuit receipt through the old route is refused in plain words (' + rb.s + ' ' + rb.j.error + ')');
+    const rp = await call('/inventory/receive', s.token, { slug: 'mono-original', received: 5 });
+    ok(rp.j.ok, 'a packaging receipt still works (' + rp.s + ' ' + rp.j.error + ')');
+    // a delivery of two flavours (Original + Ajwain), bake today
+    const dv = await call('/stock/deliveries', s.token, { id: 'practice-t10-' + stamp, billNo: 'T10-' + stamp, bakeDate: istToday, cartons: 2, invoiceRupees: 1700, freight: { porter: 100 }, rows: [{ slug: 'atta-original', invoiceBoxes: 10, counted: 10, rateRupees: 85 }, { slug: 'atta-ajwain', invoiceBoxes: 10, counted: 10, rateRupees: 85 }] });
+    ok(dv.j.ok && dv.j.lots.length === 2, 'setup: a two-flavour delivery is saved (' + dv.s + ' ' + dv.j.error + ')');
+    const lo = dv.j.lots.find((l) => l.slug === 'atta-original'), la = dv.j.lots.find((l) => l.slug === 'atta-ajwain');
+    const enc = (c) => encodeURIComponent(c);
+    // delivery page, prefill (registered before :id), lots list, lot page, search
+    const pre = await call('/stock/deliveries/prefill', s.token);
+    ok(pre.s === 200 && pre.j.ok && pre.j.rates && pre.j.rates['atta-original'] === 85 && pre.j.freight, 'prefill answers (not read as a delivery id): ' + pre.s + ' ' + JSON.stringify(pre.j).slice(0, 120));
+    const dp = await call('/stock/deliveries/practice-t10-' + stamp, s.token);
+    ok(dp.s === 200 && dp.j.delivery.billNo === 'T10-' + stamp && dp.j.delivery.status === 'received' && dp.j.lots.length === 2 && dp.j.lots[0].status === 'hold' && dp.j.lots[0].onHand === 10 && Array.isArray(dp.j.toRaise) && dp.j.canCorrect === true, 'staff read the delivery page: ' + JSON.stringify(dp.j).slice(0, 300));
+    ok((await call('/stock/deliveries/nope-' + stamp, s.token)).s === 404, 'an unknown delivery is a 404');
+    const ll = await call('/stock/lots', s.token);
+    ok(ll.s === 200 && Array.isArray(ll.j.lots) && ll.j.lots.some((l) => l.code === lo.code), 'the lots list answers');
+    const lp = await call(`/stock/lots/${enc(lo.code)}`, s.token);
+    ok(lp.s === 200 && lp.j.lot.code === lo.code && lp.j.numbers.onHand === 10, 'the lot page answers');
+    const sr = await call(`/stock/search?q=${enc(lo.code.toLowerCase())}`, s.token);
+    ok(sr.s === 200 && sr.j.lot && sr.j.lot.code === lo.code, 'search finds the lot by code (' + JSON.stringify(sr.j) + ')');
+    // a shared old code: two flavours under 15OCT26 -> 409 with choose; slug picks one
+    const sh = await call('/stock/lots/15OCT26', s.token);
+    ok(sh.s === 409 && Array.isArray(sh.j.choose) && sh.j.choose.length >= 2 && sh.j.choose[0].code === '15OCT26' && sh.j.choose[0].slug && sh.j.choose[0].name, 'a shared code answers 409 with the choose list (' + sh.s + ' ' + JSON.stringify(sh.j).slice(0, 200) + ')');
+    const sh1 = await call('/stock/lots/15OCT26?slug=atta-kesari', s.token);
+    ok(sh1.s === 200 && sh1.j.lot.slug === 'atta-kesari', 'with ?slug= the shared code opens that flavour');
+    // CSV
+    const csvRes = await fetch(B + `/stock/lots/${enc(lo.code)}/buyers.csv`, { headers: { Authorization: 'Bearer ' + s.token } });
+    const csvText = await csvRes.text();
+    ok(csvRes.status === 200 && /^text\/csv; charset=utf-8/.test(csvRes.headers.get('content-type') || '') && csvRes.headers.get('content-disposition') === `attachment; filename="buyers-${lo.code}.csv"` && csvRes.headers.get('cache-control') === 'no-store' && csvText.split('\n')[0] === 'order_id,buyer_name,buyer_phone,city,recipient_name,recipient_phone,packed_on,boxes', 'buyers.csv: type, attachment name, no-store and the header line (' + csvRes.status + ' ' + csvRes.headers.get('content-type') + ' | ' + csvRes.headers.get('content-disposition') + ' | ' + csvText.split('\n')[0] + ')');
+    const csvNo = await fetch(B + '/stock/lots/NOPE-1/buyers.csv', { headers: { Authorization: 'Bearer ' + s.token } });
+    const csvNoJ = await csvNo.json();
+    ok(csvNo.status === 404 && csvNoJ.ok === false && csvNoJ.error === 'No lot with that code.', 'buyers.csv for a missing lot is a JSON 404');
+    ok((await fetch(B + `/stock/lots/${enc(lo.code)}/buyers.csv`)).status === 401, 'buyers.csv needs a session');
+    // permissions: staff are refused on reject, hold, fix and expired; a claimed isOwner changes nothing
+    for (const [p, b] of [[`/stock/lots/${enc(lo.code)}/reject`, { reason: 'bad' }], [`/stock/lots/${enc(lo.code)}/hold`, { reason: 'x', isOwner: true }], [`/stock/lots/${enc(lo.code)}/fix`, { newBakeDate: istToday, isOwner: true }], ['/stock/expired', { isOwner: true }]])
+      ok((await call(p, s.token, b)).s === 403, 'staff 403 on ' + p.replace(lo.code, '<code>'));
+    // staff release (needs the tick and a weight), then the owner can hold it and release it again
+    ok((await call(`/stock/lots/${enc(lo.code)}/release`, s.token, { tasted: false, weightG: 260 })).s === 400, 'release without the taste tick is refused');
+    const rel = await call(`/stock/lots/${enc(lo.code)}/release`, s.token, { tasted: true, weightG: 260 });
+    ok(rel.j.ok && rel.j.lot.status === 'released' && rel.j.lot.released_by === 'staff@example.com', 'staff release a lot and the actor is recorded (' + rel.s + ' ' + JSON.stringify(rel.j).slice(0, 160) + ')');
+    const br = await call(`/stock/lots/${enc(lo.code)}/broken`, s.token, { qty: 1, note: 'cartoning' });
+    ok(br.j.ok, 'staff record a box broken while cartoning (' + br.s + ' ' + br.j.error + ')');
+    const hd = await call(`/stock/lots/${enc(lo.code)}/hold`, o.token, { reason: 'second look' });
+    ok(hd.j.ok && hd.j.lot.status === 'hold', 'the owner puts the released lot on hold');
+    ok((await call(`/stock/lots/${enc(la.code)}/reject`, o.token, { reason: 'stale smell' })).j.ok, 'the owner rejects a lot still on hold');
+    const fx = await call(`/stock/lots/${enc(lo.code)}/fix`, o.token, { newBakeDate: new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10) });
+    ok(fx.j.ok && fx.j.to && fx.j.to !== lo.code, 'the owner fixes the bake date and the lot gets a new code (' + fx.s + ' ' + JSON.stringify(fx.j).slice(0, 160) + ')');
+    const ex = await call('/stock/expired', o.token, { slug: 'atta-original' });
+    ok(ex.j.ok && Array.isArray(ex.j.lines), 'the owner can run Throw away expired (' + ex.s + ')');
+    // correct a delivery: staff who saved it, within a day
+    const cr = await call('/stock/deliveries/practice-t10-' + stamp + '/correct', s.token, { reason: 'x' });
+    ok(cr.s === 409 && /Released lots|already been used|used/.test(cr.j.error || ''), 'correct is refused once a lot was released (' + cr.s + ' ' + cr.j.error + ')');
+    const dp2 = await call('/stock/deliveries/practice-t10-' + stamp, s.token);
+    ok(dp2.j.canCorrect === false, 'and the delivery page says canCorrect is false');
+    const d3 = await call('/stock/deliveries', s.token, { id: 'practice-t10b-' + stamp, billNo: 'T10B-' + stamp, bakeDate: istToday, cartons: 1, invoiceRupees: 90, freight: { porter: 1 }, rows: [{ slug: 'atta-original', invoiceBoxes: 1, counted: 1, rateRupees: 90 }] });
+    const c3 = await call('/stock/deliveries/practice-t10b-' + stamp + '/correct', s.token, { reason: 'typo' });
+    ok(d3.j.ok && c3.j.ok && c3.j.prefill && c3.j.prefill.billNo === 'T10B-' + stamp, 'staff correct their own delivery while it is on hold (' + JSON.stringify(d3.j).slice(0, 200) + ' / ' + c3.s + ' ' + JSON.stringify(c3.j).slice(0, 120) + ')');
+    // photos
+    const PHOTO_TOO_BIG = 'The photo is too large. Take it again.';
+    const small = await call('/stock/photo', s.token, { dataUrl: jpeg(2) });
+    ok(small.s === 200 && /^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/.test(small.j.path || ''), 'a small JPEG is stored and returns a path (' + small.s + ' ' + JSON.stringify(small.j) + ')');
+    const got = await call('/stock/photo?path=' + enc(small.j.path || 'x'), s.token);
+    ok(got.s === 200 && /^data:image\/jpeg;base64,/.test(got.j.url || ''), 'GET returns a link for the stored photo');
+    ok((await call('/stock/photo?path=' + enc('../../etc/passwd'), s.token)).s === 400, 'a path that is not one of ours is refused');
+    const png = await call('/stock/photo', s.token, { dataUrl: 'data:image/png;base64,' + Buffer.from('x').toString('base64') });
+    ok(png.s === 400 && png.j.error === 'Only a photo (JPEG) can be added.', 'a non-JPEG is refused: ' + png.j.error);
+    const mid = await call('/stock/photo', s.token, { dataUrl: jpeg(760) });
+    ok(mid.s === 400 && mid.j.error === PHOTO_TOO_BIG, 'a 760 KB photo is refused with our message (' + mid.s + ' ' + mid.j.error + ')');
+    const big = await call('/stock/photo', s.token, { dataUrl: jpeg(900) });
+    ok(big.s === 413 && big.j.ok === false && big.j.error === PHOTO_TOO_BIG, 'a 900 KB photo (413 from the body parser) reaches the user as the same message (' + big.s + ' ' + big.j.error + ')');
+    const unauth = await call('/stock/photo', null, { dataUrl: jpeg(2) });
+    ok(unauth.s === 401, 'photos need a session');
   }
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

@@ -204,8 +204,10 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Stock arrived: boxes received, how many of them damaged or not okay, lot, best-before, supplier challan, optional billing.
   // `replaces` = id of an earlier receipt this one corrects: the old line (and the damaged line saved with it) is cancelled
   // and the new one written in the same save, so a refused correction changes nothing.
-  async function receive({ slug, received, damaged = 0, lot, bestBefore, ref, note, billedKg, amountRupees, confirmDuplicate = false, replaces = null, isOwner = false, actor }) {
+  async function receive({ slug, received, damaged = 0, lot, bestBefore, ref, note, billedKg, amountRupees, confirmDuplicate = false, replaces = null, isOwner = false, actor, biscuitsViaDelivery = false }) {
     const item = await need(slug);
+    // The admin route sets this: a new biscuit receipt there must go through Stock, New delivery (Task 10). A correction of an old receipt (`replaces`) is allowed.
+    if (biscuitsViaDelivery && item.kind === 'product' && (replaces == null || replaces === '')) throw new StockError('Biscuits are received with Stock, New delivery, so every box gets its lot and the hold check.', 409);
     const rec = int(received), dmg = int(damaged || 0);
     if (!Number.isInteger(rec) || rec < 1 || rec > MAX_QTY) throw new StockError('Enter how many were received (a whole number, 1 or more).');
     if (!Number.isInteger(dmg) || dmg < 0 || dmg > rec) throw new StockError('Damaged cannot be more than received.');
