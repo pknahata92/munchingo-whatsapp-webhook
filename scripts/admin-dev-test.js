@@ -453,6 +453,16 @@ async function login(email) {
     // delivery page, prefill (registered before :id), lots list, lot page, search
     const pre = await call('/stock/deliveries/prefill', s.token);
     ok(pre.s === 200 && pre.j.ok && pre.j.rates && pre.j.rates['atta-original'] === 85 && pre.j.freight, 'prefill answers (not read as a delivery id): ' + pre.s + ' ' + JSON.stringify(pre.j).slice(0, 120));
+    // Task 11: the review screen's preview (staff) gives codes, dates and warnings and writes nothing; a refusal is a 400 in plain words
+    {
+      const lotsBefore = (await call('/stock/lots', s.token)).j.lots.length;
+      const pv = await call('/stock/deliveries/preview', s.token, { id: 'practice-t11-pv-' + stamp, billNo: 'T11PV-' + stamp, bakeDate: istToday, cartons: 1, invoiceRupees: 1, freight: { porter: 10 }, rows: [{ slug: 'atta-kesari', invoiceBoxes: 5, counted: 5, rateRupees: 100 }] });
+      ok(pv.s === 200 && pv.j.ok && pv.j.preview === true && pv.j.lots.length === 1 && /^MNGK-\d{6}-\d{2}$/.test(pv.j.lots[0].code) && pv.j.lots[0].websiteStop && pv.j.warnings.some((w) => w.key === 'invoice_mismatch'), 'staff preview a delivery: code, dates and the warnings (' + pv.s + ' ' + JSON.stringify(pv.j).slice(0, 200) + ')');
+      ok((await call('/stock/lots', s.token)).j.lots.length === lotsBefore && (await call('/stock/deliveries/practice-t11-pv-' + stamp, s.token)).s === 404, 'and nothing was saved');
+      const pb = await call('/stock/deliveries/preview', s.token, { id: 'practice-t11-pv2-' + stamp, billNo: 'T10-' + stamp, bakeDate: istToday, rows: [{ slug: 'atta-kesari', invoiceBoxes: 5, counted: 5, rateRupees: 100 }] });
+      ok(pb.s === 400 && /^Bill T10-\d+ part 1 is already saved/.test(pb.j.error || ''), 'a bill already saved is refused at preview (' + pb.s + ' ' + pb.j.error + ')');
+      ok((await call('/stock/deliveries/preview', null, { id: 'x' })).s === 401, 'preview needs a session');
+    }
     const dp = await call('/stock/deliveries/practice-t10-' + stamp, s.token);
     ok(dp.s === 200 && dp.j.delivery.billNo === 'T10-' + stamp && dp.j.delivery.status === 'received' && dp.j.lots.length === 2 && dp.j.lots[0].status === 'hold' && dp.j.lots[0].onHand === 10 && Array.isArray(dp.j.toRaise) && dp.j.canCorrect === true, 'staff read the delivery page: ' + JSON.stringify(dp.j).slice(0, 300));
     ok((await call('/stock/deliveries/nope-' + stamp, s.token)).s === 404, 'an unknown delivery is a 404');

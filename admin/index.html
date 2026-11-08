@@ -118,6 +118,28 @@ header small{color:var(--ink2);opacity:1}
 .dot.ok{background:var(--tx-green)}.dot.wait{background:var(--tx-amber)}.dot.bad{background:var(--tx-red)}
 .chan .bad,.setup .bad{color:var(--tx-red);font-weight:600}
 .setup{background:var(--band);border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px;overflow-wrap:anywhere}.setup ol{margin:6px 0 8px;padding-left:18px}.setup p{margin:6px 0}
+
+/* ── New delivery (phone first: one column, big targets, nothing wider than the screen) ── */
+.dlgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px;align-items:end}
+.dlg4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 6px;align-items:end}.dlg4 input{padding:10px 8px}
+.dlf{min-width:0}.dlf label{overflow-wrap:anywhere}
+.dlrow h3 small{letter-spacing:.04em;text-transform:none;color:var(--ink2)}
+.dltick{display:flex;gap:10px;align-items:flex-start;text-transform:none;letter-spacing:0;font-size:14px;font-weight:500;color:var(--ink);margin:12px 0;cursor:pointer}
+.dltick input{width:24px;height:24px;min-height:24px;flex:none;margin:1px 0 0;padding:0;accent-color:var(--terra)}.dltick span{min-width:0;overflow-wrap:anywhere}
+.dlwarn{padding:10px 0;margin:0;border-bottom:1px solid var(--line)}
+.dlchoice{display:flex;gap:8px;flex-wrap:wrap}.dlchoice .btn{flex:1 1 120px;min-height:44px}
+.dlfile{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.dlprow{display:flex;gap:4px 12px;align-items:center;flex-wrap:wrap}.dlprow .muted{overflow-wrap:anywhere;min-width:0}
+label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-spacing:0;margin:4px 0;font-size:13px;min-height:44px}
+.lnk{background:none;border:0;padding:10px 0;color:var(--tx-terra);font-weight:600;cursor:pointer;min-height:44px;text-align:left}.lnk.red{color:var(--tx-red)}
+.dlwide{width:100%;margin-top:10px;min-height:50px;font-size:16px}
+.dlerr{color:var(--tx-red);font-weight:600;font-size:14px;margin:10px 0;overflow-wrap:anywhere}.dlerr:empty{display:none}
+.dlnosigbox{background:#FDF0D5;border:1px solid #D9A441;color:#4A3006;border-radius:12px;padding:12px 14px;margin:10px 0}.dlnosig{font-weight:700;margin-bottom:8px}
+.dllot .dlhd{display:flex;gap:6px 8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:4px}
+.dlcode{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;overflow-wrap:anywhere}
+.dldates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:8px 0}
+.dldate{background:var(--band);border-radius:10px;padding:6px 10px;min-width:0}.dldate small{display:block;font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:.06em}.dldate b{font-size:14px}
+.dlotline{align-items:flex-start}.dlotmain{flex:1;min-width:0;overflow-wrap:anywhere}.dlotline .badge{flex:none}
 </style>
 </head>
 <body>
@@ -296,7 +318,7 @@ header small{color:var(--ink2);opacity:1}
   }
   function openHelp() {
     ownerPanel('How this works', [h('div', { class: 'muted', style: 'line-height:1.7' }, guideList()),
-      h('p', { class: 'muted' }, 'Stock tab: Receive when boxes arrive, Count when you check the shelf, Mark low when something runs short. Packing an order takes its boxes off stock for you.')]);
+      h('p', { class: 'muted' }, 'Stock tab: New delivery when boxes arrive (they wait on hold until tasted and released), Count when you check the shelf, Mark low when something runs short. Packing an order takes its boxes off stock for you.')]);
   }
   function refreshLow() {
     api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; renderNeeds(); }).catch(function () {});
@@ -938,7 +960,7 @@ header small{color:var(--ink2);opacity:1}
           it.kind === 'product' ? h('small', { class: 'muted', style: 'color:' + (it.paused || (it.sellable != null && it.sellable <= 0) ? 'var(--red)' : 'inherit') }, it.paused ? 'Paused: customers cannot order this on the website.' : (it.sellable == null ? 'Website: no stock recorded yet, so it is not limited.' : (it.sellable <= 0 ? 'Website: sold out automatically (everything left is already paid for).' : 'Website: ' + it.sellable + ' can still be ordered' + (it.committed ? ' (' + it.committed + ' more are paid for and waiting to be packed)' : '') + '.'))) : null,
           it.at_events ? h('small', { class: 'muted', style: 'color:var(--tx-amber)' }, it.at_events + ' ' + it.unit + ' are out at events (not on the shelf)') : null,
           h('div', { class: 'acts' },
-            h('button', { class: 'btn small', onclick: function () { invReceive(it); } }, 'Receive'),
+            h('button', { class: 'btn small', onclick: function () { openNewDelivery(); } }, 'Receive'),   // biscuits arrive only through New delivery (lots, hold)
             h('button', { class: 'btn ghost small', onclick: function () { invCount(it); } }, 'Count'),
             it.kind === 'product' ? h('button', { class: 'btn ghost small' + (it.paused ? '' : ' red'), onclick: function (e) { if (!it.paused && !confirm('Pause ' + it.name + ' on the website? Customers will not be able to order it (or any gift set that contains it) until you resume.')) return; e.target.disabled = true; api('/admin/api/inventory/pause', { method: 'POST', body: { slug: it.slug, paused: !it.paused } }).then(function (r) { toast(r.ok ? (it.paused ? it.name + ' is on sale again' : it.name + ' paused on the website') : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); if (r.ok) chanLater(); }); } }, it.paused ? 'Resume selling' : 'Pause selling') : null,
             h('button', { class: 'btn ghost small' + (it.manual_low ? ' red' : ''), onclick: function (e) { e.target.disabled = true; api('/admin/api/inventory/low', { method: 'POST', body: { slug: it.slug, low: !it.manual_low } }).then(function (r) { toast(r.ok ? (it.manual_low ? 'Low flag cleared' : 'Marked as running low') : (r.error || 'Failed')); refreshLow(); openInventory(); }); } }, it.manual_low ? 'Clear low flag' : 'Mark low'),
@@ -960,8 +982,8 @@ header small{color:var(--ink2);opacity:1}
             state.role === 'owner' ? h('button', { class: 'btn ghost small red', onclick: function (e) { if (!confirm('Remove ' + it.name + ' from the list? Its history is kept.')) return; e.target.disabled = true; api('/admin/api/inventory/item/remove', { method: 'POST', body: { slug: it.slug } }).then(function (r) { toast(r.ok ? it.name + ' removed from the list' : (r.error || 'Failed'), 5000); refreshLow(); openInventory(); }); } }, 'Remove') : null));
       };
       var prods = j.items.filter(function (i) { return i.kind === 'product'; }), pack = j.items.filter(function (i) { return i.kind !== 'product'; });
-      var body = [chanBox, h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: Receive when stock arrives, Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
-        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { invPick('Receive stock', invReceive); } }, 'Receive stock'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
+      var body = [chanBox, h('p', { class: 'muted' }, 'Stock on hand is worked out from what you record: New delivery when biscuits arrive (each lot waits on hold until it is tasted and released), Take out for damaged, used, given away, taken to an exhibition or samples, Count when you check the shelf. Orders take boxes off automatically when you mark them packed. Tap Mark low on anything running short.'),
+        h('div', { class: 'acts' }, h('button', { class: 'btn small', onclick: function () { openNewDelivery(); } }, 'New delivery'), h('button', { class: 'btn ghost small', onclick: invTakeMany }, 'Take out: several flavours'), h('button', { class: 'btn ghost small', onclick: invHamper }, 'Sold offline: hamper'), h('button', { class: 'btn ghost small', onclick: invFlow }, 'Where did it go?'), h('button', { class: 'btn ghost small', onclick: function () { invHistory(); } }, 'History'),
           state.role === 'owner' ? h('button', { class: 'btn ghost small', onclick: function () { invPick('Rename lot', invRenameLot); } }, 'Rename lot') : null),
         j.events && j.events.length ? section('Out at events (bring back the unsold boxes)', j.events.map(function (ev) {
           return h('div', { class: 'line', style: 'flex-direction:column;align-items:stretch;gap:6px' }, h('b', {}, ev.ref),
@@ -974,6 +996,382 @@ header small{color:var(--ink2);opacity:1}
           state.role === 'owner' ? h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: function () { var nm = prompt('Name of the packaging item (for example Bubble wrap):'); if (!nm) return; var unit = prompt('Unit (rolls, cartons, labels...):', 'pcs'); if (unit === null) return; api('/admin/api/inventory/item', { method: 'POST', body: { name: nm, kind: 'packaging', unit: unit } }).then(function (r) { toast(r.ok ? (r.restored ? 'Item is back on the list' : 'Item added') : (r.error || 'Failed')); openInventory(); }); } }, 'Add packaging item')) : null)];
       invShow('Stock', body);
     });
+  }
+  // ── New delivery (spec 6.3, 6.4): one Krazy Bakers delivery on one phone screen. Kept on this phone as it is typed
+  // (localStorage mngDeliveryDraft), checked by the server before Save (the preview gives the very codes, dates, costs and warnings a
+  // save would, and writes nothing), then saved once: the receipt id made when the form opens means a resend never saves twice. ──
+  var DL_KEY = 'mngDeliveryDraft';
+  var DL_FLAVOURS = [['atta-original', 'Atta Original'], ['atta-kesari', 'Atta Kesari'], ['atta-ajwain', 'Atta Ajwain'], ['atta-lite-sugar', 'Atta Sugar-Lite']];
+  var DL_NAME = {}; DL_FLAVOURS.forEach(function (f) { DL_NAME[f[0]] = f[1]; });
+  var DL_NOSIG = 'Not sent. Saved on this phone. Tap Send when you have signal.';
+  var DL_STATUS = { hold: ['On hold', 'b-topack'], released: ['Released', 'b-delivered'], rejected: ['Rejected', 'b-refunded'], 'void': ['Corrected', 'b-unpaid'] };
+  var ND = null;   // the delivery on screen: { id, form, review, ticks, pending, err, restored, note }
+  var dlToday = function () { return new Date(Date.now() + IST).toISOString().slice(0, 10); };
+  var dlTrim = function (v) { return String(v == null ? '' : v).trim(); };
+  // Non-breaking spaces keep "8 Dec 2026" and "Rs 103.01" on one line on a narrow phone.
+  var dlWords = function (iso) { var s = String(iso || ''); return /^\d{4}-\d{2}-\d{2}/.test(s) ? Number(s.slice(8, 10)) + '\u00a0' + DAY_MON[Number(s.slice(5, 7)) - 1] + '\u00a0' + s.slice(0, 4) : ''; };
+  var dlRs = function (paise) { return 'Rs\u00a0' + (Number(paise) / 100).toFixed(2); };
+  var dlUid = function () { return Math.random().toString(36).slice(2, 10); };
+  function dlReceiptId() {
+    var s = '', b = null;
+    try { b = new Uint8Array(6); window.crypto.getRandomValues(b); } catch (e) { b = null; }
+    for (var i = 0; i < 6; i++) s += ((b ? b[i] : Math.floor(Math.random() * 256)) % 36).toString(36);
+    return 'd-' + Date.now().toString(36) + '-' + s;
+  }
+  function dlRow(slug, extra) { return { uid: dlUid(), slug: slug, invoiceBoxes: '', counted: '', broken: '', brokenReason: '', brokenPhoto: '', rateRupees: '', bakeDate: '', diffReason: '', extra: !!extra }; }
+  function dlBlank() {
+    return { supplier: 'Krazy Bakers', billNo: '', addPart: false, bilty: '', arrivedOn: dlToday(), cartons: '', invoiceRupees: '', gstRupees: '', billedKg: '',
+      freight: { busPerCarton: '', delhiPerCarton: '', porter: '', other: '' }, bakeDate: '', supplierBatch: '', photos: [], note: '', oldBakeReason: '',
+      rows: DL_FLAVOURS.map(function (f) { return dlRow(f[0]); }) };
+  }
+  // A saved delivery's input (Correct whole delivery reopens the form with it): every flavour gets a row again.
+  function dlFromInput(p) {
+    var f = dlBlank(), str = function (v) { return v == null ? '' : String(v); };
+    ['supplier', 'billNo', 'bilty', 'arrivedOn', 'cartons', 'invoiceRupees', 'gstRupees', 'billedKg', 'bakeDate', 'supplierBatch', 'note'].forEach(function (k) { if (p[k] != null && p[k] !== '') f[k] = str(p[k]); });
+    f.addPart = !!p.addPart; f.photos = Array.isArray(p.photos) ? p.photos.slice() : [];
+    ['busPerCarton', 'delhiPerCarton', 'porter', 'other'].forEach(function (k) { f.freight[k] = str((p.freight || {})[k]); });
+    var rows = Array.isArray(p.rows) ? p.rows : [];
+    f.rows = [];
+    DL_FLAVOURS.forEach(function (fl) {
+      var mine = rows.filter(function (r) { return r && r.slug === fl[0]; });
+      if (!mine.length) f.rows.push(dlRow(fl[0]));
+      mine.forEach(function (r, i) {
+        var x = dlRow(fl[0], i > 0);
+        ['invoiceBoxes', 'counted', 'broken', 'rateRupees', 'bakeDate', 'diffReason'].forEach(function (k) { x[k] = str(r[k]); });
+        x.brokenReason = r.brokenReason || ''; x.brokenPhoto = r.brokenPhoto || ''; f.rows.push(x);
+      });
+    });
+    return f;
+  }
+  function dlSaveDraft() { if (!ND) return; try { localStorage.setItem(DL_KEY, JSON.stringify({ v: 1, id: ND.id, form: ND.form, review: ND.review, ticks: ND.ticks, pending: ND.pending })); } catch (e) {} }
+  function dlClearDraft() { try { localStorage.removeItem(DL_KEY); } catch (e) {} }
+  function dlReadDraft() {
+    try {
+      var d = JSON.parse(localStorage.getItem(DL_KEY) || 'null');
+      if (!d || typeof d.id !== 'string' || !d.form || !Array.isArray(d.form.rows)) return null;
+      d.form.rows.forEach(function (r) { if (!r.uid) r.uid = dlUid(); });
+      return d;
+    } catch (e) { return null; }
+  }
+  // The request body: exactly the input of save() in utils/deliveries.js. Flavours nobody typed into are left out.
+  function dlBody(f, confirmKeys) {
+    var typed = function (r) { return [r.invoiceBoxes, r.counted, r.broken].some(function (v) { return dlTrim(v) !== ''; }); };
+    return { id: ND.id, supplier: f.supplier, billNo: f.billNo, part: 1, addPart: !!f.addPart, bilty: f.bilty, arrivedOn: f.arrivedOn, cartons: f.cartons, invoiceRupees: f.invoiceRupees,
+      billedKg: f.billedKg, gstRupees: f.gstRupees, freight: { busPerCarton: f.freight.busPerCarton, delhiPerCarton: f.freight.delhiPerCarton, porter: f.freight.porter, other: f.freight.other },
+      bakeDate: f.bakeDate, supplierBatch: f.supplierBatch, photos: f.photos.slice(), note: f.note, oldBakeReason: f.oldBakeReason, confirm: confirmKeys || [],
+      rows: f.rows.filter(typed).map(function (r) { return { slug: r.slug, invoiceBoxes: r.invoiceBoxes, counted: r.counted, broken: r.broken, brokenReason: r.brokenReason || null, brokenPhoto: r.brokenPhoto || null, rateRupees: r.rateRupees, bakeDate: r.bakeDate, diffReason: r.diffReason }; }) };
+  }
+  // The first thing still missing, in the order of the screen (the Review button says it); null when the form can be checked.
+  // The server repeats every check, so this only saves a trip.
+  function dlBlock(f) {
+    var today = dlToday(), whole = /^\d+$/, money = /^\d+(\.\d+)?$/;
+    if (!dlTrim(f.billNo)) return 'Enter the bill number';
+    if (!f.arrivedOn) return 'Enter the day it arrived';
+    if (f.arrivedOn > today) return 'Arrived on cannot be in the future';
+    if (dlTrim(f.cartons) && !whole.test(dlTrim(f.cartons))) return 'Cartons must be a whole number';
+    var money1 = [['billedKg', 'Billed kg'], ['invoiceRupees', 'The bill total'], ['gstRupees', 'GST on the bill']];
+    for (var a = 0; a < money1.length; a++) if (dlTrim(f[money1[a][0]]) && !money.test(dlTrim(f[money1[a][0]]))) return money1[a][1] + ' must be a number';
+    var fr = [['busPerCarton', 'Bus fare'], ['delhiPerCarton', 'Delhi unloading'], ['porter', 'Porter'], ['other', 'Other freight']];
+    for (var b = 0; b < fr.length; b++) if (dlTrim(f.freight[fr[b][0]]) && !money.test(dlTrim(f.freight[fr[b][0]]))) return fr[b][1] + ' must be a number';
+    if (!f.bakeDate) return 'Enter the bake date';
+    if (f.bakeDate > today) return 'The bake date cannot be in the future';
+    if (f.bakeDate > f.arrivedOn) return 'The bake date cannot be after the day it arrived';
+    var any = false;
+    for (var i = 0; i < f.rows.length; i++) {
+      var r = f.rows[i], nm = DL_NAME[r.slug] || r.slug;
+      if (![r.invoiceBoxes, r.counted, r.broken].some(function (v) { return dlTrim(v) !== ''; })) continue;
+      if (dlTrim(r.invoiceBoxes) && !whole.test(dlTrim(r.invoiceBoxes))) return nm + ': the boxes on the bill must be a whole number';
+      if (!dlTrim(r.counted)) return nm + ': enter the boxes you counted (0 if none came)';
+      if (!whole.test(dlTrim(r.counted))) return nm + ': the counted boxes must be a whole number';
+      if (dlTrim(r.broken) && !whole.test(dlTrim(r.broken))) return nm + ': the broken boxes must be a whole number';
+      var inv = Number(dlTrim(r.invoiceBoxes) || 0), cnt = Number(dlTrim(r.counted)), brk = Number(dlTrim(r.broken) || 0);
+      if (brk > cnt) return nm + ': more broken boxes than counted';
+      if (brk > 0 && !r.brokenReason) return nm + ': say why the boxes broke';
+      if (brk > 0 && !r.brokenPhoto) return nm + ': add a photo of the broken boxes';
+      if (cnt !== inv && !dlTrim(r.diffReason)) return nm + ': say why the count is different from the bill';
+      if (!money.test(dlTrim(r.rateRupees))) return nm + ': enter the rate per box';
+      if (r.bakeDate && r.bakeDate > f.arrivedOn) return nm + ': the bake date cannot be after the day it arrived';
+      if (cnt > 0) any = true;
+    }
+    if (!any) return 'Enter at least one flavour';
+    return null;
+  }
+  // POST that tells a dropped signal apart from an answer: { net: true } when nothing (or nothing readable) came back.
+  function dlPost(path, body) {
+    return fetch(path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}), body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { if (r.status === 401 && token) signOut(true); return { status: r.status, j: j || {} }; }, function () { return { net: true }; }); }, function () { return { net: true }; });
+  }
+  var dlBytes = function (d) { var b64 = String(d).slice(String(d).indexOf(',') + 1); return Math.floor(b64.length * 3 / 4) - (/==$/.test(b64) ? 2 : /=$/.test(b64) ? 1 : 0); };
+  // Shrinks a photo on the phone before it is sent: longest side 1600 px, JPEG at 0.72, or 0.6 if that is still over 700 KB. The server
+  // checks it again (JPEG, 750 KB at most). window.__shrinkPhoto stands in for the canvas in the jsdom practice checks (no canvas there);
+  // whatever it returns still goes through the same upload and the same server checks.
+  function shrinkPhoto(file) {
+    if (typeof window.__shrinkPhoto === 'function') return Promise.resolve(window.__shrinkPhoto(file));
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth || img.width, ht = img.naturalHeight || img.height, k = Math.min(1, 1600 / Math.max(w, ht, 1));
+        var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(ht * k));
+        var ctx = c.getContext && c.getContext('2d');
+        if (!ctx) return reject(new Error('no canvas'));
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        var d = c.toDataURL('image/jpeg', 0.72);
+        if (dlBytes(d) > 700 * 1024) d = c.toDataURL('image/jpeg', 0.6);
+        resolve(d);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('not a photo')); };
+      img.src = url;
+    });
+  }
+  function dlPhoto(file, done) {
+    shrinkPhoto(file).then(function (dataUrl) { return dlPost('/admin/api/stock/photo', { dataUrl: dataUrl }); }, function () { return { bad: true }; }).then(function (r) {
+      if (r.bad) return done('That photo could not be read. Take it again.');
+      if (r.net) return done('No signal: the photo was not sent. Take it again when you have signal.');
+      if (!r.j.ok || !r.j.path) return done(r.j.error || 'The photo did not upload. Take it again.');
+      done(null, r.j.path);
+    });
+  }
+  function dlRefresh() { var b = $('dlReview'); if (!b || !ND) return; var x = dlBlock(ND.form); b.disabled = !!x; b.textContent = x || 'Review'; }
+  // Every typed change: kept on the phone at once. A change after an unsent Save means the form must be checked again.
+  function dlChanged() {
+    if (!ND) return;
+    ND.err = ''; var e = $('dlErr'); if (e) e.textContent = '';
+    if (ND.pending) { ND.pending = null; ND.review = null; var n = $('dlNosigBox'); if (n && n.parentNode) n.parentNode.removeChild(n); }
+    dlSaveDraft(); dlRefresh();
+  }
+  function dlNosigBox() {
+    return h('div', { class: 'dlnosigbox', id: 'dlNosigBox' }, h('div', { class: 'dlnosig', id: 'dlNosig', role: 'status' }, DL_NOSIG),
+      h('button', { class: 'btn', id: 'dlSend', type: 'button', onclick: function (e) { sendDelivery(ND.form, e.currentTarget); } }, 'Send'));
+  }
+  function dlStartNew() {
+    if (!confirm('Throw away this delivery' + (ND && ND.pending ? ' (it is not sent yet)' : '') + ' and start a new one? What was typed is lost.')) return;
+    dlClearDraft(); ND = null; openNewDelivery();
+  }
+
+  function openNewDelivery(prefill) {
+    var draft = dlReadDraft();
+    if (draft && prefill && !confirm('A delivery you started is kept on this phone. Throw it away and open this one?')) prefill = null;
+    if (draft && !prefill) {
+      ND = { id: draft.id, form: draft.form, review: draft.review || null, ticks: draft.ticks || {}, pending: draft.pending || null, err: '', restored: true, note: '' };
+      return ND.pending && ND.review ? dlDrawReview() : dlDrawForm();
+    }
+    var form = prefill ? dlFromInput(prefill) : dlBlank();
+    ND = { id: dlReceiptId(), form: form, review: null, ticks: {}, pending: null, err: '', restored: false, note: '' };
+    if (prefill) dlSaveDraft();
+    var mine = ND;
+    invShow('New delivery', [h('p', { class: 'muted' }, 'Getting the rates from the last delivery…')]);
+    api('/admin/api/stock/deliveries/prefill').then(function (j) { return j; }, function () { return null; }).then(function (j) {
+      if (ND !== mine) return;
+      if (j && j.ok) {
+        form.rows.forEach(function (r) { if (!dlTrim(r.rateRupees) && j.rates && j.rates[r.slug] != null) r.rateRupees = String(j.rates[r.slug]); });
+        if (!prefill && j.freight) ['busPerCarton', 'delhiPerCarton', 'porter', 'other'].forEach(function (k) { if (j.freight[k] != null) form.freight[k] = String(j.freight[k]); });
+      } else ND.note = 'No signal: the rates and freight could not be filled in. Type them from the bill.';
+      dlDrawForm();
+    });
+  }
+
+  function dlDrawForm() {
+    var f = ND.form, today = dlToday();
+    var W = { inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off' }, M = { inputmode: 'decimal', autocomplete: 'off' };
+    function inp(id, obj, key, attrs) {
+      var el = h('input', Object.assign({ id: id }, attrs || {}, { value: obj[key] == null ? '' : String(obj[key]) }));   // type before value, so a date keeps its value
+      var take = function () { if (obj[key] === el.value) return; obj[key] = el.value; dlChanged(); };
+      el.addEventListener('input', take); el.addEventListener('change', take);
+      return el;
+    }
+    function field(label, el, note) { return h('div', { class: 'dlf' }, h('label', { for: el.id }, label), el, note ? h('div', { class: 'muted' }, note) : null); }
+    function photoPick(id, label, multiple, onPath, status) {
+      var file = h('input', { type: 'file', accept: 'image/*', class: 'dlfile', id: id, multiple: multiple ? 'multiple' : null });   // camera or gallery: the phone asks
+      file.addEventListener('change', function () {
+        var files = Array.prototype.slice.call(file.files || []); if (!files.length) return;
+        status('Sending the photo…');
+        (function next() {
+          var one = files.shift(); if (!one) { file.value = ''; return; }
+          dlPhoto(one, function (err, path) { if (err) { file.value = ''; return status(err); } onPath(path); next(); });
+        })();
+      });
+      return [h('div', { class: 'dlprow' }, h('label', { for: id, class: 'btn ghost small dlphoto' }, label)), file];
+    }
+
+    // top of the form, filled once
+    var addPart = h('input', { type: 'checkbox', id: 'dl-addPart' }); addPart.checked = !!f.addPart;
+    addPart.addEventListener('change', function () { f.addPart = addPart.checked; dlChanged(); });
+    var billStat = h('span', { class: 'muted', id: 'dlBillPhotos' }, f.photos.length ? f.photos.length + (f.photos.length === 1 ? ' photo added' : ' photos added') : 'None added');
+    var billPick = photoPick('dl-photos', 'Add a photo of the bill', true, function (path) { f.photos.push(path); billStat.textContent = f.photos.length + (f.photos.length === 1 ? ' photo added' : ' photos added'); dlChanged(); }, function (t) { billStat.textContent = t; });
+    billPick[0].appendChild(billStat);
+    var top = h('div', { class: 'sec' },
+      field('Supplier', inp('dl-supplier', f, 'supplier', { autocomplete: 'off' })),
+      h('div', { class: 'dlgrid' }, field('Bill number', inp('dl-billNo', f, 'billNo', { autocomplete: 'off', autocapitalize: 'characters' })), field('Arrived on', inp('dl-arrivedOn', f, 'arrivedOn', { type: 'date', max: today }))),
+      h('label', { class: 'dltick' }, addPart, h('span', {}, 'Add part 2 to an earlier bill (the rest of a bill already saved)')),
+      h('div', { class: 'dlgrid' }, field('Cartons', inp('dl-cartons', f, 'cartons', W)), field('Billed kg', inp('dl-billedKg', f, 'billedKg', M))),
+      h('div', { class: 'dlgrid' }, field('Bill total (Rs)', inp('dl-invoiceRupees', f, 'invoiceRupees', M)), field('GST on the bill (Rs, 0 if none)', inp('dl-gstRupees', f, 'gstRupees', M))),
+      h('div', { class: 'dlgrid' }, field('Bus fare (Rs a carton)', inp('dl-busPerCarton', f.freight, 'busPerCarton', M)), field('Delhi unloading (Rs a carton)', inp('dl-delhiPerCarton', f.freight, 'delhiPerCarton', M))),
+      h('div', { class: 'dlgrid' }, field('Porter (Rs)', inp('dl-porter', f.freight, 'porter', M)), field('Other freight (Rs)', inp('dl-other', f.freight, 'other', M))),
+      h('div', { class: 'muted' }, 'Rates and freight come from the last delivery. Change them if this bill is different.'),
+      field('Bake date (from the bill)', inp('dl-bakeDate', f, 'bakeDate', { type: 'date', max: today }), 'No default on purpose: every code and date comes from it.'),
+      h('label', { for: 'dl-photos' }, 'Photos of the bill (optional)'), billPick,
+      h('div', { class: 'dlgrid' }, field('Krazy Bakers batch (optional)', inp('dl-supplierBatch', f, 'supplierBatch', { autocomplete: 'off' })), field('Bus bilty number (optional)', inp('dl-bilty', f, 'bilty', { autocomplete: 'off' }))),
+      field('Note (optional)', inp('dl-note', f, 'note', { autocomplete: 'off' })));
+
+    // one row per lot: four flavours, plus any "another lot"
+    function rowBox(r) {
+      var nm = DL_NAME[r.slug] || r.slug, u = r.uid;
+      var cell = function (k, label, attrs) { var el = inp('dl-' + u + '-' + k, r, k, attrs); el.setAttribute('data-f', k); return field(label, el); };
+      var why = h('div', { class: 'dlchoice', role: 'group', 'aria-label': 'Why did they break?' });
+      [['transit', 'On the bus'], ['supplier', 'At the bakery']].forEach(function (o) {
+        why.appendChild(h('button', { type: 'button', class: 'btn small' + (r.brokenReason === o[0] ? '' : ' ghost'), 'data-reason': o[0], 'aria-pressed': r.brokenReason === o[0] ? 'true' : 'false', onclick: function () {
+          r.brokenReason = o[0];
+          [].forEach.call(why.children, function (c) { var on = c.getAttribute('data-reason') === o[0]; c.className = 'btn small' + (on ? '' : ' ghost'); c.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+          dlChanged();
+        } }, o[1]));
+      });
+      var pstat = h('span', { class: 'muted', id: 'dlps-' + u }, r.brokenPhoto ? 'Photo added' : 'Not added yet');
+      var pick = photoPick('dl-' + u + '-photo', r.brokenPhoto ? 'Take it again' : 'Take a photo', false, function (path) { r.brokenPhoto = path; var s = $('dlps-' + u); if (s) s.textContent = 'Photo added'; dlChanged(); }, function (t) { var s = $('dlps-' + u); if (s) s.textContent = t; });
+      pick[1].setAttribute('data-f', 'brokenPhoto'); pick[0].appendChild(pstat);
+      var brokenBox = h('div', { class: 'dlbroken' }, h('label', {}, 'Why did they break?'), why, h('label', { for: 'dl-' + u + '-photo' }, 'Photo of the broken boxes (needed)'), pick);
+      var diffBox = h('div', { class: 'dldiff' }, cell('diffReason', 'Why is the count different from the bill?', { autocomplete: 'off' }));
+      var bakeBox = h('div', { class: 'dlrowbake', hidden: !(r.extra || r.bakeDate) }, cell('bakeDate', 'Bake date of this lot (empty = the bake date above)', { type: 'date', max: today }));
+      var bakeLink = r.extra || r.bakeDate ? null : h('button', { type: 'button', class: 'lnk', onclick: function () { bakeBox.hidden = false; if (bakeLink.parentNode) bakeLink.parentNode.removeChild(bakeLink); var d = bakeBox.querySelector('input'); if (d) d.focus(); } }, 'Different bake date for this flavour?');
+      var same = f.rows.filter(function (x) { return x.slug === r.slug; }), last = same[same.length - 1] === r;
+      var more = last ? h('button', { type: 'button', class: 'lnk', onclick: function () {
+        var x = dlRow(r.slug, true); x.rateRupees = r.rateRupees;
+        f.rows.splice(f.rows.indexOf(r) + 1, 0, x); dlChanged(); dlDrawForm();
+        var el = document.querySelector('.dlrow[data-uid="' + x.uid + '"]'); if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+      } }, '+ Add another lot') : null;
+      var drop = r.extra ? h('button', { type: 'button', class: 'lnk red', onclick: function () { if (!confirm('Remove this ' + nm + ' lot from the form?')) return; f.rows.splice(f.rows.indexOf(r), 1); dlChanged(); dlDrawForm(); } }, 'Remove this lot') : null;
+      var box = h('div', { class: 'sec dlrow', 'data-slug': r.slug, 'data-uid': u },
+        h('h3', {}, nm, r.extra ? h('small', {}, ' · another lot') : null),
+        h('div', { class: 'dlg4' }, cell('invoiceBoxes', 'On bill', W), cell('counted', 'Counted', W), cell('broken', 'Broken', W), cell('rateRupees', 'Rs a box', M)),
+        brokenBox, diffBox, bakeLink, bakeBox, h('div', { class: 'dlprow' }, more, drop));
+      var reveal = function () {
+        brokenBox.hidden = !(Number(dlTrim(r.broken)) > 0);
+        diffBox.hidden = !(dlTrim(r.counted) !== '' && Number(dlTrim(r.counted)) !== Number(dlTrim(r.invoiceBoxes) || 0));
+      };
+      box.addEventListener('input', reveal); box.addEventListener('change', reveal); reveal();
+      return box;
+    }
+
+    var review = h('button', { class: 'btn dlwide', id: 'dlReview', type: 'button', onclick: function () { deliveryReview(ND.form); } }, 'Review');
+    var head = [];
+    if (ND.pending) head.push(dlNosigBox());
+    if (ND.restored || ND.pending) head.push(h('div', { class: 'hint', id: 'dlRestored' }, 'This delivery was kept on this phone as it was typed. Carry on, or ', h('button', { type: 'button', class: 'btn ghost small', onclick: dlStartNew }, 'Start a new one')));
+    else head.push(h('p', { class: 'muted' }, 'One entry for the whole delivery. It is kept on this phone as you type, so a dropped signal loses nothing.'));
+    if (ND.note) head.push(h('p', { class: 'note' }, ND.note));
+    invShow('New delivery', head.concat([top], f.rows.map(rowBox), [
+      h('div', { class: 'dlerr', id: 'dlErr', role: 'alert' }, ND.err || ''), review,
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]));
+    dlRefresh();
+    if (ND.err) { var e = $('dlErr'); if (e && e.scrollIntoView) e.scrollIntoView({ block: 'center' }); }
+  }
+  function dlFormError(msg) { ND.err = msg; var e = $('dlErr'); if (!e) return dlDrawForm(); e.textContent = msg; dlRefresh(); if (e.scrollIntoView) e.scrollIntoView({ block: 'center' }); }
+
+  // Review: the server works out each lot's code, dates and cost and lists every warning; nothing is saved yet.
+  function deliveryReview(form) {
+    var blocked = dlBlock(form); if (blocked) return dlFormError(blocked);
+    var b = $('dlReview'); if (b) { b.disabled = true; b.textContent = 'Checking…'; }
+    var mine = ND;
+    dlPost('/admin/api/stock/deliveries/preview', dlBody(form, [])).then(function (r) {
+      if (ND !== mine) return;
+      if (r.net) return dlFormError('No signal, so the check could not run. Everything is kept on this phone: tap Review again when you have signal.');
+      if (r.j.again) return dlSaved(r.j);
+      if (!r.j.ok) return dlFormError(r.j.error || 'Something went wrong. Try again.');
+      ND.review = r.j; ND.ticks = {}; ND.pending = null; dlSaveDraft(); dlDrawReview();
+    });
+  }
+  function dlDate(label, iso) { return h('div', { class: 'dldate' }, h('small', {}, label + ' '), h('b', {}, iso ? dlWords(iso) : 'not known')); }
+  function dlDrawReview(note) {
+    var rv = ND.review, f = ND.form, pend = !!ND.pending, keys = (rv.warnings || []).map(function (w) { return w.key; });
+    var d = rv.delivery || {};
+    var save = pend ? null : h('button', { class: 'btn dlwide', id: 'dlSave', type: 'button', onclick: function (e) { sendDelivery(ND.form, e.currentTarget); } }, 'Save delivery');
+    var hint = h('div', { class: 'muted', id: 'dlTickHint' });
+    var reason = h('textarea', { id: 'dlOldReason', rows: '2', placeholder: 'For example: the bus was a week late' }); reason.value = f.oldBakeReason || ''; reason.readOnly = pend;
+    var reasonBox = h('div', { class: 'dlreason', hidden: !ND.ticks.old_bake }, h('label', { for: 'dlOldReason' }, 'Why is the bake date old? (needed)'), reason);
+    var gate = function () {
+      var all = keys.every(function (k) { return ND.ticks[k]; }), needReason = keys.indexOf('old_bake') >= 0 && ND.ticks.old_bake && !dlTrim(f.oldBakeReason);
+      if (save) save.disabled = !all || needReason;
+      hint.textContent = pend ? '' : !all ? 'Tick each check to save.' : needReason ? 'Say why the bake date is old.' : '';
+    };
+    reason.addEventListener('input', function () { f.oldBakeReason = reason.value; dlSaveDraft(); gate(); });
+    var lots = (rv.lots || []).map(function (l) {
+      return h('div', { class: 'sec dllot' },
+        h('div', { class: 'dlhd' }, h('b', { class: 'dlcode' }, l.code), h('span', { class: 'badge b-topack' }, 'Will be on hold')),
+        h('div', {}, (DL_NAME[l.slug] || l.slug) + ': ', h('b', {}, String(l.good)), ' good boxes'),
+        h('div', { class: 'dldates' }, dlDate('Baked', l.bakeDate), dlDate('Website stops', l.websiteStop), dlDate('Last ship', l.lastShip), dlDate('Best before', l.bestBefore)),
+        h('div', { class: 'muted' }, 'Cost per good box ', h('b', {}, l.perGoodPaise != null ? dlRs(l.perGoodPaise) : 'none (no good boxes)'), ' · ', l.prevPerGoodPaise != null ? 'last lot ' + dlRs(l.prevPerGoodPaise) : 'no earlier lot to compare'));
+    });
+    var warns = (rv.warnings || []).map(function (w) {
+      var cb = h('input', { type: 'checkbox', 'data-key': w.key }); cb.checked = !!ND.ticks[w.key]; cb.disabled = pend;
+      cb.addEventListener('change', function () { ND.ticks[w.key] = cb.checked; if (w.key === 'old_bake') reasonBox.hidden = !cb.checked; dlSaveDraft(); gate(); });
+      return h('label', { class: 'dltick dlwarn' }, cb, h('span', {}, w.text));
+    });
+    var n = warns.length;
+    invShow('Check and save', [
+      h('div', { class: 'muted' }, ['Bill ' + (d.billNo || f.billNo) + ', part ' + (d.part || 1), f.arrivedOn ? 'arrived ' + dlWords(f.arrivedOn) : null, dlTrim(f.cartons) ? f.cartons + ' cartons' : null].filter(Boolean).join(' · ')),
+      note ? h('div', { class: 'hint' }, note) : null,
+      lots.length ? null : h('p', { class: 'muted' }, 'Tap Edit, then Review, to see the lots again.')].concat(lots, [
+      n ? h('div', { class: 'sec' }, h('h3', {}, 'Check ' + n + (n === 1 ? ' thing' : ' things') + ' before saving'), warns, reasonBox) : h('p', { class: 'muted' }, 'Nothing to check: the bill and the boxes agree.'),
+      pend ? dlNosigBox() : null,
+      save, hint,
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost', type: 'button', onclick: function () { dlDrawForm(); } }, 'Edit'))]));
+    gate();
+  }
+
+  // Save (or Send after a dropped signal): the body is kept on the phone before it leaves, so nothing is lost, and the same receipt id
+  // means a resend is answered with the first save, never a second one.
+  function sendDelivery(form, btn) {
+    var body = ND.pending || dlBody(form, Object.keys(ND.ticks).filter(function (k) { return ND.ticks[k]; }));
+    ND.pending = body; dlSaveDraft();
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    var mine = ND;
+    dlPost('/admin/api/stock/deliveries', body).then(function (r) {
+      if (ND !== mine) return;
+      if (r.net) return ND.review ? dlDrawReview() : dlDrawForm();   // still pending: the no-signal line and Send
+      ND.pending = null;
+      if (r.j.ok) return dlSaved(r.j);
+      if (Array.isArray(r.j.warnings)) {   // 409: something to confirm that the review did not show (or that changed since)
+        if (!ND.review) ND.review = { delivery: { id: ND.id, billNo: form.billNo, part: null }, lots: [], toRaise: [], notes: [], warnings: [] };
+        var list = (ND.review.warnings || []).slice();
+        r.j.warnings.forEach(function (w) { var i = list.map(function (x) { return x.key; }).indexOf(w.key); if (i >= 0) list[i] = w; else list.push(w); ND.ticks[w.key] = false; });
+        ND.review.warnings = list; dlSaveDraft();
+        return dlDrawReview('Check this before saving: it came up when you tapped Save.');
+      }
+      ND.err = r.j.error || 'Something went wrong. Try again.'; dlSaveDraft(); dlDrawForm();
+    });
+  }
+  function dlSaved(j) {
+    dlClearDraft(); ND = null;
+    var n = (j.lots || []).length;
+    toast(j.again ? 'This delivery was already saved. Opening it.' : 'Saved. ' + n + (n === 1 ? ' lot is' : ' lots are') + ' on hold: the website does not count them until each is released.', 6000);
+    refreshLow();
+    openDelivery(j.delivery && j.delivery.id);
+  }
+
+  // The delivery page (read only for now): bill, part, arrival, each lot with its status, what to raise with Krazy Bakers, notes.
+  function openDelivery(id) {
+    api('/admin/api/stock/deliveries/' + encodeURIComponent(id || '')).then(function (j) {
+      if (!j.ok) return toast(j.error || 'Could not open the delivery.', 6000);
+      var d = j.delivery || {};
+      var lines = (j.lots || []).map(function (l) {
+        var st = DL_STATUS[l.status] || [l.status || 'Unknown', 'b-unpaid'];
+        return h('div', { class: 'line dlotline' },
+          h('div', { class: 'dlotmain' }, h('b', { class: 'dlcode' }, l.code),
+            h('small', {}, [l.name || DL_NAME[l.slug] || l.slug, l.good != null ? l.good + ' good boxes' : null, l.perGoodPaise != null ? dlRs(l.perGoodPaise) + ' a box' : null].filter(Boolean).join(' · ')),
+            l.websiteStop ? h('small', {}, 'Website stops ' + dlWords(l.websiteStop) + ' · last ship ' + dlWords(l.lastShip) + ' · best before ' + dlWords(l.bestBefore)) : null),
+          h('span', { class: 'badge ' + st[1] }, st[0]));
+      });
+      var held = (j.lots || []).some(function (l) { return l.status === 'hold'; });
+      var raise = (j.toRaise || []).map(function (t) { return h('div', { class: 'line' }, h('span', {}, (DL_NAME[t.slug] || t.slug) + ': bill ' + t.invoice + ', counted ' + t.counted)); });
+      var notes = (j.notes || []).map(function (t) { return h('p', { class: 'muted' }, t); });
+      if (d.note) notes.push(h('p', {}, d.note));
+      invShow('Delivery ' + (d.billNo || '') + (d.part > 1 ? ', part ' + d.part : ''), [
+        h('div', { class: 'muted' }, [d.supplier || 'Krazy Bakers', 'part ' + (d.part || 1), d.arrivedOn ? 'arrived ' + dlWords(d.arrivedOn) : null, d.cartons != null ? d.cartons + ' cartons' : null, d.savedBy ? 'saved by ' + d.savedBy + (d.savedAt ? ', ' + when(d.savedAt) : '') : null].filter(Boolean).join(' · ')),
+        d.status === 'void' ? h('p', { class: 'note' }, 'This entry was corrected: it no longer counts.') : null,
+        section('Lots', lines.length ? lines : h('p', { class: 'muted' }, 'No lots.'), held ? h('p', { class: 'muted' }, 'On hold: the boxes are on the shelf, but the website does not count them until each lot is tasted and released.') : null),
+        raise.length ? section('To raise with Krazy Bakers', raise) : null,
+        notes.length ? section('Notes', notes) : null,
+        h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
+    }, function () { toast('No signal. The delivery is saved: open it again when you have signal.', 6000); });
   }
   function invForm(title, it, fields, onSave, saveLabel) {
     var save = h('button', { class: 'btn small', onclick: function (e) { e.target.disabled = true; onSave(function () { e.target.disabled = false; }); } }, saveLabel || 'Save');
@@ -999,6 +1397,7 @@ header small{color:var(--ink2);opacity:1}
   function plusDays(v, n) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || ''); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n)).toISOString().slice(0, 10) : ''; }
   // `pre` = an earlier receipt being corrected (from /inventory/receipt): the form refills from it, and saving cancels it and writes the new one in one step.
   function invReceive(it, pre) {
+    if (it.kind === 'product' && !pre) return openNewDelivery();   // a new biscuit receipt is a New delivery; this form only corrects an old one
     var isProd = it.kind === 'product';
     var rec = numIn('e.g. 160'), dmg = numIn('0'), lot = h('input', { placeholder: 'Fills in from the date above', value: (it.lots[0] && it.lots[0].lot_code) || '' }), lotDate = h('input', { type: 'date', max: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) }), bb = h('input', { type: 'date' }),
       ref = h('input', { placeholder: 'Challan or invoice number (optional)' }), kg = h('input', { type: 'number', step: '0.001', inputmode: 'decimal', placeholder: 'Billed kg (optional)' }), amt = h('input', { type: 'number', step: '0.01', inputmode: 'decimal', placeholder: 'Amount in rupees (optional)' }), note = h('input', { placeholder: 'Note (optional)' });

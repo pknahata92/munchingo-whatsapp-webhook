@@ -225,10 +225,38 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
   // prefill
   {
     const { dl } = fresh();
-    eq(await dl.lastPrefill(), { rates: RATES, freight: { busPerCarton: 0, delhiPerCarton: 0, porter: 0, other: 0 } }, 'prefill defaults');
+    // no earlier delivery: the 8 Nov facts (Delhi unloading Rs 20 a carton, porter Rs 2,000 a trip; bus fare per carton not known yet)
+    eq(await dl.lastPrefill(), { rates: RATES, freight: { busPerCarton: 0, delhiPerCarton: 20, porter: 2000, other: 0 } }, 'prefill defaults');
     await dl.save(input({ billNo: 'P1', rows: [{ slug: 'atta-original', invoiceBoxes: 100, counted: 100, rateRupees: 88 }], invoiceRupees: 8800 }), A);
     const p = await dl.lastPrefill();
-    eq([p.rates['atta-original'], p.rates['atta-kesari'], p.freight.busPerCarton, p.freight.porter], [88, 100, 150, 300], 'prefill from the last delivery, defaults for flavours it lacked');
+    eq([p.rates['atta-original'], p.rates['atta-kesari'], p.freight.busPerCarton, p.freight.delhiPerCarton, p.freight.porter, p.freight.other], [88, 100, 150, 50, 300, 0], 'prefill from the last delivery (its freight wins over the defaults), default rates for flavours it lacked');
+    await dl.save(input({ billNo: 'P2', freight: { busPerCarton: 0, delhiPerCarton: 0, porter: 0, other: 0 }, confirm: ['no_freight'], rows: [{ slug: 'atta-original', invoiceBoxes: 100, counted: 100, rateRupees: 88 }], invoiceRupees: 8800 }), A);
+    eq((await dl.lastPrefill()).freight, { busPerCarton: 0, delhiPerCarton: 0, porter: 0, other: 0 }, 'a last delivery with no freight prefills 0, not the defaults');
+  }
+  // preview (the review screen before Save): the same checks, codes, dates and costs, and nothing written
+  {
+    const { st, dl } = fresh();
+    await dl.save(input({ billNo: 'PV0', rows: [{ slug: 'atta-original', invoiceBoxes: 100, counted: 100, rateRupees: 50 }], invoiceRupees: 5000 }), A);   // a cheap last lot, so this one jumps
+    const mv = st.mv.length, lotsBefore = JSON.stringify(await st.lots()), last = JSON.stringify(await st.lastDelivery());
+    const inp = input({ billNo: 'PV1', bakeDate: '2026-10-27', invoiceRupees: 1, rows: rowsOf({ 'atta-original': { broken: 2, brokenReason: 'transit', brokenPhoto: PH } }) });
+    const p = await dl.save(inp, { ...A, preview: true });
+    ok(p.preview === true && !p.again, 'preview answers preview: true');
+    eq(p.lots.map((l) => l.code), ['MNGO-261027-01', 'MNGK-261027-01', 'MNGA-261027-01', 'MNGL-261027-01'], 'preview gives the codes the save would give');
+    const o0 = p.lots[0];
+    eq([o0.bakeDate, o0.bestBefore, o0.lastShip, o0.websiteStop, o0.good, o0.prevPerGoodPaise != null], ['2026-10-27', '2027-01-25', '2026-12-06', '2026-12-04', 98, true], 'preview lot: four dates, good boxes and the previous lot cost');
+    ok(o0.perGoodPaise > 0, 'preview lot: cost per good box');
+    eq(p.warnings.map((w) => w.key).sort(), ['cost_jump', 'invoice_mismatch', 'old_bake'], 'preview lists every warning, none confirmed');
+    eq([p.delivery.id, p.delivery.billNo, p.delivery.part], [inp.id, 'PV1', 1], 'preview delivery');
+    ok(p.notes.length === 1 && Array.isArray(p.toRaise), 'preview notes and toRaise');
+    const p2 = await dl.save({ ...inp, confirm: ['old_bake'] }, { ...A, preview: true });
+    ok(p2.preview === true && p2.warnings.some((w) => w.key === 'old_bake'), 'preview still lists a confirmed warning and needs no old-bake reason');
+    ok(st.mv.length === mv && JSON.stringify(await st.lots()) === lotsBefore && JSON.stringify(await st.lastDelivery()) === last && !(await st.delivery(inp.id)), 'preview writes nothing');
+    await rejects(dl.save({ ...inp, billNo: '' }, { ...A, preview: true }), /^Enter the bill number\.$/, 'preview runs the hard blocks', 400);
+    await rejects(dl.save({ ...inp, billNo: 'PV0' }, { ...A, preview: true }), /^Bill PV0 part 1 is already saved/, 'preview refuses a bill and part already saved', 400);
+    const r = await dl.save({ ...inp, confirm: ['old_bake', 'cost_jump', 'invoice_mismatch'], oldBakeReason: 'bus strike' }, A);
+    eq(r.lots.map((l) => l.code), p.lots.map((l) => l.code), 'the save gives the codes the preview showed');
+    const again = await dl.save(inp, { ...A, preview: true });
+    ok(again.again === true && !again.preview && again.delivery.id === inp.id && again.lots.length === 4, 'preview of a receipt already saved answers its stored result with again: true');
   }
   ok(PHOTO_PATH.test(PH) && !PHOTO_PATH.test('2026/11/xyz.jpg'), 'PHOTO_PATH');
 
@@ -858,6 +886,11 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     const inp2 = input({ billNo: 'A000301' }); await dl.save(inp2, A); await dl.correctDelivery({ id: inp2.id, reason: 'redo' }, A);
     const v = await dl.deliveryPage(inp2.id, OWN);
     eq([v.delivery.status, v.canCorrect, v.lots.every((l) => l.status === 'void')], ['void', false, true], 'a corrected delivery shows void and cannot be corrected again');
+    // Add another lot: two Kesari lots in one delivery each show their own good boxes
+    const inp3 = input({ billNo: 'A000302', invoiceRupees: 20000, confirm: ['cost_jump'], rows: [{ slug: 'atta-kesari', invoiceBoxes: 100, counted: 100, rateRupees: 100 }, { slug: 'atta-kesari', invoiceBoxes: 100, counted: 90, diffReason: 'short', rateRupees: 100, bakeDate: '2026-11-06' }] });
+    await dl.save(inp3, A);
+    const two = await dl.deliveryPage(inp3.id, A);
+    eq(two.lots.map((l) => [l.code.slice(0, 12), l.good]), [['MNGK-261105-', 100], ['MNGK-261106-', 90]], 'two lots of one flavour: each its own good boxes');
   }
 
   console.log(pass + ' passed, ' + fail + ' failed');

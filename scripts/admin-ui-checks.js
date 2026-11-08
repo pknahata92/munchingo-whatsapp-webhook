@@ -78,13 +78,13 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     click(o.byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock page');
     ok(!q('#sheet.on'), 'Stock opens as a page, not a popup');
     ok(/Atta Kesari/.test(text(q('#viewStock'))) && /Atta Sugar-Lite/.test(text(q('#viewStock'))) && /Packing tape/.test(text(q('#viewStock'))), 'the page lists the flavours and the packaging');
-    const top = o.byText('#viewStock button', /^Receive stock$/);
-    ok(!!top, 'one Receive stock button sits at the top');
-    click(top); await sleep(200);
-    ok(/Atta Kesari/.test(text(q('#viewStock'))) && /Which/i.test(text(q('#viewStock'))), 'it asks which item arrived');
-    click(o.byText('#viewStock button', /Atta Kesari/)); await sleep(200);
-    ok(/Receive: Atta Kesari/.test(text(q('#viewStock'))) && !q('#sheet.on'), 'the receive form opens in the page');
-    click(o.byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back to the stock list');
+    // Task 11 changed this check: the top button was Receive stock (a picker, then the old receive form); biscuits now arrive only through New delivery
+    const top = o.byText('#viewStock button', /^New delivery$/);
+    ok(!!top && !o.byText('#viewStock button', /^Receive stock$/), 'one New delivery button sits at the top (Receive stock is gone)');
+    click(top); await until(() => qa('#viewStock .dlrow').length === 4, 4000, 'the New delivery page').catch(() => {});
+    ok(/^New delivery/.test(text(q('#viewStock .pagehead'))) && /Atta Kesari/.test(text(q('#viewStock'))), 'it opens New delivery with a row per flavour');
+    ok(!q('#sheet.on'), 'New delivery opens in the page');
+    click(o.byText('#viewStock button', /^Back to Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back to the stock list');
     ok(true, 'Back returns to the stock list');
     click(o.byText('#viewStock button', /^History$/)); await until(() => /Stock history/.test(text(q('#viewStock'))), 4000, 'the history page').catch(() => {});
     ok(/Stock history/.test(text(q('#viewStock'))) && !q('#sheet.on'), 'History also opens in the page');
@@ -404,25 +404,26 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
-  // Receive form: pick the date the batch was prepared on a calendar instead of typing a lot code
+  // Dates on New delivery: picked on a calendar; the code, best before, last ship and website stop are worked out, never typed (spec 6.2).
+  // Task 11 changed this check: it was the old Receive form (prepared-on picker that filled 15OCT26 and a best before to edit by hand),
+  // which a biscuit's Receive no longer opens.
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click, byText, set } = o;
     click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock list');
-    click(byText('#viewStock button', /^Receive stock$/)); await until(() => /Which/i.test(text(q('#viewStock'))), 3000, 'the item picker');
-    click(byText('#viewStock button', /Atta Original/)); await until(() => /Receive: Atta Original/.test(text(q('#viewStock'))), 3000, 'the receive form');
-    const dates = qa('#viewStock input[type=date]');
-    ok(dates.length === 2, 'the receive form has two calendar pickers: prepared on, and best before (saw ' + dates.length + ')');
-    ok(/Prepared on/i.test(text(q('#viewStock'))), 'the first one is labelled Prepared on');
+    const orig = qa('#viewStock .line').find((l) => /Atta Original/.test(text(l)));
+    click(Array.from(orig.querySelectorAll('button')).find((b) => /^Receive$/.test(text(b))));
+    await until(() => qa('#viewStock .dlrow').length === 4, 4000, 'New delivery from Receive');
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-    ok(dates[0].max === today, 'a batch cannot be prepared in the future: the calendar stops at today (' + dates[0].max + ')');
-    set(dates[0], '2026-10-15');
-    ok(qa('#viewStock input').some((i) => i.value === '15OCT26'), 'picking 15 Oct 2026 fills the lot code as 15OCT26 (capitals, same style every time)');
-    ok(dates[1].value === '2027-01-13', 'best before fills in 90 days later: 2027-01-13 (saw ' + dates[1].value + ')');
-    set(dates[0], '2027-03-05');
-    ok(qa('#viewStock input').some((i) => i.value === '05MAR27') && dates[1].value === '2027-06-03', 'another date: 05MAR27, best before 2027-06-03');
-    set(dates[1], '2027-06-10');
-    ok(dates[1].value === '2027-06-10', 'best before can still be changed by hand');
-    ok(o.errors.length === 0, 'no page errors on the receive form (' + o.errors.join(' | ').slice(0, 200) + ')');
+    const arrived = q('#dl-arrivedOn'), bake = q('#dl-bakeDate');
+    ok(!!arrived && !!bake && arrived.type === 'date' && bake.type === 'date', 'arrived on and the bake date are calendar pickers');
+    ok(arrived.value === today && arrived.max === today && bake.max === today, 'arrived on starts at today; neither can be after today (' + [arrived.value, arrived.max, bake.max].join(' / ') + ')');
+    ok(bake.value === '', 'the bake date has no default: it must be entered');
+    ok(/Bake date \(from the bill\)/.test(text(q('#viewStock'))), 'the bake date is labelled "Bake date (from the bill)"');
+    const labels = qa('#viewStock label').map((l) => text(l)).join(' | ');
+    ok(!/best before|lot code/i.test(labels) && !qa('#viewStock input').some((i) => /lot code/i.test(i.placeholder || '')), 'no lot code or best-before field to type (' + labels.slice(0, 160) + ')');
+    set(bake, '2026-10-15');
+    ok(bake.value === '2026-10-15', 'a bake date can be picked');
+    ok(o.errors.length === 0, 'no page errors on the New delivery dates (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
   });
 
@@ -736,11 +737,11 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(!!o.byText('#viewStock button', /^Add packaging item$/) && !o.byText('#viewStock button', /^Add item$/), 'the owner has Add packaging item');
     const prods = btnsOf(/Atta Kesari/);
     ok(prods.includes('Receive') && prods.includes('Count'), 'a biscuit row is unchanged (' + prods.join(',') + ')');
-    // pickers list biscuits only
-    click(o.byText('#viewStock button', /^Receive stock$/)); await until(() => /Which item/.test(view()), 3000, 'the receive picker');
-    const picks = qa('#viewStock .moregrid button').map((b) => text(b));
-    ok(picks.length === 4 && picks.every((t) => /^Atta /.test(t)) && !/Mono carton: Kesari|Mono carton|Stamp/.test(picks.join('|')), 'the Receive picker lists the four biscuits only (' + picks.join(' | ') + ')');
-    click(o.byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back');
+    // biscuits only arrive through New delivery, and it lists the four biscuits only (Task 11 changed this check: it was the Receive stock picker)
+    click(o.byText('#viewStock button', /^New delivery$/)); await until(() => qa('#viewStock .dlrow').length === 4, 4000, 'New delivery');
+    const picks = qa('#viewStock .dlrow h3').map((b) => text(b));
+    ok(picks.length === 4 && picks.every((t) => /^Atta /.test(t)) && !/Mono carton: Kesari|Mono carton|Stamp/.test(picks.join('|')), 'New delivery lists the four biscuits only (' + picks.join(' | ') + ')');
+    click(o.byText('#viewStock button', /^Back to Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back');
     // Set count
     click(Array.from(rowOf(/Mono carton: Kesari/).querySelectorAll('button')).find((b) => /^Set count$/.test(text(b))));
     await until(() => /Count: Mono carton: Kesari/.test(view()), 3000, 'the count form');
@@ -779,6 +780,185 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(!s.byText('#viewStock button', /^Add packaging item$/), 'staff have no Add packaging item');
     ok(s.errors.length === 0, 'no page errors for staff (' + s.errors.join(' | ').slice(0, 200) + ')');
     s.close();
+  });
+
+  // Task 11: New delivery on the phone (375 px): one screen, a review with every warning ticked, one Save, and the form kept on the
+  // phone when the signal drops (receipt id: a resend never saves twice).
+  list.push(async () => {
+    const IST = 330 * 60000, MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const istDay = (n) => new Date(Date.now() + IST - n * 86400000).toISOString().slice(0, 10);
+    const words = (iso) => Number(iso.slice(8, 10)) + ' ' + MON[Number(iso.slice(5, 7)) - 1] + ' ' + iso.slice(0, 4);
+    const yymmdd = (iso) => iso.slice(2, 4) + iso.slice(5, 7) + iso.slice(8, 10);
+    const BAKE1 = istDay(10), BAKE2 = istDay(1);
+    const BILL = 'T11-' + String(Date.now()).slice(-7);
+    const NOSIG = 'Not sent. Saved on this phone. Tap Send when you have signal.';
+    const KEY = 'mngDeliveryDraft';
+    const SLUGS = ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'];
+    const JPEG = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]).toString('base64');
+    // jsdom draws nothing, so "no horizontal scroll" is checked by what could cause it: no fixed width or grid track wider than the
+    // 343 px between the 16 px gutters, and no long text that may not wrap. The real 375 px page is measured in the browser (task report).
+    const tooWide = (w) => {
+      const bad = [];
+      w.qa('#viewStock *').forEach((el) => {
+        const cs = w.win.getComputedStyle(el), name = el.id || el.className || el.tagName;
+        for (const p of ['width', 'minWidth']) { const m = /^([\d.]+)px$/.exec(cs[p] || ''); if (m && Number(m[1]) > 343) bad.push(name + ' ' + p + ' ' + cs[p]); }
+        if (/grid/.test(cs.display) && !/minmax\(0/.test(cs.gridTemplateColumns || '')) bad.push(name + ' grid ' + cs.gridTemplateColumns);
+        if (cs.whiteSpace === 'nowrap' && w.text(el).length > 24) bad.push(name + ' nowrap ' + w.text(el).slice(0, 30));
+      });
+      return bad;
+    };
+    const rowOf = (w, slug, i) => w.qa('#viewStock .dlrow[data-slug="' + slug + '"]')[i || 0];
+    const fieldOf = (w, slug, f, i) => (rowOf(w, slug, i) || w.doc.createElement('i')).querySelector('[data-f="' + f + '"]');
+    const review = (w) => w.text(w.q('#dlReview'));
+    const addPhoto = (w, input) => {
+      w.win.__shrinkPhoto = () => Promise.resolve(JPEG);   // jsdom has no canvas; the server still checks the photo
+      Object.defineProperty(input, 'files', { value: [new w.win.File(['x'], 'broken.jpg', { type: 'image/jpeg' })], configurable: true });
+      input.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+    };
+    const toNew = async (w) => {
+      w.click(w.byText('#tabs .tab', /^Stock$/)); await until(() => w.qa('#viewStock .line').length >= 4, 4000, 'the stock page');
+      w.click(w.byText('#viewStock button', /^New delivery$/));
+    };
+
+    const s = await openAdmin('staff', { width: 375 }); const { q, qa, text, click, byText, set } = s;
+    const token = s.win.localStorage.getItem('mngAdminToken');
+    const apiGet = async (p) => (await (await fetch(BASE + p, { headers: { Authorization: 'Bearer ' + token } })).json());
+    click(byText('#tabs .tab', /^Stock$/)); await until(() => qa('#viewStock .line').length >= 4, 4000, 'the stock page');
+    ok(!!byText('#viewStock button', /^New delivery$/), 'staff have a New delivery button at the top of Stock');
+    const kes = qa('#viewStock .line').find((l) => /Atta Kesari/.test(text(l)));
+    click(Array.from(kes.querySelectorAll('button')).find((b) => /^Receive$/.test(text(b))));
+    await until(() => qa('#viewStock .dlrow').length === 4, 4000, 'New delivery from a biscuit\'s Receive');
+    ok(/^New delivery/.test(text(q('#viewStock .pagehead'))), 'a biscuit\'s Receive opens New delivery');
+    await until(() => fieldOf(s, 'atta-original', 'rateRupees').value !== '', 4000, 'the prefilled rates').catch(() => {});
+    ok(SLUGS.map((x) => fieldOf(s, x, 'rateRupees').value).join('/') === '85/100/85/125', 'rates are prefilled 85/100/85/125 (' + SLUGS.map((x) => fieldOf(s, x, 'rateRupees').value).join('/') + ')');
+    ok([q('#dl-busPerCarton').value, q('#dl-delhiPerCarton').value, q('#dl-porter').value, q('#dl-other').value].join('/') === '0/20/2000/0', 'freight is prefilled: bus 0, Delhi Rs 20 a carton, porter Rs 2,000, other 0 (' + [q('#dl-busPerCarton').value, q('#dl-delhiPerCarton').value, q('#dl-porter').value, q('#dl-other').value].join('/') + ')');
+    ok(q('#dl-supplier').value === 'Krazy Bakers' && q('#dl-arrivedOn').value === istDay(0) && q('#dl-bakeDate').value === '', 'Krazy Bakers, arrived today, bake date empty');
+    ok(!!q('#dl-gstRupees') && /GST on the bill \(Rs, 0 if none\)/.test(text(q('#viewStock'))), 'the top block has "GST on the bill (Rs, 0 if none)"');
+    ok(['invoiceBoxes', 'counted', 'broken'].every((f) => qa('#viewStock .dlrow [data-f="' + f + '"]').every((i) => i.getAttribute('inputmode') === 'numeric'))
+      && qa('#viewStock .dlrow [data-f="rateRupees"]').every((i) => i.getAttribute('inputmode') === 'decimal') && ['invoiceRupees', 'gstRupees', 'porter'].every((k) => q('#dl-' + k).getAttribute('inputmode') === 'decimal') && q('#dl-cartons').getAttribute('inputmode') === 'numeric', 'number fields open the number keypad');
+    ok(qa('#viewStock .dlrow h3').map((h) => text(h)).join('|') === 'Atta Original|Atta Kesari|Atta Ajwain|Atta Sugar-Lite', 'four flavour rows');
+    let bad = tooWide(s); ok(bad.length === 0, 'the form has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
+    // the Review button names the first thing missing
+    set(q('#dl-billNo'), BILL);
+    ok(review(s) === 'Enter the bake date' && q('#dlReview').disabled, 'bake date empty: the Review button says "Enter the bake date" (' + review(s) + ')');
+    set(q('#dl-bakeDate'), BAKE1); set(q('#dl-cartons'), '4'); set(q('#dl-invoiceRupees'), '7800');   // the rates make 7,900: Rs 100 off
+    for (const x of SLUGS) { set(fieldOf(s, x, 'invoiceBoxes'), '20'); set(fieldOf(s, x, 'counted'), '20'); }
+    ok(review(s) === 'Review' && !q('#dlReview').disabled, 'with everything entered the button says Review (' + review(s) + ')');
+    const bk = rowOf(s, 'atta-original').querySelector('.dlbroken');
+    ok(!!bk && bk.hidden, 'no broken boxes: the broken-box questions are hidden');
+    set(fieldOf(s, 'atta-original', 'broken'), '2');
+    ok(!bk.hidden && /Why did they break\?/.test(text(bk)) && /On the bus/.test(text(bk)) && /At the bakery/.test(text(bk)) && /Photo of the broken boxes/.test(text(bk)), 'broken 2: why did they break (on the bus / at the bakery) and the photo appear');
+    click(Array.from(bk.querySelectorAll('button')).find((b) => /^On the bus$/.test(text(b))));
+    ok(review(s) === 'Atta Original: add a photo of the broken boxes' && q('#dlReview').disabled, 'broken 2 with no photo: the photo is required (' + review(s) + ')');
+    addPhoto(s, fieldOf(s, 'atta-original', 'brokenPhoto'));
+    await until(() => /Photo added/.test(text(bk)), 4000, 'the photo to upload').catch(() => {});
+    ok(/Photo added/.test(text(bk)) && review(s) === 'Review', 'the photo is shrunk, sent and noted (' + text(bk).slice(-40) + ' / ' + review(s) + ')');
+    const df = rowOf(s, 'atta-kesari').querySelector('.dldiff');
+    ok(!!df && df.hidden, 'counted = bill: no reason asked');
+    set(fieldOf(s, 'atta-kesari', 'counted'), '19');
+    ok(!df.hidden && /Why is the count different from the bill\?/.test(text(df)) && review(s) === 'Atta Kesari: say why the count is different from the bill', 'counted 19 against 20: the reason is asked (' + review(s) + ')');
+    set(fieldOf(s, 'atta-kesari', 'diffReason'), 'one box short');
+    const d0 = JSON.parse(s.win.localStorage.getItem(KEY) || '{}');
+    ok(/^d-[0-9a-z]+-[0-9a-z]{6}$/.test(d0.id || '') && d0.form && d0.form.billNo === BILL && d0.form.rows.find((r) => r.slug === 'atta-kesari').diffReason === 'one box short' && /^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/.test(d0.form.rows[0].brokenPhoto || ''), 'every entry is kept on the phone with one receipt id (' + (d0.id || 'none') + ')');
+    // review
+    click(q('#dlReview'));
+    await until(() => qa('#viewStock .dllot').length === 4, 5000, 'the review screen').catch(() => {});
+    ok(/^Check and save/.test(text(q('#viewStock .pagehead'))) && qa('#viewStock .dllot').length === 4, 'Review lists four lots');
+    const codes = qa('#viewStock .dllot .dlcode').map((c) => text(c));
+    ok(codes.length === 4 && codes.every((c, i) => c === 'MNG' + 'OKAL'[i] + '-' + yymmdd(BAKE1) + '-01'), 'each lot shows its code (' + codes.join(', ') + ')');
+    const lot0 = text(qa('#viewStock .dllot')[0]);
+    ok(/Atta Original/.test(lot0) && /18 good boxes/.test(lot0), 'Original: 18 good boxes (20 counted, 2 broken)');
+    ok(/Baked/.test(lot0) && lot0.includes(words(BAKE1)) && /Website stops/.test(lot0) && /Last ship/.test(lot0) && /Best before/.test(lot0) && /\d+ [A-Z][a-z]{2} 20\d\d/.test(lot0), 'the four dates, in words (' + lot0.slice(0, 160) + ')');
+    ok(/Cost per good box Rs \d+\.\d\d/.test(lot0), 'cost per good box in rupees with paise (' + (lot0.match(/Cost per good box[^·]*/) || [''])[0] + ')');
+    const ticks = qa('#viewStock .dlwarn input[type=checkbox]');
+    const keys = ticks.map((t) => t.getAttribute('data-key')).sort().join(',');
+    ok(keys === 'invoice_mismatch,old_bake', 'two warnings to tick: the old bake and the bill total (' + keys + ')');
+    ok(q('#dlSave') && q('#dlSave').disabled, 'Save is disabled until every warning is ticked');
+    click(ticks.find((t) => t.getAttribute('data-key') === 'invoice_mismatch'));
+    ok(q('#dlSave').disabled, 'one of two ticked: Save still disabled');
+    click(ticks.find((t) => t.getAttribute('data-key') === 'old_bake'));
+    ok(!!q('#dlOldReason') && !q('#dlOldReason').closest('[hidden]') && q('#dlSave').disabled, 'ticking the old bake asks for a reason, and Save waits for it');
+    set(q('#dlOldReason'), 'Bus strike in Bikaner');
+    ok(!q('#dlSave').disabled, 'every warning ticked and the reason given: Save is enabled');
+    bad = tooWide(s); ok(bad.length === 0, 'the review screen has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
+    // no signal: the save never reaches the server
+    const real = s.win.fetch; let dropped = 0;
+    s.win.fetch = (u, o) => { if (!dropped && /\/admin\/api\/stock\/deliveries$/.test(String(u)) && o && o.method === 'POST') { dropped++; return Promise.reject(new TypeError('Failed to fetch')); } return real(u, o); };
+    click(q('#dlSave'));
+    await until(() => !!q('#dlNosig'), 4000, 'the no-signal line').catch(() => {});
+    ok(dropped === 1 && text(q('#dlNosig')) === NOSIG && !!byText('#viewStock button', /^Send$/), 'no signal: "' + NOSIG + '" and a Send button (' + text(q('#dlNosig')) + ')');
+    const kept = s.win.localStorage.getItem(KEY);
+    ok(!!kept && JSON.parse(kept).id === d0.id && JSON.parse(kept).pending && JSON.parse(kept).pending.id === d0.id, 'the delivery stays on the phone with the same receipt id');
+    ok(s.errors.length === 0, 'no page errors on the form and review (' + s.errors.join(' | ').slice(0, 200) + ')');
+    s.close();
+    // the phone reloads the page: the same delivery, Send saves it once
+    const r = await openAdmin('staff', { width: 375 });
+    r.win.localStorage.setItem(KEY, kept);
+    await toNew(r);
+    await until(() => !!r.q('#dlNosig'), 4000, 'the restored delivery').catch(() => {});
+    ok(r.text(r.q('#dlNosig')) === NOSIG && !!r.byText('#viewStock button', /^Send$/), 'after a reload the page still says not sent and offers Send');
+    r.click(r.byText('#viewStock button', /^Edit$/)); await until(() => r.qa('#viewStock .dlrow').length === 4, 3000, 'the form').catch(() => {});
+    ok(r.q('#dl-billNo').value === BILL && r.q('#dl-bakeDate').value === BAKE1 && r.q('#dl-cartons').value === '4' && r.q('#dl-invoiceRupees').value === '7800'
+      && fieldOf(r, 'atta-kesari', 'counted').value === '19' && fieldOf(r, 'atta-original', 'broken').value === '2' && fieldOf(r, 'atta-kesari', 'diffReason').value === 'one box short' && /Photo added/.test(r.text(rowOf(r, 'atta-original'))), 'the reload restores every typed value from the phone');
+    let asked = ''; r.win.confirm = (m) => { asked = m; return false; };
+    r.click(r.byText('#viewStock button', /^Start a new one$/));
+    ok(/Throw away/.test(asked) && r.q('#dl-billNo').value === BILL, 'Start a new one asks first, and No keeps the delivery (' + asked + ')');
+    r.win.confirm = () => true;
+    ok(r.text(r.q('#dlNosig')) === NOSIG, 'the form says it is not sent yet');
+    r.click(r.byText('#viewStock button', /^Send$/));
+    await until(() => /^Delivery /.test(r.text(r.q('#viewStock .pagehead'))) && r.qa('#viewStock .dlotline').length === 4, 5000, 'the delivery page').catch(() => {});
+    const lotLines = r.qa('#viewStock .dlotline');
+    ok(new RegExp('^Delivery ' + BILL).test(r.text(r.q('#viewStock .pagehead'))) && lotLines.length === 4 && lotLines.every((l) => /On hold/.test(r.text(l.querySelector('.badge')))), 'Send saves it and opens the delivery page with 4 lots On hold (' + lotLines.map((l) => r.text(l).slice(0, 50)).join(' | ') + ')');
+    ok(/To raise with Krazy Bakers/.test(r.text(r.q('#viewStock'))) && /Atta Kesari: bill 20, counted 19/.test(r.text(r.q('#viewStock'))), 'the delivery page lists what to raise with Krazy Bakers');
+    ok(/Send the bus company a written note of the breakage/.test(r.text(r.q('#viewStock'))), 'and the note for the bus company');
+    ok(r.win.localStorage.getItem(KEY) === null, 'the saved delivery is cleared from the phone');
+    const mine = ((await apiGet('/admin/api/stock/lots')).lots || []).filter((l) => (l.code || '').includes('-' + yymmdd(BAKE1) + '-'));
+    ok(mine.length === 4 && mine.every((l) => l.status === 'hold'), 'exactly one delivery was saved: 4 lots, not 8 (' + mine.map((l) => l.code).join(',') + ')');
+    r.click(r.byText('#viewStock button', /^Back to Stock$/)); await until(() => !!r.byText('#viewStock button', /^New delivery$/), 4000, 'back to Stock').catch(() => {});
+    r.click(r.byText('#viewStock button', /^New delivery$/)); await until(() => r.qa('#viewStock .dlrow').length === 4, 4000, 'a fresh form').catch(() => {});
+    ok(r.q('#dl-billNo').value === '' && !r.q('#dlNosig') && !r.byText('#viewStock button', /^Start a new one$/), 'after the save, the next New delivery on this phone starts empty');
+    ok(r.errors.length === 0, 'no page errors after the reload (' + r.errors.join(' | ').slice(0, 200) + ')');
+    r.close();
+
+    // a second delivery: the server's refusal on the form, a warning that comes back at Save, a reply lost on the way back
+    const t = await openAdmin('staff', { width: 375 });
+    await toNew(t); await until(() => t.qa('#viewStock .dlrow').length === 4 && fieldOf(t, 'atta-original', 'rateRupees').value !== '', 4000, 'a fresh form');
+    t.set(t.q('#dl-billNo'), BILL); t.set(t.q('#dl-bakeDate'), BAKE2); t.set(t.q('#dl-cartons'), '1'); t.set(t.q('#dl-invoiceRupees'), '100');
+    t.set(fieldOf(t, 'atta-original', 'invoiceBoxes'), '1'); t.set(fieldOf(t, 'atta-original', 'counted'), '1'); t.set(fieldOf(t, 'atta-original', 'rateRupees'), '100');
+    t.click(t.q('#dlReview'));
+    await until(() => /already saved/.test(t.text(t.q('#dlErr'))), 4000, 'the refusal').catch(() => {});
+    ok(new RegExp('^Bill ' + BILL + ' part 1 is already saved .*Tap "Add part 2" if this is the rest\\.$').test(t.text(t.q('#dlErr'))) && t.qa('#viewStock .dlrow').length === 4, 'a refusal from the server shows its message on the form (' + t.text(t.q('#dlErr')) + ')');
+    t.click(t.q('#dl-addPart'));
+    t.click(t.q('#dlReview'));
+    await until(() => t.qa('#viewStock .dllot').length === 1, 4000, 'the review of part 2').catch(() => {});
+    ok(t.qa('#viewStock .dllot').length === 1 && /part 2/.test(t.text(t.q('#viewStock'))), 'Add part 2 to an earlier bill: the review is for part 2');
+    const tickAll = () => t.qa('#viewStock .dlwarn input[type=checkbox]').forEach((c) => { if (!c.checked) t.click(c); });
+    tickAll();
+    const realT = t.win.fetch; let step = 0;
+    t.win.fetch = async (u, o) => {
+      if (/\/admin\/api\/stock\/deliveries$/.test(String(u)) && o && o.method === 'POST') {
+        step++;
+        if (step === 1) return new Response(JSON.stringify({ ok: false, error: 'Check these before saving', warnings: [{ key: 'large', text: 'Practice: a warning that appeared after the review.' }] }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+        if (step === 2) { await realT(u, o); throw new TypeError('Failed to fetch'); }   // it reached the server; the reply was lost
+      }
+      return realT(u, o);
+    };
+    t.click(t.q('#dlSave'));
+    await until(() => /a warning that appeared after the review/.test(t.text(t.q('#viewStock'))), 4000, 'the warning from Save').catch(() => {});
+    const late = t.qa('#viewStock .dlwarn input[type=checkbox]').find((c) => c.getAttribute('data-key') === 'large');
+    ok(!!late && !late.checked && t.qa('#viewStock .dllot').length === 1 && t.q('#dlSave').disabled, 'a 409 at Save brings the review back with the new warning to tick, Save disabled');
+    t.click(late); ok(!t.q('#dlSave').disabled, 'ticked: Save is enabled again');
+    t.click(t.q('#dlSave'));
+    await until(() => !!t.q('#dlNosig'), 4000, 'the lost reply').catch(() => {});
+    ok(t.text(t.q('#dlNosig')) === NOSIG, 'a lost reply also says not sent');
+    t.click(t.byText('#viewStock button', /^Send$/));
+    await until(() => /^Delivery /.test(t.text(t.q('#viewStock .pagehead'))), 5000, 'the delivery page').catch(() => {});
+    ok(/^Delivery /.test(t.text(t.q('#viewStock .pagehead'))) && /part 2/.test(t.text(t.q('#viewStock'))) && t.qa('#viewStock .dlotline').length === 1, 'Send after a lost reply opens the delivery saved the first time');
+    ok(t.win.localStorage.getItem(KEY) === null, 'and clears it from the phone');
+    const mine2 = ((await apiGet('/admin/api/stock/lots')).lots || []).filter((l) => (l.code || '').includes('-' + yymmdd(BAKE2) + '-'));
+    ok(mine2.length === 1, 'the resend saved nothing twice: 1 lot, not 2 (' + mine2.map((l) => l.code).join(',') + ')');
+    ok(t.errors.length === 0, 'no page errors on the second delivery (' + t.errors.join(' | ').slice(0, 200) + ')');
+    t.close();
   });
 
   return list;

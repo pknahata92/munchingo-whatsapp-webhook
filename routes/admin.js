@@ -110,6 +110,11 @@ const who = (req) => ({ actor: req.admin, isOwner: req.admin.role === 'owner' })
 const slugOf = (req) => (req.query.slug ? String(req.query.slug) : ((req.body || {}).slug ? String((req.body || {}).slug) : undefined));
 const lotIn = (req) => ({ ...(req.body || {}), code: req.params.code, slug: slugOf(req) });   // the code is in the URL, the flavour may be in the query or the body
 router.get('/admin/api/stock/deliveries/prefill', sw(async () => dl().lastPrefill()));   // before :id, or "prefill" would be read as a delivery number
+// The review screen (Task 11): the same body as a save, every check, the codes, dates, costs and warnings, and nothing written. It
+// writes nothing, so it does not nudge Meta and Google the way sw() does for a POST.
+router.post('/admin/api/stock/deliveries/preview', wrap(async (req) => {
+  try { return await dl().save(req.body || {}, { ...who(req), preview: true }); } catch (e) { if (e instanceof stock().StockError) throw new actions.AdminError(e.message, e.status, e.extra); throw e; }
+}));
 router.get('/admin/api/stock/deliveries/:id', sw((req) => dl().deliveryPage(req.params.id, who(req))));
 router.post('/admin/api/stock/deliveries/:id/correct', sw((req) => dl().correctDelivery({ ...(req.body || {}), id: req.params.id }, who(req))));
 router.get('/admin/api/stock/lots', sw(async () => ({ lots: await dl().listLots() })));

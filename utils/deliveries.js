@@ -12,6 +12,9 @@ const lots = require('./lots');
 const PHOTO_PATH = /^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/;
 const NAMES = { 'atta-original': 'Atta Original', 'atta-kesari': 'Atta Kesari', 'atta-ajwain': 'Atta Ajwain', 'atta-lite-sugar': 'Atta Sugar-Lite' };
 const DEFAULT_RATES = { 'atta-original': 85, 'atta-kesari': 100, 'atta-ajwain': 85, 'atta-lite-sugar': 125 };   // estimate A000244
+// Freight before the first delivery is saved (8 Nov 2026 facts): Delhi unloading Rs 20 a carton, porter Rs 2,000 a trip, bus fare per
+// carton not known yet. The last delivery's own freight always wins over these.
+const DEFAULT_FREIGHT = { busPerCarton: 0, delhiPerCarton: 20, porter: 2000, other: 0 };
 const FREIGHT_KEYS = ['bus_per_carton', 'delhi_per_carton', 'porter', 'other'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const BILL_ONCE = 'stock_deliveries_bill_part_once';
@@ -48,7 +51,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
   const nextPart = (list) => list.reduce((m, d) => Math.max(m, d.part || 1), 0) + 1;
   const clashText = (stored, billNo, part, next) => `Bill ${billNo} part ${part} is already saved (${stored ? dateWords(lots.todayIst(Date.parse(stored.created_at))) : 'earlier'}, ${(stored && (stored.saved_by_name || stored.saved_by_email)) || 'Staff'}). Tap "Add part ${next}" if this is the rest.`;
 
-  async function save(input, { actor, isOwner } = {}) {
+  // `preview`: the review screen before Save. Every check runs and the codes, dates, costs and warnings come back exactly as a save
+  // would make them, but nothing is written and no warning needs confirming. A receipt already saved answers its stored result.
+  async function save(input, { actor, isOwner, preview = false } = {}) {
     input = input || {};
     const id = String(input.id == null ? '' : input.id);
     if (!/^[A-Za-z0-9_-]{1,60}$/.test(id)) throw new StockError('This form has no receipt number. Reload the page and try again.', 400);
@@ -158,14 +163,6 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     if (freightTotal === 0) add('no_freight', 'No freight entered, so the cost per box will look lower than it really is.');
     const totalCounted = rows.reduce((a, r) => a + r.counted, 0);
     if (totalCounted >= 5000) add('large', `${totalCounted} boxes is a very large delivery. Check the numbers.`);
-
-    const confirm = new Set(Array.isArray(input.confirm) ? input.confirm : []);
-    const oldBakeReason = cleanText(input.oldBakeReason, 200);
-    if (confirm.has('old_bake') && warnings.some((w) => w.key === 'old_bake') && !oldBakeReason) fail('Add a reason why the bake date is old.');
-    const open = warnings.filter((w) => !confirm.has(w.key));
-    if (open.length) throw new StockError('Check these before saving', 409, { warnings: open });
-
-    // result, delivery, lots, movements
     const notes = [];
     if (made.some((r) => r.broken > 0 && r.brokenReason === 'transit')) notes.push('Send the bus company a written note of the breakage (claims need notice within 180 days).');
     const result = {
@@ -175,6 +172,15 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
       notes,
       warnings: warnings.map((w) => ({ key: w.key, text: w.text })),
     };
+    if (preview) return { preview: true, ...result };
+
+    const confirm = new Set(Array.isArray(input.confirm) ? input.confirm : []);
+    const oldBakeReason = cleanText(input.oldBakeReason, 200);
+    if (confirm.has('old_bake') && warnings.some((w) => w.key === 'old_bake') && !oldBakeReason) fail('Add a reason why the bake date is old.');
+    const open = warnings.filter((w) => !confirm.has(w.key));
+    if (open.length) throw new StockError('Check these before saving', 409, { warnings: open });
+
+    // delivery, lots, movements
     const who = { actor_email: (actor && actor.email) || null, actor_name: (actor && actor.name) || null };
     const moves = [];
     for (const r of made) {
@@ -207,7 +213,8 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     const rates = { ...DEFAULT_RATES };
     const rows = last && last.input && Array.isArray(last.input.rows) ? last.input.rows : [];
     for (const r of rows) if (r && DEFAULT_RATES[r.slug] != null && !empty(r.rateRupees) && Number.isFinite(Number(r.rateRupees))) rates[r.slug] = Number(r.rateRupees);
-    const lf = (last && last.freight) || {};
+    if (!last) return { rates, freight: { ...DEFAULT_FREIGHT } };
+    const lf = last.freight || {};
     const freight = {};
     for (const [k, camel] of [['bus_per_carton', 'busPerCarton'], ['delhi_per_carton', 'delhiPerCarton'], ['porter', 'porter'], ['other', 'other']]) freight[camel] = Number.isFinite(Number(lf[k])) ? Number(lf[k]) : 0;
     return { rates, freight };
@@ -387,7 +394,8 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     const s = lots.readSettings(raw), stored = (d.result && d.result.lots) || [];
     const out = [];
     for (const l of (lotRows || []).filter((x) => x.delivery_id === d.id)) {
-      const was = stored.find((x) => x.slug === l.item_slug) || {};
+      // its own line of the saved result: by code (or an older code it was fixed from), else the flavour's (two lots of one flavour differ)
+      const was = stored.find((x) => x.slug === l.item_slug && (x.code === l.lot_code || (l.aliases || []).includes(x.code))) || stored.find((x) => x.slug === l.item_slug) || {};
       const bb = l.best_before ? String(l.best_before).slice(0, 10) : null, cut = bb ? lots.cutoffs(bb, s) : null;
       out.push({ code: l.lot_code, slug: l.item_slug, name: await nameOf(l.item_slug), status: l.status, good: was.good != null ? was.good : null, onHand: onHandOf(ledger, l.item_slug, l.lot_code),
         bakeDate: l.bake_date ? String(l.bake_date).slice(0, 10) : null, bestBefore: bb, websiteStop: cut ? cut.websiteStop : null, lastShip: cut ? cut.lastShip : null,
