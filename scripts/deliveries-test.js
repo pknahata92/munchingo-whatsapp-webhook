@@ -184,13 +184,51 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     const f = fresh();
     await rejects(f.dl.save(input({ rows, invoiceRupees: 8925 }), A), /Check these/, 'same total without GST entered is a mismatch', 409);
   }
+  // fix round 1
+  {
+    // concurrent resend: both lookups miss while the store already holds the id
+    const a = fresh();
+    const i = input({ id: 'dbl-1' });
+    const r1 = await a.dl.save(i, A);
+    const wrap = (st) => ({ ...st, delivery: async () => null, deliveriesByBill: async () => [] });
+    const dl2 = makeDeliveries(wrap(a.st), { now: () => NOW });
+    const r2 = await dl2.save({ ...i, rows: rowsOf({ 'atta-kesari': { counted: 90, broken: 0, diffReason: 'x' } }), confirm: ['cost_jump'] }, A);
+    ok(r2.again === true && JSON.stringify(r2.lots) === JSON.stringify(r1.lots), 'concurrent resend (store says again) returns the stored result');
+    // same, via the bill-once race: saveDelivery throws the clash while the receipt exists
+    let seen = false;
+    const b = fresh();
+    await b.dl.save(i, A);
+    const dl3 = makeDeliveries({ ...b.st, deliveriesByBill: async () => [], delivery: async (x) => (seen ? b.st.delivery(x) : null), saveDelivery: async () => { seen = true; throw new Error('duplicate key value violates unique constraint "stock_deliveries_bill_part_once"'); } }, { now: () => NOW });
+    const r3 = await dl3.save(i, A);
+    ok(r3.again === true && r3.lots.length === 4, 'bill-once race with the same receipt returns the stored result');
+  }
+  {
+    const { dl } = fresh();
+    await rejects(dl.save(input({ bakeDate: '2026-12-25', rows: rowsOf().map((r) => ({ ...r, bakeDate: '2026-11-05' })) }), A), /cannot be after the day it arrived/, 'future top bake date refused even when rows have their own', 400);
+  }
+  {
+    const { dl } = fresh();
+    const r = await warn.call(null, { cartons: '', freight: { busPerCarton: 150, delhiPerCarton: 50 } }, 'no_freight', 'no freight when cartons are empty');
+  }
+  {
+    const { dl } = fresh();
+    await dl.save(input(), A);
+    await dl.save(input({ addPart: true, rows: [{ slug: 'atta-kesari', invoiceBoxes: 20, counted: 20, rateRupees: 100 }], invoiceRupees: 2000, confirm: ['cost_jump'] }), A);
+    await rejects(dl.save(input({ part: 1 }), A), /part 1 is already saved .*Tap "Add part 3"/, 'clash names the next free part', 400);
+  }
+  {
+    const { st, dl } = fresh();
+    await st.insertLots([{ item_slug: 'atta-kesari', lot_code: '27OCT26', aliases: ['MNGK-261027-01'], bake_date: '2026-10-27', best_before: '2027-01-25', status: 'released' }]);
+    const r = await dl.save(input({ bakeDate: '2026-10-27', invoiceRupees: 10000, confirm: ['old_bake', 'stop_soon', 'cost_jump'], oldBakeReason: 'x', arrivedOn: '2026-11-07', rows: [{ slug: 'atta-kesari', invoiceBoxes: 100, counted: 100, rateRupees: 100 }] }), A);
+    eq(r.lots[0].code, 'MNGK-261027-02', 'sequence skips an alias already printed on boxes');
+  }
   // prefill
   {
     const { dl } = fresh();
-    eq(await dl.lastPrefill(), { rates: RATES, freight: { bus_per_carton: 0, delhi_per_carton: 0, porter: 0, other: 0 } }, 'prefill defaults');
+    eq(await dl.lastPrefill(), { rates: RATES, freight: { busPerCarton: 0, delhiPerCarton: 0, porter: 0, other: 0 } }, 'prefill defaults');
     await dl.save(input({ billNo: 'P1', rows: [{ slug: 'atta-original', invoiceBoxes: 100, counted: 100, rateRupees: 88 }], invoiceRupees: 8800 }), A);
     const p = await dl.lastPrefill();
-    eq([p.rates['atta-original'], p.rates['atta-kesari'], p.freight.bus_per_carton, p.freight.porter], [88, 100, 150, 300], 'prefill from the last delivery, defaults for flavours it lacked');
+    eq([p.rates['atta-original'], p.rates['atta-kesari'], p.freight.busPerCarton, p.freight.porter], [88, 100, 150, 300], 'prefill from the last delivery, defaults for flavours it lacked');
   }
   ok(PHOTO_PATH.test(PH) && !PHOTO_PATH.test('2026/11/xyz.jpg'), 'PHOTO_PATH');
 

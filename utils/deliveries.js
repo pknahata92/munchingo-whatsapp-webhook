@@ -41,7 +41,8 @@ const paise = (r) => Math.round(r * 100);
 const photo = (p) => { if (typeof p !== 'string' || !PHOTO_PATH.test(p)) fail('That photo did not upload. Take it again.'); return p; };
 
 function makeDeliveries(store, { now = () => Date.now() } = {}) {
-  const clashText = (stored, billNo, part) => `Bill ${billNo} part ${part} is already saved (${stored ? dateWords(lots.todayIst(Date.parse(stored.created_at))) : 'earlier'}, ${(stored && (stored.saved_by_name || stored.saved_by_email)) || 'Staff'}). Tap "Add part ${part + 1}" if this is the rest.`;
+  const nextPart = (list) => list.reduce((m, d) => Math.max(m, d.part || 1), 0) + 1;
+  const clashText = (stored, billNo, part, next) => `Bill ${billNo} part ${part} is already saved (${stored ? dateWords(lots.todayIst(Date.parse(stored.created_at))) : 'earlier'}, ${(stored && (stored.saved_by_name || stored.saved_by_email)) || 'Staff'}). Tap "Add part ${next}" if this is the rest.`;
 
   async function save(input, { actor, isOwner } = {}) {
     input = input || {};
@@ -60,15 +61,16 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     if (arrivedOn > today) fail('Arrived on cannot be in the future.');
     const topBake = empty(input.bakeDate) ? null : String(input.bakeDate).trim();
     if (topBake && !validDate(topBake)) fail('Enter the bake date.');
+    if (topBake && topBake > arrivedOn) fail('The bake date cannot be after the day it arrived.');
 
     // bill + part
     const sameBill = (await store.deliveriesByBill(supplier, billNo)) || [];
     let part;
-    if (input.addPart) part = sameBill.reduce((m, d) => Math.max(m, d.part || 1), 0) + 1;
+    if (input.addPart) part = nextPart(sameBill);
     else {
       part = qty(input.part, 'Part', 1) || 1;
       const clash = sameBill.find((d) => (d.part || 1) === part);
-      if (clash) throw new StockError(clashText(clash, billNo, part), 400);
+      if (clash) throw new StockError(clashText(clash, billNo, part, nextPart(sameBill)), 400);
     }
 
     // top of the form
@@ -121,7 +123,7 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
 
     // codes and previous costs
     const [lotRows, ledger] = await Promise.all([store.lots(), store.byLot()]);
-    const codes = [...(lotRows || []).map((l) => l.lot_code), ...(ledger || []).map((l) => l.lot_code)].filter(Boolean);
+    const codes = [...(lotRows || []).flatMap((l) => [l.lot_code, ...(l.aliases || [])]), ...(ledger || []).map((l) => l.lot_code)].filter(Boolean);
     const prevOf = (slug) => {
       let best = null;
       for (const l of lotRows || []) if (l.item_slug === slug && l.unit_cost_paise != null && l.status !== 'void' && (!best || String(l.created_at) >= String(best.created_at))) best = l;
@@ -148,7 +150,8 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     }
     const lineTotal = rows.reduce((a, r) => a + r.rate * r.invoiceBoxes, 0);
     if (Math.abs((invoiceRupees - gstRupees) - lineTotal) > 1) add('invoice_mismatch', `The invoice total (Rs ${invoiceRupees}${gstRupees ? ', less GST Rs ' + gstRupees : ''}) does not match the boxes times the rates (Rs ${Math.round(lineTotal * 100) / 100}).`);
-    if (FREIGHT_KEYS.every((k) => freight[k] === 0)) add('no_freight', 'No freight entered, so the cost per box will look lower than it really is.');
+    const freightTotal = (freight.bus_per_carton + freight.delhi_per_carton) * cartons + freight.porter + freight.other;
+    if (freightTotal === 0) add('no_freight', 'No freight entered, so the cost per box will look lower than it really is.');
     const totalCounted = rows.reduce((a, r) => a + r.counted, 0);
     if (totalCounted >= 5000) add('large', `${totalCounted} boxes is a very large delivery. Check the numbers.`);
 
@@ -181,11 +184,14 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     };
     const lotRowsOut = made.map((r) => ({ item_slug: r.slug, lot_code: r.code, delivery_id: id, supplier_batch: supplierBatch, bake_date: r.bake, best_before: r.dates.bestBefore, status: 'hold', unit_cost_paise: r.cost.perGoodPaise }));
     try {
-      await store.saveDelivery({ d, lots: lotRowsOut, moves });
+      const saved = await store.saveDelivery({ d, lots: lotRowsOut, moves });
+      if (saved && saved.again) return saved;   // another request with this receipt got in first: its result stands
     } catch (e) {
       if (e && String(e.message).includes(BILL_ONCE)) {
-        const now2 = ((await store.deliveriesByBill(supplier, billNo)) || []).find((x) => (x.part || 1) === part);
-        throw new StockError(clashText(now2, billNo, part), 400);
+        const first = await store.delivery(id);
+        if (first) return { ...(first.result || {}), again: true };
+        const list = (await store.deliveriesByBill(supplier, billNo)) || [];
+        throw new StockError(clashText(list.find((x) => (x.part || 1) === part), billNo, part, nextPart(list)), 400);
       }
       throw e;
     }
@@ -199,7 +205,7 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     for (const r of rows) if (r && DEFAULT_RATES[r.slug] != null && !empty(r.rateRupees) && Number.isFinite(Number(r.rateRupees))) rates[r.slug] = Number(r.rateRupees);
     const lf = (last && last.freight) || {};
     const freight = {};
-    for (const k of FREIGHT_KEYS) freight[k] = Number.isFinite(Number(lf[k])) ? Number(lf[k]) : 0;
+    for (const [k, camel] of [['bus_per_carton', 'busPerCarton'], ['delhi_per_carton', 'delhiPerCarton'], ['porter', 'porter'], ['other', 'other']]) freight[camel] = Number.isFinite(Number(lf[k])) ? Number(lf[k]) : 0;
     return { rates, freight };
   }
 
