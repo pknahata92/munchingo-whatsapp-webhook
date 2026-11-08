@@ -12,10 +12,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 class Local extends ResourceLoader { fetch(url) { const u = new URL(url); if (u.hostname !== 'localhost') return Promise.resolve(Buffer.from('')); const f = path.join(SITE, decodeURIComponent(u.pathname)); return Promise.resolve(fs.existsSync(f) ? fs.readFileSync(f) : Buffer.from('')); } }
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
 
-async function open(soldOut = []) {
+async function open(soldOut = [], book = null) {
   const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'build-a-box.html'), 'utf8'), {
     url: 'http://localhost/build-a-box.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
-    beforeParse(w) { w.localStorage.setItem('munchingo_soldout', JSON.stringify(soldOut)); w.fetch = (u) => Promise.resolve({ ok: true, status: 200, json: async () => (/stock/.test(u) ? { ok: true, soldOut } : { ok: true, prices: {} }) }); w.scrollTo = () => {}; w.SVGElement.prototype.getComputedTextLength = () => 100; w.matchMedia = w.matchMedia || (() => ({ matches: false, addEventListener() {}, addListener() {} })); },
+    beforeParse(w) { w.localStorage.setItem('munchingo_soldout', JSON.stringify(soldOut)); if (book) w.localStorage.setItem('munchingo_prices', JSON.stringify(book)); w.fetch = (u) => Promise.resolve({ ok: true, status: 200, json: async () => (/stock/.test(u) ? { ok: true, soldOut } : { ok: true, prices: {} }) }); w.scrollTo = () => {}; w.SVGElement.prototype.getComputedTextLength = () => 100; w.matchMedia = w.matchMedia || (() => ({ matches: false, addEventListener() {}, addListener() {} })); },
   });
   await wait(900);
   return dom;
@@ -66,6 +66,10 @@ async function open(soldOut = []) {
   ok(text(g('stepup')).includes('Add the 4th Flavor for ₹190 more'), 'Trio K+SL+O: step-up ₹190 more: ' + text(g('stepup')));
   ok(panel().includes('Same boxes as singles ₹887') && panel().includes('You save ₹78'), 'Trio K+SL+O compare 887 / 78: ' + panel());
 
+  click(g('cta')); await wait(50);
+  lines = cartLines();
+  ok(lines.some((l) => l.slug === 'trio-gift-set-kesari-lite-sugar-original' && l.price === 809), 'bag gets the K+SL+O Trio at 809: ' + JSON.stringify(lines));
+
   // step-up button
   click(d.querySelector('[data-gb="makefull"]')); await wait(50);
   
@@ -81,6 +85,7 @@ async function open(soldOut = []) {
   // partial Trio: no step-up, no comparison
   click(tile('Kesari')); await wait(50);
   ok(!visible(g('stepup')), 'unfilled Trio: no step-up');
+  ok(g('tot').parentNode.style.display === 'none' && text(g('tot')) === '', 'unfilled Trio: total row hidden, no dash');
 
   // ---- JSON-LD ----
   const ld = JSON.parse([...d.querySelectorAll('script[type="application/ld+json"]')].map((s) => s.textContent).find((t) => /trio-gift-set/.test(t)));
@@ -90,6 +95,38 @@ async function open(soldOut = []) {
   ok(/schema.org\/(In|Out)Stock/.test(t.availability) && !('price' in t), 'Trio JSON-LD keeps availability, no flat price');
   ok(f.price === '999' && /schema.org\/InStock/.test(f.availability), 'Full Range JSON-LD price 999');
   dom.window.close();
+
+  // ---- the panel uses LIVE web prices: Kesari at 319 ----
+  const BOOK = { 'atta-original': { price: 259, mrp: 300 }, 'atta-ajwain': { price: 259, mrp: 300 }, 'atta-kesari': { price: 319, mrp: 350 }, 'atta-lite-sugar': { price: 329, mrp: 350 } };
+  const d3 = await open([], BOOK); const w3 = d3.window, doc3 = w3.document;
+  const c3 = (el) => el.dispatchEvent(new w3.MouseEvent('click', { bubbles: true, cancelable: true }));
+  const p3 = () => text(doc3.querySelector('.gb-panel'));
+  c3(doc3.querySelector('.gb-opt[data-size="3"]')); await wait(50);
+  ['Original', 'Kesari', 'Lite-sugar'].forEach((v) => c3(doc3.querySelector(`.gb-fl[data-f="${v}"]`))); await wait(50);
+  const box = Math.floor((907 * 0.92 + 1) / 10) * 10 - 1;
+  ok(box === 829, 'rule arithmetic gives 829');
+  ok(p3().includes('Same boxes as singles ₹907') && p3().includes('You save ₹78') && text(doc3.querySelector('[data-gb="tot"]')) === '₹' + box, 'Kesari 319: O+K+SL singles 907, total 829, save 78: ' + p3());
+  const fr = Math.floor((1166 * 0.875 + 1) / 10) * 10 - 1;
+  ok(text(doc3.querySelector('[data-gb="stepuptext"]')) === 'Add the 4th Flavor for ₹' + (fr - box) + ' more', 'Kesari 319: step-up follows the live Full Range price: ' + text(doc3.querySelector('[data-gb="stepuptext"]')));
+  c3(doc3.querySelector('[data-gb="cta"]')); await wait(50);
+  ok(JSON.parse(w3.localStorage.getItem('munchingo_cart') || '[]').some((l) => l.slug === 'trio-gift-set-kesari-lite-sugar-original' && l.price === 829), 'bag gets the Trio at the live 829');
+  d3.window.close();
+
+  // ---- O+A+SL with the default book ----
+  const d4 = await open(); const w4 = d4.window, doc4 = w4.document;
+  const c4 = (el) => el.dispatchEvent(new w4.MouseEvent('click', { bubbles: true, cancelable: true }));
+  c4(doc4.querySelector('.gb-opt[data-size="3"]')); await wait(50);
+  ['Original', 'Ajwain', 'Lite-sugar'].forEach((v) => c4(doc4.querySelector(`.gb-fl[data-f="${v}"]`))); await wait(50);
+  ok(text(doc4.querySelector('[data-gb="tot"]')) === '₹779' && text(doc4.querySelector('[data-gb="stepuptext"]')) === 'Add the 4th Flavor for ₹220 more', 'O+A+SL: 779, step-up ₹220 more');
+  d4.window.close();
+
+  // ---- opens on the Trio when the Full Range cannot be bought ----
+  for (const [out, why] of [[['atta-lite-sugar'], 'Sugar-Lite sold out'], [['full-range-set'], 'only full-range-set sold out']]) {
+    const dd = await open(out); const dc = dd.window.document;
+    ok(dc.querySelector('.gb-opt[data-size="3"]').getAttribute('aria-checked') === 'true' && dc.querySelector('.gb-opt[data-size="4"]').getAttribute('aria-checked') === 'false', why + ': opens with the Trio selected');
+    ok(!/Full Range returns soon/.test(text(dc.querySelector('[data-gb="cta"]'))), why + ': button is not "Full Range returns soon"');
+    dd.window.close();
+  }
 
   // ---- Full Range sold out: step-up hidden for a filled Trio ----
   const d2 = await open(['atta-lite-sugar']); const w2 = d2.window, doc2 = w2.document;
