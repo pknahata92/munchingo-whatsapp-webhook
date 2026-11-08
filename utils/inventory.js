@@ -510,6 +510,7 @@ function supabaseStore() {
     updateDelivery: async (id, fields) => { ok(await c().from('stock_deliveries').update(fields).eq('id', id)); },
     movementsByLots: async (codes) => (codes.length ? ok(await c().from('stock_movements').select('*').in('lot_code', codes)) || [] : []),
     movementsByDelivery: async (id) => ok(await c().from('stock_movements').select('*').eq('delivery_id', id)) || [],
+    movementsByRef: async (ref) => ok(await c().from('stock_movements').select('*').eq('ref', ref)) || [],
     saveDelivery: async ({ d, lots, moves }) => ok(await c().rpc('stock_save_delivery', { d, lots: lots || [], moves: moves || [] })),
   };
 }

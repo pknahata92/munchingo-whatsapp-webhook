@@ -255,23 +255,34 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
 
     const ledger = (await store.byLot()) || [];
     const good = onHandOf(ledger, lot.item_slug, lot.lot_code);
+    const packable = async (slug) => { const it = await store.item(slug); return it && it.kind === 'packaging' ? it : null; };
     let lines;
-    if (input.packaging == null) lines = [{ slug: 'mono-' + lot.item_slug.replace(/^atta-/, ''), qty: Math.max(good, 0) }, { slug: 'label-stamp', qty: Math.max(good, 0) }];
-    else {
+    if (input.packaging == null) {
+      lines = [];
+      for (const slug of ['mono-' + lot.item_slug.replace(/^atta-/, ''), 'label-stamp']) {
+        if (await packable(slug)) lines.push({ slug, qty: Math.max(good, 0) });
+        else warnings.push(`${slug} is not set up as a packaging item, so it was not taken off.`);
+      }
+    } else {
       if (!Array.isArray(input.packaging)) fail('Packaging must be a list.');
       lines = [];
       for (const l of input.packaging) {
-        const it = l && l.slug ? await store.item(l.slug) : null;
-        if (!it || it.kind !== 'packaging') fail('Choose packaging items only.');
+        const it = l && l.slug ? await packable(l.slug) : null;
+        if (!it) fail('Choose packaging items only.');
         lines.push({ slug: it.slug, qty: qty(l.qty, `The ${it.name} count`, 0) });
       }
     }
     const merged = new Map();
     for (const l of lines) if (l.qty > 0) merged.set(l.slug, (merged.get(l.slug) || 0) + l.qty);
     const rows = [];
-    if (!lot.released_at) {
+    // Packaging comes off only for a lot that came from a delivery and was never released (legacy lots used theirs long ago).
+    // A double-tap sent at the same moment could still take it off twice: accepted as rare (like the packing race); the phone button disables itself while sending.
+    if (lot.delivery_id && !lot.released_at) {
       const who = { actor_email: (actor && actor.email) || null, actor_name: (actor && (actor.name || actor.email)) || null };
+      // a retry after a failed lot update: packaging already taken off for this code is not taken again
+      const done = new Set(((await store.movementsByRef(lot.lot_code)) || []).filter((r) => r.type === 'USE').map((r) => r.item_slug));
       for (const [slug, n] of merged) {
+        if (done.has(slug)) continue;
         const it = await store.item(slug);
         const after = ledger.filter((r) => r.item_slug === slug).reduce((a, r) => a + r.qty, 0) - n;
         if (after < 0) warnings.push(`${it.name} is now below zero: count it`);

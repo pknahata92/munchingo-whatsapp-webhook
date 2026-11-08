@@ -63,6 +63,7 @@ function memStore(trackingFrom) {
     lastDelivery: async () => deliveries.filter((d) => d.status !== 'void').slice(-1)[0] || null,
     updateDelivery: async (i, fields) => { const d = deliveries.find((x) => x.id === i); if (d) Object.assign(d, fields); },
     movementsByLots: async (codes) => mv.filter((r) => r.lot_code && codes.includes(r.lot_code)),
+    movementsByRef: async (ref) => mv.filter((r) => r.ref === ref),
     movementsByDelivery: async (i) => mv.filter((r) => r.delivery_id === i),
     // Mirrors stock_save_delivery: everything is checked first, so a throw writes nothing. The same receipt id again returns the first
     // result with again:true. Returns d, like the database function.

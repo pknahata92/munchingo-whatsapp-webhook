@@ -356,6 +356,46 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq([h2.lot.item_slug, h2.lot.bake_date, h2.lot.best_before], ['atta-ajwain', null, '2027-01-29'], 'ledger-only lot with an unparsable code: no bake date, earliest best before');
   }
 
+  // fix round 1
+  {
+    // legacy (no delivery) lot: Hold -> Release writes no packaging rows
+    const { st, dl, inv } = fresh();
+    await stockPack(st, inv);
+    await st.insertLots([{ item_slug: 'atta-kesari', lot_code: '15OCT26', bake_date: '2026-10-16', best_before: '2027-01-13', status: 'released' }]);
+    await inv.receive({ slug: 'atta-kesari', received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
+    await dl.hold({ code: '15OCT26', reason: 'x' }, OWNER);
+    const r = await dl.release({ code: '15OCT26', tasted: true, weightG: 300 }, A);
+    eq([r.packagingRows, st.mv.filter((m) => m.type === 'USE').length], [0, 0], 'legacy lot: Hold -> Release writes no USE rows');
+    // ledger-only lot created by findLot
+    await inv.receive({ slug: 'atta-ajwain', received: 20, lot: 'MNGA-261101-01', bestBefore: '2027-01-30', actor: A.actor });
+    await dl.hold({ code: 'MNGA-261101-01', reason: 'x' }, OWNER);
+    const r2 = await dl.release({ code: 'MNGA-261101-01', tasted: true, weightG: 300 }, A);
+    eq([r2.packagingRows, st.mv.filter((m) => m.type === 'USE').length], [0, 0], 'ledger-only lot: Hold -> Release writes no USE rows');
+  }
+  {
+    // a failed lot update then a retry: one USE pair only
+    const { st, dl, inv } = fresh();
+    await stockPack(st, inv);
+    await saveOne(dl, oneKesari(100, 2));
+    const real = st.updateLot; let failed = false;
+    st.updateLot = async (...a) => { if (!failed) { failed = true; throw new Error('db down'); } return real(...a); };
+    try { await dl.release({ code: KES, tasted: true, weightG: 300 }, A); ok(false, 'first release should fail'); } catch (e) { ok(e.message === 'db down', 'first release fails'); }
+    eq(useRows(st, KES).length, 2, 'USE rows written before the failure');
+    const r = await dl.release({ code: KES, tasted: true, weightG: 300 }, A);
+    eq([useRows(st, KES).length, r.packagingRows, (await st.lots()).find((l) => l.lot_code === KES).status], [2, 0, 'released'], 'retry writes no second pair');
+  }
+  {
+    // a default packaging item is missing
+    const { st, dl, inv } = fresh();
+    await inv.receive({ slug: 'mono-kesari', received: 500, actor: A.actor });
+    const lotsOut = await saveOne(dl, oneKesari(100, 0));
+    const st2 = { ...st, item: async (s) => (s === 'label-stamp' ? null : st.item(s)) };
+    const dl2 = makeDeliveries(st2, { now: () => NOW });
+    const r = await dl2.release({ code: KES, tasted: true, weightG: 300 }, A);
+    eq(r.warnings, ['label-stamp is not set up as a packaging item, so it was not taken off.'], 'missing default packaging item warns');
+    eq([r.lot.status, useRows(st, KES).map((x) => [x.item_slug, x.qty])], ['released', [['mono-kesari', -100]]], 'release still succeeds with the rest');
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
