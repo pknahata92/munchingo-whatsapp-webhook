@@ -232,6 +232,130 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
   }
   ok(PHOTO_PATH.test(PH) && !PHOTO_PATH.test('2026/11/xyz.jpg'), 'PHOTO_PATH');
 
+  // ---- Release, Reject, Hold (Task 5) ----
+  const OWNER = { actor: { email: 'owner@x.com', name: 'Owner' }, isOwner: true };
+  const saveOne = async (dl, extra) => { const r = await dl.save(input({ billNo: 'R' + (++n), ...(extra || {}) }), A); return r.lots; };
+  const sellOf = async (inv, slug) => (await inv.sellable())[slug];
+  const useRows = (st, code) => st.mv.filter((m) => m.type === 'USE' && m.ref === code);
+  const packBoxes = async (st, slug) => (await st.byLot()).filter((r) => r.item_slug === slug).reduce((a, r) => a + r.qty, 0);
+  const KES = 'MNGK-261105-01';
+  const oneKesari = (counted, broken) => ({ rows: [{ slug: 'atta-kesari', invoiceBoxes: 100, counted, broken, brokenReason: broken ? 'transit' : undefined, brokenPhoto: broken ? PH : undefined, diffReason: 'x', rateRupees: 100 }], invoiceRupees: 10000 });
+  const stockPack = async (st, inv) => { await inv.receive({ slug: 'mono-kesari', received: 500, actor: A.actor }); await inv.receive({ slug: 'label-stamp', received: 500, actor: A.actor }); };
+  {
+    const { st, dl, inv } = fresh();
+    await stockPack(st, inv);
+    await saveOne(dl, oneKesari(100, 2));
+    ok((await sellOf(inv, 'atta-kesari')) == null || (await sellOf(inv, 'atta-kesari')) === 0, 'held lot is not sellable');
+    const kBefore = await packBoxes(st, 'mono-kesari');
+    const r = await dl.release({ code: KES, tasted: true, weightG: 275, note: ' ok ' }, A);
+    eq([r.lot.status, r.lot.released_by, r.lot.check_weight_g, r.lot.check_note, r.warnings, r.packagingRows], ['released', 'staff@x.com', 275, 'ok', [], 2], 'staff release works');
+    ok(/^2026-11-07T06:00:00/.test(r.lot.released_at), 'released_at from now()');
+    const u = useRows(st, KES);
+    eq(u.map((x) => [x.item_slug, x.qty]).sort(), [['label-stamp', -98], ['mono-kesari', -98]], 'two USE rows of 98 with ref = code');
+    ok(u.every((x) => x.actor_email === 'staff@x.com'), 'USE rows carry the actor');
+    eq(await packBoxes(st, 'mono-kesari'), kBefore - 98, 'packaging stock falls once');
+    eq(await sellOf(inv, 'atta-kesari'), 98, 'released lot is in sellable');
+    const stored = (await st.lots()).find((l) => l.lot_code === KES);
+    ok(stored.status === 'released' && stored.released_by === 'staff@x.com', 'stored lot updated');
+    await rejects(dl.release({ code: KES, tasted: true, weightG: 275 }, A), /^This lot is already released\.$/, 'release of a released lot refused', 400);
+    // hold then release again: no second pair of USE rows
+    await rejects(dl.hold({ code: KES, reason: 'complaint' }, A), /^Only the owner can reject or hold a lot\.$/, 'staff Hold refused', 403);
+    await dl.hold({ code: KES, reason: 'complaint' }, OWNER);
+    const l1 = (await st.lots()).find((l) => l.lot_code === KES);
+    ok(l1.status === 'hold' && l1.hold_reason === 'complaint', 'hold sets status and reason');
+    ok(!(await sellOf(inv, 'atta-kesari')), 'held lot leaves sellable');
+    const ctx = await require('../utils/inventory').lotContext(st, NOW);
+    const lotsRule = require('../utils/lots');
+    ok(!lotsRule.eligible({ status: ctx.meta['atta-kesari|' + KES].status, best_before: l1.best_before }, 'pack', ctx.today, ctx.s), 'pack allocation skips the held lot');
+    await inv.take({ slug: 'atta-kesari', qty: 1, type: 'SAMPLE', who: 'x', allowNegative: true, actor: A.actor });
+    ok(st.mv.filter((m) => m.type === 'SAMPLE')[0].lot_code == null, 'a take-out does not use the held lot');
+    await rejects(dl.reject({ code: KES, reason: 'bad' }, OWNER), /^This lot was released before, so it cannot be rejected\.$/, 'reject after an earlier release refused', 400);
+    const r2 = await dl.release({ code: KES, tasted: true, weightG: 280 }, OWNER);
+    eq([r2.packagingRows, useRows(st, KES).length], [0, 2], 'second release writes no second pair of USE rows');
+    eq(await sellOf(inv, 'atta-kesari'), 97, 'released again and sellable');
+    await rejects(dl.reject({ code: KES, reason: 'bad' }, OWNER), /^Only a lot still on hold can be rejected\. Use Hold this lot\.$/, 'reject on a released lot refused', 400);
+  }
+  // refusals and warnings
+  {
+    const { st, dl, inv } = fresh();
+    await stockPack(st, inv);
+    await saveOne(dl, oneKesari(100, 2));
+    await rejects(dl.release({ code: KES, weightG: 275 }, A), /^Tick that you tasted one box and it is OK\.$/, 'needs tasted', 400);
+    await rejects(dl.release({ code: KES, tasted: 'yes', weightG: 275 }, A), /Tick that you tasted/, 'tasted must be true', 400);
+    await rejects(dl.release({ code: KES, tasted: true }, A), /^Enter the weight of one box in grams\.$/, 'needs a weight', 400);
+    await rejects(dl.release({ code: KES, tasted: true, weightG: 99 }, A), /Enter the weight/, 'weight under 100', 400);
+    await rejects(dl.release({ code: KES, tasted: true, weightG: 1001 }, A), /Enter the weight/, 'weight over 1000', 400);
+    await rejects(dl.release({ code: KES, tasted: true, weightG: 250.5 }, A), /Enter the weight/, 'weight must be whole', 400);
+    await rejects(dl.release({ code: KES, tasted: true, weightG: 275, packaging: [{ slug: 'atta-kesari', qty: 1 }] }, A), /packaging/i, 'only packaging items', 400);
+    await rejects(dl.release({ code: KES, tasted: true, weightG: 275, packaging: [{ slug: 'mono-kesari', qty: 1.5 }] }, A), /whole number/, 'whole-number packaging', 400);
+    eq(useRows(st, KES).length + (await st.lots()).filter((l) => l.status === 'released').length, 0, 'refusals write nothing');
+    const r = await dl.release({ code: KES, tasted: true, weightG: 245, packaging: [{ slug: 'mono-kesari', qty: 90 }, { slug: 'label-stamp', qty: 0 }] }, OWNER);
+    eq(r.warnings, ['One box weighed 245 g, under the 250 g on the pack. Weigh a second box.'], '245 g releases with a warning');
+    eq([r.packagingRows, useRows(st, KES).map((x) => [x.item_slug, x.qty])], [1, [['mono-kesari', -90]]], 'custom packaging, zero line skipped');
+  }
+  // below zero warning
+  {
+    const { st, dl, inv } = fresh();
+    await saveOne(dl, oneKesari(100, 2));
+    await inv.receive({ slug: 'label-stamp', received: 500, actor: A.actor });
+    const r = await dl.release({ code: KES, tasted: true, weightG: 300 }, A);
+    eq(r.warnings, ['Mono carton: Kesari is now below zero: count it'], 'below-zero packaging warning');
+    eq(await packBoxes(st, 'mono-kesari'), -98, 'packaging went negative, not blocked');
+  }
+  // reject
+  {
+    const { st, dl, inv } = fresh();
+    await saveOne(dl, { ...oneKesari(100, 2), billNo: 'BILLX' });
+    const before = await sellOf(inv, 'atta-kesari');
+    await rejects(dl.reject({ code: KES, reason: 'bad' }, A), /^Only the owner can reject or hold a lot\.$/, 'staff Reject refused', 403);
+    await rejects(dl.reject({ code: KES }, OWNER), /^Add a reason\.$/, 'reject needs a reason', 400);
+    const r = await dl.reject({ code: KES, reason: 'stale taste' }, OWNER);
+    const sr = st.mv.filter((m) => m.type === 'SUPPLIER_RETURN');
+    ok(sr.length === 1 && sr[0].qty === -98 && sr[0].ref === 'BILLX' && sr[0].lot_code === KES && sr[0].item_slug === 'atta-kesari', 'SUPPLIER_RETURN of -98 with the bill number');
+    eq([r.lot.status, r.lot.reject_reason, (await st.lots())[0].status], ['rejected', 'stale taste', 'rejected'], 'rejected with a reason');
+    eq(await sellOf(inv, 'atta-kesari'), before, 'sellable unchanged by reject');
+    await rejects(dl.release({ code: KES, tasted: true, weightG: 300 }, A), /^This lot was rejected or corrected, so it cannot be released\.$/, 'rejected lot cannot be released', 400);
+    eq(useRows(st, KES).length, 0, 'reject uses no packaging');
+  }
+  // hold needs a reason and a released lot
+  {
+    const { st, dl, inv } = fresh();
+    await stockPack(st, inv);
+    await saveOne(dl, oneKesari(100, 0));
+    await rejects(dl.hold({ code: KES, reason: 'x' }, OWNER), /^Only a released lot can be put on hold\.$/, 'hold needs a released lot', 400);
+    await dl.release({ code: KES, tasted: true, weightG: 300 }, A);
+    await rejects(dl.hold({ code: KES }, OWNER), /^Add a reason\.$/, 'hold needs a reason', 400);
+    await rejects(dl.hold({ code: KES, reason: 'x', isOwner: true }, A), /Only the owner/, 'isOwner comes from the second argument', 403);
+    await rejects(dl.hold({ code: 'MNGK-250101-01', reason: 'x' }, OWNER), /^No lot with that code\.$/, 'unknown code', 404);
+  }
+  // legacy codes shared by flavours, and ledger-only lots
+  {
+    const { st, dl, inv } = fresh();
+    await st.insertLots([
+      { item_slug: 'atta-kesari', lot_code: '15OCT26', aliases: ['MNGK-261016-01'], bake_date: '2026-10-16', best_before: '2027-01-13', status: 'released' },
+      { item_slug: 'atta-original', lot_code: '15OCT26', aliases: ['MNGO-261016-01'], bake_date: '2026-10-16', best_before: '2027-01-13', status: 'released' },
+    ]);
+    for (const s of ['atta-kesari', 'atta-original']) await inv.receive({ slug: s, received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
+    try { await dl.hold({ code: '15OCT26', reason: 'x' }, OWNER); ok(false, 'ambiguous did not throw'); } catch (e) {
+      ok(e instanceof StockError && e.status === 409 && e.message === 'This code is on more than one flavour. Choose one.', 'ambiguous legacy code answers 409');
+      eq(e.extra.choose.map((c) => [c.code, c.slug, c.name]).sort(), [['15OCT26', 'atta-kesari', 'Atta Kesari'], ['15OCT26', 'atta-original', 'Atta Original']], 'choose list');
+    }
+    await dl.hold({ code: '15OCT26', slug: 'atta-original', reason: 'recall' }, OWNER);
+    eq((await st.lots()).map((l) => [l.item_slug, l.status]), [['atta-kesari', 'released'], ['atta-original', 'hold']], 'slug picks the right flavour');
+    await dl.hold({ code: 'MNGK-261016-01', reason: 'by alias' }, OWNER);
+    eq((await st.lots())[0].status, 'hold', 'an alias opens its lot');
+    // ledger only: received through the old form after the migration, no lots row
+    await inv.receive({ slug: 'atta-ajwain', received: 20, lot: 'MNGA-261101-01', bestBefore: '2027-01-30', actor: A.actor });
+    await inv.receive({ slug: 'atta-lite-sugar', received: 20, lot: 'LEGACY1', bestBefore: '2027-01-30', actor: A.actor });
+    await inv.receive({ slug: 'atta-ajwain', received: 20, lot: 'LEGACY1', bestBefore: '2027-01-29', actor: A.actor });
+    const h = await dl.hold({ code: 'MNGA-261101-01', reason: 'complaint' }, OWNER);
+    eq([h.lot.status, h.lot.bake_date, h.lot.best_before, h.lot.hold_reason], ['hold', '2026-11-01', '2027-01-30', 'complaint'], 'hold on a ledger-only lot creates the row (bake date from the code)');
+    eq((await st.lots()).filter((l) => l.lot_code === 'MNGA-261101-01').length, 1, 'one row created');
+    try { await dl.hold({ code: 'LEGACY1', reason: 'x' }, OWNER); ok(false, 'ledger-only ambiguity did not throw'); } catch (e) { ok(e.status === 409 && e.extra.choose.length === 2, 'ledger-only code on two flavours asks to choose'); }
+    const h2 = await dl.hold({ code: 'LEGACY1', slug: 'atta-ajwain', reason: 'x' }, OWNER);
+    eq([h2.lot.item_slug, h2.lot.bake_date, h2.lot.best_before], ['atta-ajwain', null, '2027-01-29'], 'ledger-only lot with an unparsable code: no bake date, earliest best before');
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

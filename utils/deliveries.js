@@ -209,7 +209,109 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     return { rates, freight };
   }
 
-  return { save, lastPrefill };
+  // ---- Release, Reject, Hold (spec 6.5) ----
+  const OWNER_ONLY = 'Only the owner can reject or hold a lot.';
+  const nameOf = async (slug) => { const it = await store.item(slug).catch(() => null); return (it && it.name) || NAMES[slug] || slug; };
+  const onHandOf = (ledger, slug, code) => (ledger || []).filter((r) => r.item_slug === slug && r.lot_code === code).reduce((a, r) => a + r.qty, 0);
+
+  // A lot is addressed by code (or alias) plus, when the code is shared, the flavour (R5). A lot received through the old form after
+  // the migration has ledger rows but no stock_lots row: it is created as released first. Tasks 7-9 reuse this.
+  async function findLot({ code, slug } = {}) {
+    const c = cleanText(code, 60);
+    if (!c) throw new StockError('No lot with that code.', 404);
+    const rows = ((await store.lotsByCode(c)) || []).filter((l) => !slug || l.item_slug === slug);
+    const ledger = (await store.byLot()) || [];
+    const have = new Set(((await store.lots()) || []).map((l) => `${l.item_slug}|${l.lot_code}`));
+    const only = new Map();   // ledger-only candidates, keyed by flavour
+    for (const r of ledger) {
+      if (r.lot_code !== c || (slug && r.item_slug !== slug) || have.has(`${r.item_slug}|${r.lot_code}`)) continue;
+      const e = only.get(r.item_slug) || { slug: r.item_slug, bestBefore: null };
+      if (r.best_before && (!e.bestBefore || r.best_before < e.bestBefore)) e.bestBefore = r.best_before;
+      only.set(r.item_slug, e);
+    }
+    const found = [...rows.map((l) => ({ slug: l.item_slug, lot: l })), ...[...only.values()].map((e) => ({ slug: e.slug, made: e }))];
+    if (!found.length) throw new StockError('No lot with that code.', 404);
+    if (found.length > 1) throw new StockError('This code is on more than one flavour. Choose one.', 409, { choose: await Promise.all(found.map(async (f) => ({ code: c, slug: f.slug, name: await nameOf(f.slug) }))) });
+    const f = found[0];
+    if (f.lot) return f.lot;
+    const parsed = lots.parseCode(c);
+    await store.insertLots([{ item_slug: f.slug, lot_code: c, bake_date: parsed ? parsed.bakeDate : null, best_before: f.made.bestBefore, status: 'released' }]);
+    return ((await store.lotsByCode(c)) || []).find((l) => l.item_slug === f.slug && l.lot_code === c);
+  }
+
+  const ownerOnly = (isOwner) => { if (!isOwner) throw new StockError(OWNER_ONLY, 403); };
+  const reasonOf = (v) => { const r = cleanText(v, 300); if (!r) fail('Add a reason.'); return r; };
+
+  async function release(input, { actor, isOwner } = {}) {
+    input = input || {};
+    const lot = await findLot(input);
+    if (lot.status === 'released') fail('This lot is already released.');
+    if (lot.status === 'rejected' || lot.status === 'void') fail('This lot was rejected or corrected, so it cannot be released.');
+    if (input.tasted !== true) fail('Tick that you tasted one box and it is OK.');
+    const w = typeof input.weightG === 'number' ? input.weightG : (empty(input.weightG) ? NaN : Number(String(input.weightG).trim()));
+    if (!Number.isInteger(w) || w < 100 || w > 1000) fail('Enter the weight of one box in grams.');
+    const warnings = [];
+    if (w < 250) warnings.push(`One box weighed ${w} g, under the 250 g on the pack. Weigh a second box.`);
+
+    const ledger = (await store.byLot()) || [];
+    const good = onHandOf(ledger, lot.item_slug, lot.lot_code);
+    let lines;
+    if (input.packaging == null) lines = [{ slug: 'mono-' + lot.item_slug.replace(/^atta-/, ''), qty: Math.max(good, 0) }, { slug: 'label-stamp', qty: Math.max(good, 0) }];
+    else {
+      if (!Array.isArray(input.packaging)) fail('Packaging must be a list.');
+      lines = [];
+      for (const l of input.packaging) {
+        const it = l && l.slug ? await store.item(l.slug) : null;
+        if (!it || it.kind !== 'packaging') fail('Choose packaging items only.');
+        lines.push({ slug: it.slug, qty: qty(l.qty, `The ${it.name} count`, 0) });
+      }
+    }
+    const merged = new Map();
+    for (const l of lines) if (l.qty > 0) merged.set(l.slug, (merged.get(l.slug) || 0) + l.qty);
+    const rows = [];
+    if (!lot.released_at) {
+      const who = { actor_email: (actor && actor.email) || null, actor_name: (actor && (actor.name || actor.email)) || null };
+      for (const [slug, n] of merged) {
+        const it = await store.item(slug);
+        const after = ledger.filter((r) => r.item_slug === slug).reduce((a, r) => a + r.qty, 0) - n;
+        if (after < 0) warnings.push(`${it.name} is now below zero: count it`);
+        rows.push({ item_slug: slug, qty: -n, type: 'USE', lot_code: null, best_before: null, ref: lot.lot_code, note: `Released ${lot.lot_code}`, ...who });
+      }
+    }
+    if (rows.length) await store.insert(rows);
+    const fields = { status: 'released', released_at: new Date(now()).toISOString(), released_by: (actor && actor.email) || null, check_weight_g: w, check_note: cleanText(input.note, 300) || null };
+    await store.updateLot(lot.item_slug, lot.lot_code, fields);
+    return { lot: { ...lot, ...fields }, warnings, packagingRows: rows.length };
+  }
+
+  async function reject(input, { actor, isOwner } = {}) {
+    ownerOnly(isOwner);
+    input = input || {};
+    const lot = await findLot(input);
+    if (lot.status === 'released') fail('Only a lot still on hold can be rejected. Use Hold this lot.');
+    if (lot.status !== 'hold') fail('This lot was already rejected or corrected.');
+    if (lot.released_at) fail('This lot was released before, so it cannot be rejected.');
+    const reason = reasonOf(input.reason);
+    const onHand = onHandOf((await store.byLot()) || [], lot.item_slug, lot.lot_code);
+    if (onHand !== 0) {
+      const d = lot.delivery_id ? await store.delivery(lot.delivery_id) : null;
+      await store.insert([{ item_slug: lot.item_slug, qty: -onHand, type: 'SUPPLIER_RETURN', lot_code: lot.lot_code, best_before: lot.best_before || null, ref: (d && d.bill_no) || null, note: `Rejected: ${reason}`, actor_email: (actor && actor.email) || null, actor_name: (actor && (actor.name || actor.email)) || null }]);
+    }
+    await store.updateLot(lot.item_slug, lot.lot_code, { status: 'rejected', reject_reason: reason });
+    return { lot: { ...lot, status: 'rejected', reject_reason: reason } };
+  }
+
+  async function hold(input, { actor, isOwner } = {}) {
+    ownerOnly(isOwner);
+    input = input || {};
+    const lot = await findLot(input);
+    if (lot.status !== 'released') fail('Only a released lot can be put on hold.');
+    const reason = reasonOf(input.reason);
+    await store.updateLot(lot.item_slug, lot.lot_code, { status: 'hold', hold_reason: reason });
+    return { lot: { ...lot, status: 'hold', hold_reason: reason } };
+  }
+
+  return { save, lastPrefill, findLot, release, reject, hold };
 }
 
 let real = null;
