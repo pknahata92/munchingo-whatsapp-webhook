@@ -347,7 +347,11 @@ function ownerRefundHtml({ order, refund, creditNote }) {
 }
 
 // ── Owner: 8:00 AM summary of the previous day ───────────────────────────────
-function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes = [], suggestions = [] }) {
+function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes = [], suggestions = [], stockLines = null }) {
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const dw = (iso) => `${parseInt(iso.slice(8, 10), 10)} ${MON[parseInt(iso.slice(5, 7), 10) - 1]}`;
+  const stockList = (title, items) => items.length ? `<tr><td style="padding:0 26px 18px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">${title}</div>${items.map((x) => `<div style="font-family:${FONT};font-size:13px;color:${C.ink};padding:4px 0;border-bottom:1px solid #EEE3D0;">${x}</div>`).join('')}</td></tr>` : '';
+  const stockBlock = stockLines ? stockList('On hold for more than a day', (stockLines.onHold || []).map((l) => `<b>${esc(l.code)}</b> &middot; ${esc(l.name)} &middot; ${esc(l.good)} boxes, since ${esc(dw(l.since))}`)) + stockList('Leaving the website within 7 days', (stockLines.stopSoon || []).map((l) => `<b>${esc(l.code)}</b> &middot; ${esc(l.name)} &middot; stops ${esc(dw(l.websiteStop))}, ${esc(l.onHand)} boxes left`)) : '';
   const money = (n) => '&#8377;' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
   const allItems = orders.flatMap((o) => o.items || []);
   const boxes = allItems.reduce((n, i) => n + (Number(i.quantity) || 0) * boxesIn(i), 0);
@@ -381,6 +385,7 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
     ${refundBlock}
     <tr><td style="padding:4px 26px 22px;font-family:${FONT};font-size:12px;color:#8A7765;">A CSV of these orders (for accounting) is attached.</td></tr>`
     : `<tr><td style="padding:24px 26px 28px;font-family:${FONT};font-size:14px;color:${C.ink};">No paid orders yesterday. This email still arrives every morning, so you know the summary is working.</td></tr>`}
+    ${stockBlock}
     ${suggestions.length ? `<tr><td style="padding:0 26px 22px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} or feedback on WhatsApp</div>${suggestions.map((x) => `<div style="font-family:${FONT};font-size:13px;color:${C.ink};padding:4px 0;border-bottom:1px solid #EEE3D0;"><b>${esc(x.name || 'Customer')}</b>${x.kind === 'feedback' ? ' &middot; feedback' + (x.rating ? ' ' + esc(x.rating) : '') : ''}: ${esc(x.text || '')}</div>`).join('')}<div style="font-family:${FONT};font-size:12px;color:#8A7765;margin-top:6px;">Admin, More, Suggestions to mark them.</div></td></tr>` : ''}
   </table></td></tr></table></body></html>`;
 }

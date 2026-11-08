@@ -406,7 +406,7 @@ function csvCell(v) {
 }
 
 // 8:00 AM summary of the previous day: totals, pack list, every order, plus a CSV for accounting.
-async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, creditNotes = [], suggestions = [] }) {
+async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, creditNotes = [], suggestions = [], stockLines = null }) {
   const t = require('./emailTemplates');
   const { contentsOf } = require('./orderText');
   const revenue = orders.reduce((n, o) => n + Number(o.total || 0), 0);
@@ -414,7 +414,7 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [process.env.NOTIFY_EMAIL],
     subject: (orders.length ? `Munchingo ${dayLabel}: ${orders.length} order${orders.length === 1 ? '' : 's'}, Rs.${revenue}` : `Munchingo ${dayLabel}: no orders`) + (creditNotes.length ? ` (${creditNotes.length} refund${creditNotes.length === 1 ? '' : 's'})` : ''),
-    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder, creditNotes, suggestions }),
+    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder, creditNotes, suggestions, stockLines }),
   };
   if (orders.length) {
     const head = ['order_id', 'paid_at_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_note', 'coupon', 'discount', 'total', 'invoice_no', 'taxable', 'cgst', 'sgst', 'igst', 'payment_id', 'ship_to'];
@@ -431,6 +431,40 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
   const { error } = await resend.emails.send(payload);
   if (error) throw new Error(error.message);
   console.log(`[MAILER] Daily summary sent for ${dayLabel}: ${orders.length} orders`);
+}
+
+// Batch receiving (spec 6.11): the owner hears about each new delivery, and when staff release a lot. Values arrive ready to show
+// (cost as "Rs 138.72", names, links); everything is escaped here.
+async function sendDeliveryEmail({ delivery, lots = [], warnings = [], toRaise = [], url }) {
+  const td = 'padding:6px 8px;border-bottom:1px solid #eee;';
+  const rows = lots.map((l) => `<tr><td style="${td}">${escapeHtml(l.code)}</td><td style="${td}">${escapeHtml(l.name)}</td><td style="${td}text-align:right;">${escapeHtml(l.good)}</td><td style="${td}text-align:right;">${escapeHtml(l.cost)}</td></tr>`).join('');
+  const warn = warnings.length ? `<p style="margin:14px 0 4px;font-weight:700;">Check</p><ul style="margin:0;padding-left:20px;">${warnings.map((w) => `<li>${escapeHtml(w.text)}</li>`).join('')}</ul>` : '';
+  const raise = toRaise.length ? `<p style="margin:14px 0 4px;font-weight:700;">To raise with Krazy Bakers</p><ul style="margin:0;padding-left:20px;">${toRaise.map((x) => `<li>${escapeHtml(x.name)}: invoice ${escapeHtml(x.invoice)}, counted ${escapeHtml(x.counted)}</li>`).join('')}</ul>` : '';
+  const html = `
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;font-size:14px;">
+      <h2 style="margin:0 0 6px;">New delivery on hold</h2>
+      <p style="margin:0 0 12px;color:#666;">Bill ${escapeHtml(delivery.billNo)}${delivery.part > 1 ? ' part ' + escapeHtml(delivery.part) : ''}. Nothing sells until somebody releases each lot.</p>
+      <table style="width:100%;border-collapse:collapse;"><tr style="text-align:left;color:#888;"><th style="padding:6px 8px;">Lot</th><th style="padding:6px 8px;">Flavour</th><th style="padding:6px 8px;text-align:right;">Good boxes</th><th style="padding:6px 8px;text-align:right;">Cost a box</th></tr>${rows}</table>
+      ${warn}${raise}
+      <p style="margin:18px 0 0;"><a href="${escapeHtml(url)}">Open the delivery</a></p>
+    </div>`;
+  const { error } = await resend.emails.send({ from: 'Munchingo Orders <orders@munchingo.com>', to: [process.env.NOTIFY_EMAIL], subject: `New delivery on hold: bill ${delivery.billNo}, ${lots.length} lot${lots.length === 1 ? '' : 's'}`, html });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Delivery email sent for bill ${delivery.billNo}`);
+}
+
+async function sendLotReleasedEmail({ code, name, by, weightG, note, url }) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;font-size:14px;">
+      <h2 style="margin:0 0 8px;">Released by ${escapeHtml(by)}</h2>
+      <p style="margin:0 0 4px;"><b>${escapeHtml(code)}</b> (${escapeHtml(name)}) is now on sale.</p>
+      <p style="margin:0 0 4px;">One box weighed ${escapeHtml(weightG)} g.</p>
+      ${note ? `<p style="margin:0 0 4px;">Note: ${escapeHtml(note)}</p>` : ''}
+      <p style="margin:16px 0 0;"><a href="${escapeHtml(url)}">Open the lot</a></p>
+    </div>`;
+  const { error } = await resend.emails.send({ from: 'Munchingo Orders <orders@munchingo.com>', to: [process.env.NOTIFY_EMAIL], subject: `Released by ${by}: ${code} (${name})`, html });
+  if (error) throw new Error(error.message);
+  console.log(`[MAILER] Lot released email sent for ${code}`);
 }
 
 // A reply to a broadcast (8 Nov 2026): name, number and what they wrote, so Prashant can answer from his own phone.
@@ -458,4 +492,4 @@ async function sendBroadcastReplyAlert({ phone, name, template, text }) {
   console.log(`[MAILER] Broadcast reply alert sent for ${phone}`);
 }
 
-module.exports = { sendBroadcastReplyAlert, sendSuggestionAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+module.exports = { sendBroadcastReplyAlert, sendSuggestionAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendDeliveryEmail, sendLotReleasedEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };

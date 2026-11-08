@@ -139,6 +139,8 @@ stub('utils/mailer.js', {
   sendPackedEmail: async ({ order }) => console.log('[dev] packed email ->', order.customer_email),
   sendDeliveredEmail: async ({ order }) => console.log('[dev] delivered email ->', order.customer_email),
   sendOwnerPaidEmail: async () => console.log('[dev] owner email'),
+  sendDeliveryEmail: async ({ delivery }) => console.log('[dev] delivery email ->', delivery.billNo),
+  sendLotReleasedEmail: async ({ code, by }) => console.log('[dev] lot released email ->', code, by),
   sendPaymentReminderEmail: async ({ email, paymentUrl }) => console.log('[dev] payment reminder ->', email, paymentUrl),
   sendCustomerConfirmationEmail: async ({ order }) => console.log('[dev] invoice email ->', order.customer_email),
 });

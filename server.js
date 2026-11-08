@@ -371,7 +371,9 @@ app.get('/internal/daily-digest', async (req, res) => {
     try {
       let suggestions = [];
       try { suggestions = await require('./utils/database').listSuggestionsBetween(since.toISOString(), until.toISOString()); } catch (e) { console.error('[DIGEST] suggestions not read:', e.message); }
-      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder, creditNotes, suggestions });
+      let stockLines = null;
+      try { stockLines = await require('./utils/deliveries').instance().digestLines(todayIst); } catch (e) { console.error('[DIGEST] stock lines not read:', e.message); }
+      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder, creditNotes, suggestions, stockLines });
     } catch (sendErr) {
       if (!force) await releaseDigestDay(dayIst); // let the next trigger retry
       throw sendErr;

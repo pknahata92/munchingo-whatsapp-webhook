@@ -51,7 +51,11 @@ function rupees(v, label, max, dflt = null) {
 const paise = (r) => Math.round(r * 100);
 const photo = (p) => { if (typeof p !== 'string' || !PHOTO_PATH.test(p)) fail('That photo did not upload. Take it again.'); return p; };
 
-function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
+function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = null } = {}) {
+  const getMailer = () => mailer || require('./mailer');
+  const ADMIN_URL = 'https://admin.munchingo.com/admin';
+  // An owner email never changes what the user did: a failure is logged and swallowed.
+  const notify = async (fn, args) => { try { await getMailer()[fn](args); } catch (e) { console.error(`[MAIL] ${fn} failed: ${e && e.message}`); } };
   const getDb = () => db || require('./database');
   const inventory = () => makeInventory(store, { now });
   const live = (list) => list.filter((d) => d.status !== 'void');   // a corrected (void) delivery frees its bill and part
@@ -213,6 +217,12 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
       }
       throw e;
     }
+    await notify('sendDeliveryEmail', {
+      delivery: result.delivery,
+      lots: result.lots.map((l) => ({ code: l.code, name: NAMES[l.slug] || l.slug, good: l.good, cost: l.perGoodPaise == null ? '' : 'Rs ' + inr(l.perGoodPaise / 100, true) })),
+      warnings: result.warnings, toRaise: result.toRaise.map((x) => ({ ...x, name: NAMES[x.slug] || x.slug })),
+      url: `${ADMIN_URL}#delivery=${encodeURIComponent(id)}`,
+    });
     return result;
   }
 
@@ -275,6 +285,11 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     // Packaging is a hand-kept list (Prashant, 8 Nov 2026): Release takes nothing off it.
     const fields = { status: 'released', released_at: new Date(now()).toISOString(), released_by: (actor && actor.email) || null, check_weight_g: w, check_note: cleanText(input.note, 300) || null };
     await store.updateLot(lot.item_slug, lot.lot_code, fields);
+    if (!isOwner) {
+      let name = NAMES[lot.item_slug] || lot.item_slug;
+      try { const items = (await store.items()) || []; const it = items.find((i) => i.slug === lot.item_slug); if (it && it.name) name = it.name; } catch (e) { /* the built-in name stands */ }
+      await notify('sendLotReleasedEmail', { code: lot.lot_code, name, by: (actor && (actor.name || actor.email)) || 'Staff', weightG: w, note: fields.check_note, url: `${ADMIN_URL}#lot=${encodeURIComponent(lot.lot_code)}&slug=${encodeURIComponent(lot.item_slug)}` });
+    }
     return { lot: { ...lot, ...fields }, warnings };
   }
 
@@ -519,6 +534,23 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     return { w, cand: found[0] };
   }
 
+  // The two lines of the 8:00 AM summary (spec 6.11). On hold: a hold lot made more than 24 h before the IST start of `todayIst`.
+  // Stop soon: a lot the website can still sell whose website stop is today to today + 7 days, with boxes left.
+  async function digestLines(todayIst) {
+    const w = await world();
+    const cutoff = Date.parse(todayIst + 'T00:00:00+05:30') - REVERSE_FREE_MS;
+    const lotsList = await listLots();
+    const goodOf = (l) => lotsList.find((x) => x.slug === l.item_slug && x.code === l.lot_code);
+    const onHold = w.lotRows.filter((l) => l.status === 'hold' && l.created_at && Date.parse(l.created_at) < cutoff)
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
+      .map((l) => ({ code: l.lot_code, name: w.products.get(l.item_slug), since: lots.todayIst(Date.parse(l.created_at)), good: (goodOf(l) || {}).onHand || 0 }));
+    const end = lots.addDays(todayIst, 7);
+    const stopSoon = lotsList.filter((l) => (l.status === 'released' || l.status == null) && l.websiteStop && l.websiteStop >= todayIst && l.websiteStop <= end && l.onHand > 0)
+      .sort((a, b) => (a.websiteStop < b.websiteStop ? -1 : a.websiteStop > b.websiteStop ? 1 : a.code < b.code ? -1 : 1))
+      .map((l) => ({ code: l.code, name: l.name, websiteStop: l.websiteStop, onHand: l.onHand }));
+    return { onHold, stopSoon };
+  }
+
   async function listLots() {
     const w = await world();
     const today = lots.todayIst(now());
@@ -681,7 +713,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
     return lines.join('\n');
   }
 
-  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, deliveryPage, fixLot, listLots, lotPage, search, buyersCsv };
+  return { save, lastPrefill, findLot, release, digestLines, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, deliveryPage, fixLot, listLots, lotPage, search, buyersCsv };
 }
 
 let real = null;

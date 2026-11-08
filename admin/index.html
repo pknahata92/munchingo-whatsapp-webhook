@@ -289,9 +289,22 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   var STEPS = [['topack', '1', 'To pack', 'Tick the orders, print the pick list and slips, pack them, then tap Mark packed.'], ['packed', '2', 'Packed', 'Tap Create shipment on each order. You get a tracking number and the customer is emailed. For Porter or hand delivery, open the order.'], ['shipped', '3', 'Shipped', 'On the way. Tick orders and tap Shipping labels to print the courier labels together, then Request pickup so Delhivery collects them. When it reaches the customer, tap Mark delivered.'], ['delivered', '4', 'Delivered', 'Finished orders. Nothing to do here.']];
   var FILTERS = [['attention', 'Needs attention'], ['late', 'Late'], ['cancelled', 'Cancelled'], ['refunded', 'Refunded'], ['unpaid', 'Unpaid'], ['test', 'Test'], ['all', 'All']];
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'REFUNDED', cancelled: 'CANCELLED' };
+  // An email link (#delivery=<id> or #lot=<code>&slug=<slug>) opens that page once the person is signed in. The hash is cleared so a
+  // refresh does not reopen it; any other hash is left alone. Returns true when it opened something.
+  function hashRoute() {
+    var h = location.hash || '', m, go;
+    try {
+      if ((m = /^#delivery=([^&]+)$/.exec(h))) { var id = decodeURIComponent(m[1]); go = function () { openDelivery(id); }; }
+      else if ((m = /^#lot=([^&]+)(?:&slug=([^&]*))?$/.exec(h))) { var code = decodeURIComponent(m[1]), slug = m[2] ? decodeURIComponent(m[2]) : ''; go = function () { openLot(code, slug); }; }
+    } catch (e) { return false; }
+    if (!go) return false;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    showTab('stock', go);
+    return true;
+  }
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; state.email = j.email || ''; state.name = j.name || ''; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('moreTab').hidden = j.role !== 'owner'; var t0 = ''; try { t0 = localStorage.getItem('mngAdminTab') || ''; } catch (e) {} render(); renderGuide(); showTab(t0); } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; state.email = j.email || ''; state.name = j.name || ''; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('moreTab').hidden = j.role !== 'owner'; var t0 = ''; try { t0 = localStorage.getItem('mngAdminTab') || ''; } catch (e) {} render(); renderGuide(); if (!hashRoute()) showTab(t0); } });
     load();
   }
   // ── tabs: Orders, Stock, More (owner) ──

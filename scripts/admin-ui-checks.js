@@ -1296,5 +1296,23 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close(); s.close();
   });
 
+  // Task 13: an email link opens the delivery or the lot after sign-in, then clears the hash
+  list.push(async () => {
+    const page = (w) => w.text(w.q('#viewStock .pagehead'));
+    const KA = '15OCT26';
+    const lot = await openAdmin('owner', { hash: '#lot=' + encodeURIComponent(KA) + '&slug=atta-kesari' });
+    await until(() => page(lot) === KA, 8000, 'the lot page from an email link');
+    ok(!lot.q('#viewStock').hidden && lot.win.location.hash === '', 'a lot link opens the lot page on the Stock tab and clears the hash');
+    ok(lot.errors.length === 0, 'no page errors from a lot link (' + lot.errors.join(' | ').slice(0, 200) + ')');
+    lot.close();
+    const bad = await openAdmin('owner', { hash: '#delivery=no-such-delivery' });
+    await until(() => bad.q('#toast').style.display === 'block' && bad.text(bad.q('#toast')).length > 0, 8000, 'a refusal toast for an unknown delivery');
+    ok(bad.win.location.hash === '' && !/^\s*$/.test(bad.text(bad.q('#toast'))), 'an unknown delivery link shows a refusal (' + bad.text(bad.q('#toast')) + ') and clears the hash');
+    bad.close();
+    const odd = await openAdmin('owner', { hash: '#something-else' });
+    ok(odd.win.location.hash === '#something-else' && !odd.q('#viewOrders').hidden, 'an unknown hash is ignored and Orders stays first');
+    odd.close();
+  });
+
   return list;
 };

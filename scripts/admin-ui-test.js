@@ -32,10 +32,10 @@ async function tokenFor(email) {
 }
 
 // Opens the admin page as `role`, already signed in. `size` is the window width in px (default phone).
-async function openAdmin(role, { width = 390, guide = false } = {}) {
+async function openAdmin(role, { width = 390, guide = false, hash = '' } = {}) {
   const token = await tokenFor(role === 'owner' ? 'owner@example.com' : 'staff@example.com');
   const errors = []; const vc = new VirtualConsole(); vc.on('jsdomError', (e) => errors.push(String(e.message || e))); vc.on('error', (e) => errors.push(String(e)));
-  const dom = await JSDOM.fromURL(BASE + '/admin', {
+  const dom = await JSDOM.fromURL(BASE + '/admin' + hash, {
     runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true, virtualConsole: vc,
     beforeParse(win) {
       win.fetch = (u, o) => fetch(new URL(u, BASE), o);
