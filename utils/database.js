@@ -487,6 +487,21 @@ async function updateContact(phone, fields) {
   if (error) throw new Error(error.message);
   return data;
 }
+// Broadcasts (utils/broadcast.js): who said yes, and the log of marketing sends (marketing_sends_migration.sql).
+async function listMarketingContacts() {
+  const { data, error } = await db().from('contacts').select('phone, name, first_source, last_source, consent_marketing').eq('consent_marketing', true);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function listMarketingSends() {   // small table (one row per broadcast message); broadcast.js filters by date and template
+  const { data, error } = await db().from('marketing_sends').select('phone, template, status, sent_at').eq('status', 'sent');
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+async function insertMarketingSend(row) {
+  const { error } = await db().from('marketing_sends').insert(row);
+  if (error) throw new Error(error.message);
+}
 async function listFoundingTasters() {
   const { data, error } = await db().from('founding_tasters').select('*').order('added_at', { ascending: true });
   if (error) throw new Error(error.message);
@@ -651,7 +666,7 @@ module.exports = {
   upsertStallDay, upsertStallOrders, listStallOrderIds, markStallOrdersDeleted,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, insertMarketingSend, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

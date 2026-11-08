@@ -444,6 +444,19 @@ app.post('/internal/cancel', express.json(), async (req, res) => {
 // ── "Subscribe & Save" daily renewal (GET) ────────────────────────────────────
 // Review requests (utils/reviews.js): the daily 11:00 IST job asks delivered buyers to rate their box. Secret required;
 // sends nothing unless REVIEW_REQUESTS_ENABLED=1 on Render.
+// Broadcasts (utils/broadcast.js): one approved marketing template to everyone who said yes. Run by hand only, from
+// GitHub Actions > Broadcast (dry, then test, then send with expect=<dry count>). Secret required; returns counts only.
+app.get('/internal/broadcast', async (req, res) => {
+  const secret = process.env.DIGEST_SECRET;
+  if (!secret) return res.sendStatus(503);
+  const expectedBuf = Buffer.from(secret);
+  const providedBuf = Buffer.from(String(req.query.secret || ''));
+  if (!(expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf))) return res.sendStatus(403);
+  const q = req.query;
+  try { const r = await require('./utils/broadcast').run({ template: q.template, lang: q.lang || 'en', mode: q.mode, video: q.video || '', expect: q.expect, sources: q.sources || '' }); res.status(r.ok ? 200 : 400).json(r); }
+  catch (e) { console.error('[BROADCAST] error:', e.message); res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.get('/internal/review-requests', async (req, res) => {
   const secret = process.env.DIGEST_SECRET;
   if (!secret) return res.sendStatus(503);

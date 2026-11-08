@@ -65,6 +65,20 @@ async function sendTemplateWithUrlButton(to, templateName, languageCode, bodyPar
   });
 }
 
+// ── Approved template with an optional media header ({ type: 'video'|'image', link }) and body parameters (broadcasts) ──
+async function sendTemplateWithHeader(to, templateName, languageCode, header, bodyParams) {
+  const components = [];
+  if (header) components.push({ type: 'header', parameters: [{ type: header.type, [header.type]: { link: header.link } }] });
+  if (bodyParams && bodyParams.length) components.push({ type: 'body', parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })) });
+  return sendMessage({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: { name: templateName, language: { code: languageCode }, components },
+  });
+}
+
 // ── Upload a file to WhatsApp media (returns the media id) ───────────────────
 async function uploadMedia(buffer, mimeType, filename) {
   const form = new FormData();
@@ -230,6 +244,7 @@ async function sendImage(to, imageUrl, caption) {
 }
 
 module.exports = { sendTemplateWithUrlButton,
+  sendTemplateWithHeader,
   sendTemplate,
   uploadMedia,
   sendDocumentTemplate,

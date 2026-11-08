@@ -1,0 +1,52 @@
+name: Broadcast (WhatsApp, by hand only)
+
+# One approved marketing template to everyone who said yes to WhatsApp updates (utils/broadcast.js).
+# Order: mode=dry (counts only) -> mode=test (OWNER_PHONE only) -> mode=send with expect = the dry-run "to_send".
+on:
+  workflow_dispatch:
+    inputs:
+      template:
+        description: 'Approved template name (e.g. munchingo_diwali_2026)'
+        required: true
+      mode:
+        description: 'dry = count only, test = owner only, send = everyone'
+        required: true
+        default: 'dry'
+        type: choice
+        options: [dry, test, send]
+      video:
+        description: 'https link to the header .mp4 (blank if the template has no video)'
+        required: false
+        default: ''
+      sources:
+        description: 'Only these sign-up places, e.g. stall,fair (blank = everyone who said yes)'
+        required: false
+        default: ''
+      expect:
+        description: 'For send: the to_send number from the dry run'
+        required: false
+        default: ''
+      lang:
+        description: 'Template language code'
+        required: false
+        default: 'en'
+
+jobs:
+  broadcast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the broadcast endpoint
+        env:
+          SECRET: ${{ secrets.DIGEST_SECRET }}
+          TEMPLATE: ${{ inputs.template }}
+          MODE: ${{ inputs.mode }}
+          VIDEO: ${{ inputs.video }}
+          SOURCES: ${{ inputs.sources }}
+          EXPECT: ${{ inputs.expect }}
+          LANG_CODE: ${{ inputs.lang }}
+        run: |
+          curl -sS -m 900 -G "https://munchingo-whatsapp-webhook.onrender.com/internal/broadcast" \
+            --data-urlencode "secret=$SECRET" --data-urlencode "template=$TEMPLATE" --data-urlencode "mode=$MODE" \
+            --data-urlencode "video=$VIDEO" --data-urlencode "sources=$SOURCES" --data-urlencode "expect=$EXPECT" \
+            --data-urlencode "lang=$LANG_CODE" -w '\nHTTP %{http_code}\n' | tee out.txt
+          grep -q '"ok":true' out.txt
