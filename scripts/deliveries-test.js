@@ -388,6 +388,90 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq([r.warnings, r.lot.status, useRows(st, KES).length], [[], 'released', 0], 'a missing packaging item gives no warning; release still succeeds');
   }
 
+  // Task 7: Broken while cartoning, Throw away expired, lot-aware take-outs
+  {
+    const PH2 = '2026/11/fedcba9876543210.jpg';
+    const rel = async (dl, st, inv) => { await saveOne(dl, oneKesari(100, 0)); await dl.release({ code: KES, tasted: true, weightG: 300 }, A); };
+    // on a released lot: DAMAGED, reason repack, that lot
+    {
+      const { st, dl, inv } = fresh();
+      await rel(dl, st, inv);
+      const r = await dl.brokenWhileCartoning({ code: KES, qty: 3, note: 'crushed', photo: PH2 }, A);
+      const m = st.mv.filter((x) => x.type === 'DAMAGED');
+      eq(m.map((x) => [x.qty, x.lot_code, x.reason, x.note, x.actor_email]), [[-3, KES, 'repack', 'Broken while cartoning: crushed. Photo: ' + PH2, 'staff@x.com']], 'cartoning breakage row');
+      eq(r.onHand, 97, 'returns the lot on hand');
+      await dl.brokenWhileCartoning({ code: KES, qty: 1 }, A);
+      eq(st.mv.filter((x) => x.type === 'DAMAGED').pop().note, 'Broken while cartoning', 'bare note without text or photo');
+      await rejects(dl.brokenWhileCartoning({ code: KES, qty: 1, photo: 'bad.jpg' }, A), /That photo did not upload\. Take it again\./, 'bad photo path', 400);
+      await rejects(dl.brokenWhileCartoning({ code: KES, qty: 500 }, A), new RegExp('^Lot ' + KES + ' has only 96 boxes\\.$'), 'never spills to another lot');
+      await rejects(dl.brokenWhileCartoning({ code: 'NOPE', qty: 1 }, A), /No lot with that code/, 'unknown lot', 404);
+      eq(st.mv.filter((x) => x.type === 'DAMAGED').length, 2, 'refusals wrote nothing');
+    }
+    // held lot refused
+    {
+      const { st, dl } = fresh();
+      await saveOne(dl, oneKesari(100, 0));
+      await rejects(dl.brokenWhileCartoning({ code: KES, qty: 1 }, A), /Lot MNGK-261105-01 is on hold/, 'held lot refused', 409);
+      eq(st.mv.filter((x) => x.type === 'DAMAGED').length, 0, 'nothing written for a held lot');
+    }
+    // shared code needs a flavour
+    {
+      const { st, dl, inv } = fresh();
+      await st.insertLots([{ item_slug: 'atta-original', lot_code: '15OCT26', bake_date: '2026-10-16', best_before: '2027-01-13', status: 'released' }, { item_slug: 'atta-kesari', lot_code: '15OCT26', bake_date: '2026-10-16', best_before: '2027-01-13', status: 'released' }]);
+      for (const s of ['atta-kesari', 'atta-original']) await inv.receive({ slug: s, received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
+      try { await dl.brokenWhileCartoning({ code: '15OCT26', qty: 1 }, A); ok(false, 'did not throw'); } catch (e) { ok(e.status === 409 && e.extra.choose.length === 2, 'shared code answers choose'); }
+      await dl.brokenWhileCartoning({ code: '15OCT26', slug: 'atta-original', qty: 2 }, A);
+      eq(st.mv.filter((x) => x.type === 'DAMAGED').map((x) => [x.item_slug, x.lot_code, x.reason]), [['atta-original', '15OCT26', 'repack']], 'slug picks the flavour');
+    }
+    // take(): reason rules
+    {
+      const { st, inv } = fresh();
+      await inv.receive({ slug: 'atta-kesari', received: 10, lot: 'L1', bestBefore: '2027-01-13', actor: A.actor });
+      await inv.take({ slug: 'atta-kesari', qty: 1, type: 'DAMAGED', note: 'x', reason: 'supplier', actor: A.actor });
+      eq(st.mv.filter((x) => x.type === 'DAMAGED').map((x) => x.reason), ['supplier'], 'reason written on DAMAGED');
+      await rejects(inv.take({ slug: 'atta-kesari', qty: 1, type: 'DAMAGED', note: 'x', reason: 'bogus', actor: A.actor }), /Choose why it was damaged: on the bus, at the bakery or while cartoning\./, 'bad reason');
+      await rejects(inv.take({ slug: 'atta-kesari', qty: 1, type: 'SAMPLE', reason: 'transit', actor: A.actor }), /Choose why it was damaged/, 'reason only with DAMAGED');
+      await inv.take({ slug: 'atta-kesari', qty: 1, type: 'DAMAGED', note: 'x', actor: A.actor });
+      ok(st.mv.filter((x) => x.type === 'DAMAGED').pop().reason == null, 'no reason stays empty');
+    }
+    // sample skips an expired lot
+    {
+      const { st, inv } = fresh();
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'OLD', bake_date: '2026-08-01', best_before: '2026-11-06', status: 'released' }, { item_slug: 'atta-kesari', lot_code: 'NEW', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'released' }]);
+      await inv.receive({ slug: 'atta-kesari', received: 5, lot: 'OLD', bestBefore: '2026-11-06', actor: A.actor });
+      await inv.receive({ slug: 'atta-kesari', received: 5, lot: 'NEW', bestBefore: '2027-01-30', actor: A.actor });
+      await inv.take({ slug: 'atta-kesari', qty: 2, type: 'SAMPLE', actor: A.actor });
+      eq(st.mv.filter((x) => x.type === 'SAMPLE').map((x) => [x.lot_code, x.qty]), [['NEW', -2]], 'sample comes from the fresh lot');
+    }
+    // throw away expired
+    {
+      const { st, dl, inv } = fresh();
+      await st.insertLots([
+        { item_slug: 'atta-kesari', lot_code: 'OLD', bake_date: '2026-08-01', best_before: '2026-11-06', status: 'released' },
+        { item_slug: 'atta-kesari', lot_code: 'TODAY', bake_date: '2026-08-02', best_before: '2026-11-07', status: 'released' },
+        { item_slug: 'atta-original', lot_code: 'GONE', bake_date: '2026-08-01', best_before: '2026-11-01', status: 'released' },
+        { item_slug: 'atta-ajwain', lot_code: 'HELD', bake_date: '2026-08-01', best_before: '2026-11-01', status: 'hold' },
+      ]);
+      await inv.receive({ slug: 'atta-kesari', received: 5, lot: 'OLD', bestBefore: '2026-11-06', actor: A.actor });
+      await inv.receive({ slug: 'atta-kesari', received: 3, lot: 'OLD', bestBefore: '2026-11-04', actor: A.actor });   // same lot on a second best-before line (lot row says 2026-11-06)
+      await inv.receive({ slug: 'atta-kesari', received: 4, lot: 'TODAY', bestBefore: '2026-11-07', actor: A.actor });
+      await inv.receive({ slug: 'atta-original', received: 6, lot: 'GONE', bestBefore: '2026-11-01', actor: A.actor });
+      await inv.receive({ slug: 'atta-ajwain', received: 2, lot: 'HELD', bestBefore: '2026-11-01', actor: A.actor });
+      await inv.receive({ slug: 'atta-lite-sugar', received: 9, lot: 'NOROW', bestBefore: '2026-10-01', actor: A.actor });   // legacy, ledger only, expired
+      await inv.receive({ slug: 'atta-lite-sugar', received: 7, lot: 'UNDATED', actor: A.actor });
+      await inv.count({ slug: 'atta-lite-sugar', counted: 23, note: 'found', actor: A.actor });   // +7 with no lot
+      await rejects(dl.throwExpired({}, A), /^Only the owner can throw away expired stock\.$/, 'staff refused', 403);
+      eq(st.mv.filter((x) => x.type === 'EXPIRED').length, 0, 'staff wrote nothing');
+      const r = await dl.throwExpired({ slug: 'atta-kesari' }, OWNER);
+      eq(r.lines.map((l) => [l.code, l.qty]), [['OLD', 8]], 'only the asked flavour, on hand summed over both lines');
+      const e = st.mv.filter((x) => x.type === 'EXPIRED');
+      eq(e.map((x) => [x.item_slug, x.lot_code, x.qty, x.best_before, x.note, x.actor_email]), [['atta-kesari', 'OLD', -8, '2026-11-06', 'Thrown away after best before', 'owner@x.com']], 'one EXPIRED row');
+      const r2 = await dl.throwExpired({}, OWNER);
+      eq(r2.lines.map((l) => [l.code, l.qty]).sort(), [['GONE', 6], ['HELD', 2], ['NOROW', 9]], 'all flavours: today lot, undated and lot-less stay; a held expired lot is written off too');
+      eq(await dl.throwExpired({}, OWNER), { lines: [] }, 'nothing left gives an empty list');
+    }
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

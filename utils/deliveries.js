@@ -5,7 +5,7 @@
  * somebody releases them. The whole save is one atomic store call, so a failure leaves nothing behind, and the receipt id
  * makes a resend harmless. Later tasks add release, reject, corrections and lot pages on top of this module.
  */
-const { StockError, MAX_QTY } = require('./inventory');
+const { StockError, MAX_QTY, makeInventory } = require('./inventory');
 const lots = require('./lots');
 
 const PHOTO_PATH = /^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/;
@@ -41,6 +41,7 @@ const paise = (r) => Math.round(r * 100);
 const photo = (p) => { if (typeof p !== 'string' || !PHOTO_PATH.test(p)) fail('That photo did not upload. Take it again.'); return p; };
 
 function makeDeliveries(store, { now = () => Date.now() } = {}) {
+  const inventory = () => makeInventory(store, { now });
   const nextPart = (list) => list.reduce((m, d) => Math.max(m, d.part || 1), 0) + 1;
   const clashText = (stored, billNo, part, next) => `Bill ${billNo} part ${part} is already saved (${stored ? dateWords(lots.todayIst(Date.parse(stored.created_at))) : 'earlier'}, ${(stored && (stored.saved_by_name || stored.saved_by_email)) || 'Staff'}). Tap "Add part ${next}" if this is the rest.`;
 
@@ -286,7 +287,49 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     return { lot: { ...lot, status: 'hold', hold_reason: reason } };
   }
 
-  return { save, lastPrefill, findLot, release, reject, hold };
+  // ---- Broken while cartoning, Throw away expired (spec 6.6) ----
+  async function brokenWhileCartoning(input, { actor } = {}) {
+    input = input || {};
+    const lot = await findLot(input);
+    const n = qty(input.qty, 'The number of boxes');
+    if (!n) fail('Enter how many boxes broke.');
+    const p = empty(input.photo) ? null : photo(input.photo);
+    const text = cleanText(input.note, 200);
+    const note = 'Broken while cartoning' + (text ? ': ' + text : '') + (p ? '. Photo: ' + p : '');
+    const have = onHandOf((await store.byLot()) || [], lot.item_slug, lot.lot_code);
+    if (n > have) throw new StockError(`Lot ${lot.lot_code} has only ${Math.max(0, have)} boxes.`, 409);
+    return inventory().take({ slug: lot.item_slug, qty: n, type: 'DAMAGED', lot: lot.lot_code, reason: 'repack', note, actor });
+  }
+
+  async function throwExpired(input, { actor, isOwner } = {}) {
+    if (!isOwner) throw new StockError('Only the owner can throw away expired stock.', 403);
+    input = input || {};
+    const today = lots.todayIst(now());
+    const [ledger, lotRows] = await Promise.all([store.byLot(), store.lots()]);
+    const meta = new Map((lotRows || []).map((l) => [`${l.item_slug}|${l.lot_code}`, l]));
+    const groups = new Map();
+    for (const r of ledger || []) {
+      if (r.lot_code == null || (input.slug && r.item_slug !== input.slug)) continue;
+      const k = `${r.item_slug}|${r.lot_code}`;
+      const g = groups.get(k) || { slug: r.item_slug, code: r.lot_code, qty: 0, bb: null };
+      g.qty += r.qty;
+      if (r.best_before && (!g.bb || r.best_before < g.bb)) g.bb = r.best_before;
+      groups.set(k, g);
+    }
+    const out = [], rows = [];
+    const who = { actor_email: (actor && actor.email) || null, actor_name: (actor && (actor.name || actor.email)) || null };
+    for (const g of groups.values()) {
+      const m = meta.get(`${g.slug}|${g.code}`);
+      const bb = (m && m.best_before) || g.bb;
+      if (!bb || !(today > bb) || !(g.qty > 0)) continue;
+      rows.push({ item_slug: g.slug, qty: -g.qty, type: 'EXPIRED', lot_code: g.code, best_before: bb, note: 'Thrown away after best before', ...who });
+      out.push({ code: g.code, slug: g.slug, qty: g.qty });
+    }
+    if (rows.length) await store.insert(rows);
+    return { lines: out };
+  }
+
+  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired };
 }
 
 let real = null;

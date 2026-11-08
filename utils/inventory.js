@@ -19,7 +19,8 @@ const NEEDS_WHO = { GIFT: 'Enter who it is going to.', EXHIBITION: 'Enter the ev
 const MAX_QTY = 100000;
 const DUP_WINDOW_MS = 15 * 60_000;
 const DAMAGED_ON_RECEIPT = 'Damaged or not okay on receipt';
-const HISTORY_TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']);
+const DAMAGE_REASONS = new Set(['transit', 'supplier', 'repack']);
+const HISTORY_TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL', 'SUPPLIER_RETURN', 'EXPIRED']);
 const REVERSE_FREE_MS = 24 * 3_600_000;       // anyone can reverse their own slip within a day; later needs the owner
 // A stock_settings time (the database writes now()::text, e.g. '2026-11-08 15:10:00+00') as milliseconds; null when it is missing or unreadable.
 const tsMs = (v) => { if (v == null || v === '') return null; const n = Date.parse(v); return Number.isNaN(n) ? null : n; };
@@ -241,9 +242,10 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   }
 
   // Take stock out: used (packaging), damaged or not okay, or a sample/gift. Oldest lot first for products.
-  async function take({ slug, qty, type, note, who: whoFor, invoice, lot = null, allowNegative = false, actor }) {
+  async function take({ slug, qty, type, note, who: whoFor, invoice, lot = null, reason = null, allowNegative = false, actor }) {
     const item = await need(slug);
     if (!TYPES_OUT[type]) throw new StockError('Choose what happened: used, damaged, or sample.');
+    if (reason != null && (type !== 'DAMAGED' || !DAMAGE_REASONS.has(reason))) throw new StockError('Choose why it was damaged: on the bus, at the bakery or while cartoning.');
     const n = int(qty);
     if (!Number.isInteger(n) || n < 1 || n > MAX_QTY) throw new StockError('Enter a whole number, 1 or more.');
     if (type === 'DAMAGED' && !cleanText(note, 300)) throw new StockError('Add a short note on what was wrong.');
@@ -257,7 +259,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (type === 'OFFLINE_SALE' && !inv) throw new StockError('Enter the invoice number (write PENDING if it is not made yet and fix it later).');
     const base = type === 'OFFLINE_SALE' ? { type, note: cleanText(note, 300) || null, ref: inv, party: forWhom, ...who(actor) } : { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) };
     const rows = await outRows(item, n, base, { lot, ctx });
-    await store.insert(rows);
+    await store.insert(reason ? rows.map((r) => ({ ...r, reason })) : rows);
     return { onHand: await onHand(slug) };
   }
 
