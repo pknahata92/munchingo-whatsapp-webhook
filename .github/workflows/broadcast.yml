@@ -18,6 +18,10 @@ on:
         description: 'https link to the header .mp4 (blank if the template has no video)'
         required: false
         default: ''
+      image:
+        description: 'https link to the header picture (blank if the template has no picture)'
+        required: false
+        default: ''
       sources:
         description: 'Only these sign-up places, e.g. stall,fair (blank = everyone who said yes)'
         required: false
@@ -41,12 +45,13 @@ jobs:
           TEMPLATE: ${{ inputs.template }}
           MODE: ${{ inputs.mode }}
           VIDEO: ${{ inputs.video }}
+          IMAGE: ${{ inputs.image }}
           SOURCES: ${{ inputs.sources }}
           EXPECT: ${{ inputs.expect }}
           LANG_CODE: ${{ inputs.lang }}
         run: |
           curl -sS -m 900 -G "https://munchingo-whatsapp-webhook.onrender.com/internal/broadcast" \
             --data-urlencode "secret=$SECRET" --data-urlencode "template=$TEMPLATE" --data-urlencode "mode=$MODE" \
-            --data-urlencode "video=$VIDEO" --data-urlencode "sources=$SOURCES" --data-urlencode "expect=$EXPECT" \
+            --data-urlencode "video=$VIDEO" --data-urlencode "image=$IMAGE" --data-urlencode "sources=$SOURCES" --data-urlencode "expect=$EXPECT" \
             --data-urlencode "lang=$LANG_CODE" -w '\nHTTP %{http_code}\n' | tee out.txt
           grep -q '"ok":true' out.txt

@@ -91,6 +91,14 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   ok(!(await b.run({ template: T, mode: 'blast' })).ok, 'an unknown mode is refused');
   ok(!(await b.run({ template: T, mode: 'dry', video: 'http://x.mp4' })).ok, 'a video link must be https');
 
+  // a picture instead of a video (one header only)
+  w = world({ contacts: [C('919000000001', 'Asha')] });
+  const I = 'https://munchingo.com/images/wa/diwali-2026.jpg';
+  r = await b.run({ template: T, mode: 'test', image: I });
+  ok(r.ok && w.sent[0].header.type === 'image' && w.sent[0].header.link === I, 'image=<https link> sends a picture header');
+  ok(!(await b.run({ template: T, mode: 'dry', image: I, video: V })).ok, 'a picture and a video together are refused (WhatsApp allows one header)');
+  ok(!(await b.run({ template: T, mode: 'dry', image: 'http://x.jpg' })).ok, 'a picture link must be https');
+
   // wiring
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   ok(/\/internal\/broadcast/.test(srv) && /utils\/broadcast/.test(srv), 'server exposes /internal/broadcast');

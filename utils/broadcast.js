@@ -56,15 +56,17 @@ async function audience(template, sources) {
   return out;
 }
 
-/** { template, lang, mode, video, expect, sources } -> counts only, never phone numbers. */
-async function run({ template, lang = 'en', mode = 'dry', video = '', expect, sources = '' } = {}) {
+/** { template, lang, mode, video | image, expect, sources } -> counts only, never phone numbers. */
+async function run({ template, lang = 'en', mode = 'dry', video = '', image = '', expect, sources = '' } = {}) {
   if (!/^[a-z0-9_]{1,512}$/.test(String(template || ''))) return { ok: false, error: 'template must be the approved template name (lowercase letters, numbers, _).' };
   if (!MODES.includes(mode)) return { ok: false, error: `mode must be one of ${MODES.join(', ')}.` };
   if (video && !/^https:\/\/\S+$/.test(video)) return { ok: false, error: 'video must be an https link to an .mp4.' };
+  if (image && !/^https:\/\/\S+$/.test(image)) return { ok: false, error: 'image must be an https link to a .jpg or .png.' };
+  if (video && image) return { ok: false, error: 'a template has one header: send a video or an image, not both.' };
   if (!/^[a-z0-9:,\- ]*$/i.test(String(sources))) return { ok: false, error: 'sources must look like stall,fair or stall:2026-11-06.' };
   const src = String(sources).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   const { db, wa, wait, ownerPhone } = D();
-  const header = video ? { type: 'video', link: video } : null;
+  const header = video ? { type: 'video', link: video } : image ? { type: 'image', link: image } : null;
   const a = await audience(template, src);
   const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, to_send: a.list.length };
 
