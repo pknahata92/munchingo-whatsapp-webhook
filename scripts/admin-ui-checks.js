@@ -860,6 +860,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     set(fieldOf(s, 'atta-kesari', 'diffReason'), 'one box short');
     const d0 = JSON.parse(s.win.localStorage.getItem(KEY) || '{}');
     ok(/^d-[0-9a-z]+-[0-9a-z]{6}$/.test(d0.id || '') && d0.form && d0.form.billNo === BILL && d0.form.rows.find((r) => r.slug === 'atta-kesari').diffReason === 'one box short' && /^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/.test(d0.form.rows[0].brokenPhoto || ''), 'every entry is kept on the phone with one receipt id (' + (d0.id || 'none') + ')');
+    ok(!!d0.author && d0.author.email === 'staff@example.com' && d0.author.name === 'Staff', 'the draft records who started it (' + JSON.stringify(d0.author) + ')');
     // review
     click(q('#dlReview'));
     await until(() => qa('#viewStock .dllot').length === 4, 5000, 'the review screen').catch(() => {});
@@ -891,6 +892,24 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(!!kept && JSON.parse(kept).id === d0.id && JSON.parse(kept).pending && JSON.parse(kept).pending.id === d0.id, 'the delivery stays on the phone with the same receipt id');
     ok(s.errors.length === 0, 'no page errors on the form and review (' + s.errors.join(' | ').slice(0, 200) + ')');
     s.close();
+    // the owner signs in on the same phone: the staff member's delivery is not restored silently
+    const ow = await openAdmin('owner', { width: 375 });
+    ow.win.localStorage.setItem(KEY, kept);
+    await toNew(ow);
+    await until(() => !!ow.q('#dlOthers'), 4000, 'the started-by notice').catch(() => {});
+    const carry = ow.byText('#viewStock button', /^Carry on \(it will be saved under your name\)$/), fresh = ow.byText('#viewStock button', /^Start a new one$/);
+    ok(/^Started by Staff on this phone\./.test(ow.text(ow.q('#dlOthers'))) && !!carry && !!fresh, 'a draft started by staff, opened by the owner: "Started by Staff on this phone." with Carry on and Start a new one (' + ow.text(ow.q('#dlOthers')) + ')');
+    ok(!ow.q('#viewStock .dlrow') && !ow.q('#viewStock .dllot') && !ow.q('#dlNosig') && !ow.q('#dlSend'), 'nothing of it is restored until the owner chooses');
+    let askedO = ''; ow.win.confirm = (m) => { askedO = m; return false; };
+    if (fresh) ow.click(fresh);
+    ok(/Throw away/.test(askedO) && !!ow.q('#dlOthers') && ow.win.localStorage.getItem(KEY) === kept, 'Start a new one asks first; No keeps the delivery and the notice');
+    ow.win.confirm = () => true;
+    if (carry) ow.click(carry);
+    await until(() => !!ow.q('#dlNosig'), 4000, 'the restored delivery').catch(() => {});
+    const owDraft = JSON.parse(ow.win.localStorage.getItem(KEY) || '{}');
+    ok(!!ow.q('#dlNosig') && !ow.q('#dlOthers') && owDraft.id === d0.id && owDraft.author && owDraft.author.email === 'owner@example.com', 'Carry on restores it (same receipt id) and it is now the owner\'s (' + JSON.stringify(owDraft.author) + ')');
+    ok(ow.errors.length === 0, 'no page errors on the started-by notice (' + ow.errors.join(' | ').slice(0, 200) + ')');
+    ow.close();
     // the phone reloads the page: the same delivery, Send saves it once
     const r = await openAdmin('staff', { width: 375 });
     r.win.localStorage.setItem(KEY, kept);
@@ -934,8 +953,9 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(t.qa('#viewStock .dllot').length === 1 && /part 2/.test(t.text(t.q('#viewStock'))), 'Add part 2 to an earlier bill: the review is for part 2');
     const tickAll = () => t.qa('#viewStock .dlwarn input[type=checkbox]').forEach((c) => { if (!c.checked) t.click(c); });
     tickAll();
-    const realT = t.win.fetch; let step = 0;
+    const realT = t.win.fetch; let step = 0, pageDropped = 0;
     t.win.fetch = async (u, o) => {
+      if (!pageDropped && /\/admin\/api\/stock\/deliveries\/d-/.test(String(u)) && (!o || !o.method || o.method === 'GET')) { pageDropped++; throw new TypeError('Failed to fetch'); }   // the delivery page cannot load after the save
       if (/\/admin\/api\/stock\/deliveries$/.test(String(u)) && o && o.method === 'POST') {
         step++;
         if (step === 1) return new Response(JSON.stringify({ ok: false, error: 'Check these before saving', warnings: [{ key: 'large', text: 'Practice: a warning that appeared after the review.' }] }), { status: 409, headers: { 'Content-Type': 'application/json' } });
@@ -952,9 +972,16 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await until(() => !!t.q('#dlNosig'), 4000, 'the lost reply').catch(() => {});
     ok(t.text(t.q('#dlNosig')) === NOSIG, 'a lost reply also says not sent');
     t.click(t.byText('#viewStock button', /^Send$/));
-    await until(() => /^Delivery /.test(t.text(t.q('#viewStock .pagehead'))), 5000, 'the delivery page').catch(() => {});
-    ok(/^Delivery /.test(t.text(t.q('#viewStock .pagehead'))) && /part 2/.test(t.text(t.q('#viewStock'))) && t.qa('#viewStock .dlotline').length === 1, 'Send after a lost reply opens the delivery saved the first time');
-    ok(t.win.localStorage.getItem(KEY) === null, 'and clears it from the phone');
+    // Send is answered with the first save, and then the delivery page itself cannot load (signal drops again)
+    await until(() => /Open it again from Stock when you have signal\./.test(t.text(t.q('#dlSavedNote'))), 5000, 'the saved page').catch(() => {});
+    ok(pageDropped === 1 && /^Saved$/.test(t.text(t.q('#viewStock .pagehead'))) && /part 2/.test(t.text(t.q('#viewStock'))) && t.qa('#viewStock .dlsavedline').length === 1 && /^MNGO-\d{6}-\d{2}/.test(t.text(t.q('#viewStock .dlsavedline'))), 'Send after a lost reply: the saved page comes from the save itself, with its lot (' + t.text(t.q('#viewStock')).slice(0, 160) + ')');
+    ok(t.text(t.q('#dlSavedNote')) === 'Open it again from Stock when you have signal.', 'the delivery page could not load: the saved page stays and says so');
+    ok(!t.byText('#viewStock button', /^(Edit|Send|Save delivery)$/) && !/Saving/.test(t.text(t.q('#viewStock'))), 'nothing of the review is left on screen');
+    ok(t.win.localStorage.getItem(KEY) === null, 'and the delivery is cleared from the phone');
+    ok(t.errors.length === 0, 'no page errors when the delivery page cannot load (' + t.errors.join(' | ').slice(0, 200) + ')');
+    t.click(t.byText('#viewStock button', /^Back to Stock$/));
+    await until(() => !!t.byText('#viewStock button', /^New delivery$/) && t.qa('#viewStock .line').length >= 4, 4000, 'back to Stock').catch(() => {});
+    ok(!!t.byText('#viewStock button', /^New delivery$/), 'Back to Stock works from the saved page');
     const mine2 = ((await apiGet('/admin/api/stock/lots')).lots || []).filter((l) => (l.code || '').includes('-' + yymmdd(BAKE2) + '-'));
     ok(mine2.length === 1, 'the resend saved nothing twice: 1 lot, not 2 (' + mine2.map((l) => l.code).join(',') + ')');
     ok(t.errors.length === 0, 'no page errors on the second delivery (' + t.errors.join(' | ').slice(0, 200) + ')');

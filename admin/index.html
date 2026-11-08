@@ -276,7 +276,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   var LABEL = { topack: 'TO PACK', packed: 'PACKED', shipped: 'SHIPPED', delivered: 'DELIVERED', test: 'TEST', refunded: 'REFUNDED', cancelled: 'CANCELLED' };
   function start() {
     $('login').hidden = true; $('app').hidden = false;
-    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('moreTab').hidden = j.role !== 'owner'; var t0 = ''; try { t0 = localStorage.getItem('mngAdminTab') || ''; } catch (e) {} render(); renderGuide(); showTab(t0); } });
+    api('/admin/api/me').then(function (j) { if (j.ok) { state.role = j.role; state.email = j.email || ''; state.name = j.name || ''; $('who').textContent = (j.name || j.email) + ' · ' + j.role; $('who').title = j.email; state.reasons = j.reasons; state.dispatchFrom = j.dispatchFrom ? Date.parse(j.dispatchFrom) : 0; $('moreTab').hidden = j.role !== 'owner'; var t0 = ''; try { t0 = localStorage.getItem('mngAdminTab') || ''; } catch (e) {} render(); renderGuide(); showTab(t0); } });
     load();
   }
   // ── tabs: Orders, Stock, More (owner) ──
@@ -1043,7 +1043,9 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     });
     return f;
   }
-  function dlSaveDraft() { if (!ND) return; try { localStorage.setItem(DL_KEY, JSON.stringify({ v: 1, id: ND.id, form: ND.form, review: ND.review, ticks: ND.ticks, pending: ND.pending })); } catch (e) {} }
+  function dlSaveDraft() { if (!ND) return; try { localStorage.setItem(DL_KEY, JSON.stringify({ v: 1, id: ND.id, author: ND.author, form: ND.form, review: ND.review, ticks: ND.ticks, pending: ND.pending })); } catch (e) {} }
+  // Who is signed in: the session's own answer (/admin/api/me), else the email typed at sign-in on this phone.
+  function dlMe() { var e = state.email; if (!e) { try { e = localStorage.getItem('mngAdminEmail') || ''; } catch (x) { e = ''; } } return { email: String(e || '').trim().toLowerCase(), name: state.name || '' }; }
   function dlClearDraft() { try { localStorage.removeItem(DL_KEY); } catch (e) {} }
   function dlReadDraft() {
     try {
@@ -1142,22 +1144,38 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
   function dlNosigBox() {
     return h('div', { class: 'dlnosigbox', id: 'dlNosigBox' }, h('div', { class: 'dlnosig', id: 'dlNosig', role: 'status' }, DL_NOSIG),
-      h('button', { class: 'btn', id: 'dlSend', type: 'button', onclick: function (e) { sendDelivery(ND.form, e.currentTarget); } }, 'Send'));
+      h('button', { class: 'btn', id: 'dlSend', type: 'button', onclick: function (e) { if (ND) sendDelivery(ND.form, e.currentTarget); } }, 'Send'));
   }
-  function dlStartNew() {
-    if (!confirm('Throw away this delivery' + (ND && ND.pending ? ' (it is not sent yet)' : '') + ' and start a new one? What was typed is lost.')) return;
+  function dlStartNew(unsent) {
+    if (!confirm('Throw away this delivery' + (unsent ? ' (it is not sent yet)' : '') + ' and start a new one? What was typed is lost.')) return;
     dlClearDraft(); ND = null; openNewDelivery();
+  }
+  function dlRestore(draft) {
+    ND = { id: draft.id, author: draft.author || dlMe(), form: draft.form, review: draft.review || null, ticks: draft.ticks || {}, pending: draft.pending || null, err: '', restored: true, note: '' };
+    return ND.pending && ND.review ? dlDrawReview() : dlDrawForm();
+  }
+  // A draft someone else started on this phone (a shared phone): never restored silently, because Send saves it under whoever is signed
+  // in now, and the saver is who may correct it later.
+  function dlOthersDraft(draft, me) {
+    var by = draft.author || {}, who = by.name || by.email;
+    ND = null;
+    invShow('New delivery', [
+      h('div', { class: 'hint', id: 'dlOthers' }, who ? 'Started by ' + who + ' on this phone.' : 'Started on this phone by someone else (who it was is not recorded).', draft.pending ? ' It is not sent yet.' : ''),
+      h('div', { class: 'acts' },
+        h('button', { class: 'btn', type: 'button', onclick: function () { draft.author = me; dlRestore(draft); dlSaveDraft(); } }, 'Carry on (it will be saved under your name)'),
+        h('button', { class: 'btn ghost', type: 'button', onclick: function () { dlStartNew(!!draft.pending); } }, 'Start a new one')),
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
   }
 
   function openNewDelivery(prefill) {
     var draft = dlReadDraft();
     if (draft && prefill && !confirm('A delivery you started is kept on this phone. Throw it away and open this one?')) prefill = null;
     if (draft && !prefill) {
-      ND = { id: draft.id, form: draft.form, review: draft.review || null, ticks: draft.ticks || {}, pending: draft.pending || null, err: '', restored: true, note: '' };
-      return ND.pending && ND.review ? dlDrawReview() : dlDrawForm();
+      var me = dlMe(), by = String((draft.author && draft.author.email) || '').toLowerCase();
+      return by && me.email && by === me.email ? dlRestore(draft) : dlOthersDraft(draft, me);
     }
     var form = prefill ? dlFromInput(prefill) : dlBlank();
-    ND = { id: dlReceiptId(), form: form, review: null, ticks: {}, pending: null, err: '', restored: false, note: '' };
+    ND = { id: dlReceiptId(), author: dlMe(), form: form, review: null, ticks: {}, pending: null, err: '', restored: false, note: '' };
     if (prefill) dlSaveDraft();
     var mine = ND;
     invShow('New delivery', [h('p', { class: 'muted' }, 'Getting the rates from the last delivery…')]);
@@ -1172,6 +1190,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
 
   function dlDrawForm() {
+    if (!ND) return;
     var f = ND.form, today = dlToday();
     var W = { inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off' }, M = { inputmode: 'decimal', autocomplete: 'off' };
     function inp(id, obj, key, attrs) {
@@ -1252,10 +1271,10 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       return box;
     }
 
-    var review = h('button', { class: 'btn dlwide', id: 'dlReview', type: 'button', onclick: function () { deliveryReview(ND.form); } }, 'Review');
+    var review = h('button', { class: 'btn dlwide', id: 'dlReview', type: 'button', onclick: function () { if (ND) deliveryReview(ND.form); } }, 'Review');
     var head = [];
     if (ND.pending) head.push(dlNosigBox());
-    if (ND.restored || ND.pending) head.push(h('div', { class: 'hint', id: 'dlRestored' }, 'This delivery was kept on this phone as it was typed. Carry on, or ', h('button', { type: 'button', class: 'btn ghost small', onclick: dlStartNew }, 'Start a new one')));
+    if (ND.restored || ND.pending) head.push(h('div', { class: 'hint', id: 'dlRestored' }, 'This delivery was kept on this phone as it was typed. Carry on, or ', h('button', { type: 'button', class: 'btn ghost small', onclick: function () { dlStartNew(ND && ND.pending); } }, 'Start a new one')));
     else head.push(h('p', { class: 'muted' }, 'One entry for the whole delivery. It is kept on this phone as you type, so a dropped signal loses nothing.'));
     if (ND.note) head.push(h('p', { class: 'note' }, ND.note));
     invShow('New delivery', head.concat([top], f.rows.map(rowBox), [
@@ -1264,10 +1283,11 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     dlRefresh();
     if (ND.err) { var e = $('dlErr'); if (e && e.scrollIntoView) e.scrollIntoView({ block: 'center' }); }
   }
-  function dlFormError(msg) { ND.err = msg; var e = $('dlErr'); if (!e) return dlDrawForm(); e.textContent = msg; dlRefresh(); if (e.scrollIntoView) e.scrollIntoView({ block: 'center' }); }
+  function dlFormError(msg) { if (!ND) return; ND.err = msg; var e = $('dlErr'); if (!e) return dlDrawForm(); e.textContent = msg; dlRefresh(); if (e.scrollIntoView) e.scrollIntoView({ block: 'center' }); }
 
   // Review: the server works out each lot's code, dates and cost and lists every warning; nothing is saved yet.
   function deliveryReview(form) {
+    if (!ND) return;
     var blocked = dlBlock(form); if (blocked) return dlFormError(blocked);
     var b = $('dlReview'); if (b) { b.disabled = true; b.textContent = 'Checking…'; }
     var mine = ND;
@@ -1281,18 +1301,20 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
   function dlDate(label, iso) { return h('div', { class: 'dldate' }, h('small', {}, label + ' '), h('b', {}, iso ? dlWords(iso) : 'not known')); }
   function dlDrawReview(note) {
+    if (!ND || !ND.review) return;
     var rv = ND.review, f = ND.form, pend = !!ND.pending, keys = (rv.warnings || []).map(function (w) { return w.key; });
     var d = rv.delivery || {};
-    var save = pend ? null : h('button', { class: 'btn dlwide', id: 'dlSave', type: 'button', onclick: function (e) { sendDelivery(ND.form, e.currentTarget); } }, 'Save delivery');
+    var save = pend ? null : h('button', { class: 'btn dlwide', id: 'dlSave', type: 'button', onclick: function (e) { if (ND) sendDelivery(ND.form, e.currentTarget); } }, 'Save delivery');
     var hint = h('div', { class: 'muted', id: 'dlTickHint' });
     var reason = h('textarea', { id: 'dlOldReason', rows: '2', placeholder: 'For example: the bus was a week late' }); reason.value = f.oldBakeReason || ''; reason.readOnly = pend;
     var reasonBox = h('div', { class: 'dlreason', hidden: !ND.ticks.old_bake }, h('label', { for: 'dlOldReason' }, 'Why is the bake date old? (needed)'), reason);
     var gate = function () {
+      if (!ND) return;
       var all = keys.every(function (k) { return ND.ticks[k]; }), needReason = keys.indexOf('old_bake') >= 0 && ND.ticks.old_bake && !dlTrim(f.oldBakeReason);
       if (save) save.disabled = !all || needReason;
       hint.textContent = pend ? '' : !all ? 'Tick each check to save.' : needReason ? 'Say why the bake date is old.' : '';
     };
-    reason.addEventListener('input', function () { f.oldBakeReason = reason.value; dlSaveDraft(); gate(); });
+    reason.addEventListener('input', function () { if (!ND) return; f.oldBakeReason = reason.value; dlSaveDraft(); gate(); });
     var lots = (rv.lots || []).map(function (l) {
       return h('div', { class: 'sec dllot' },
         h('div', { class: 'dlhd' }, h('b', { class: 'dlcode' }, l.code), h('span', { class: 'badge b-topack' }, 'Will be on hold')),
@@ -1302,7 +1324,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     });
     var warns = (rv.warnings || []).map(function (w) {
       var cb = h('input', { type: 'checkbox', 'data-key': w.key }); cb.checked = !!ND.ticks[w.key]; cb.disabled = pend;
-      cb.addEventListener('change', function () { ND.ticks[w.key] = cb.checked; if (w.key === 'old_bake') reasonBox.hidden = !cb.checked; dlSaveDraft(); gate(); });
+      cb.addEventListener('change', function () { if (!ND) return; ND.ticks[w.key] = cb.checked; if (w.key === 'old_bake') reasonBox.hidden = !cb.checked; dlSaveDraft(); gate(); });
       return h('label', { class: 'dltick dlwarn' }, cb, h('span', {}, w.text));
     });
     var n = warns.length;
@@ -1313,13 +1335,14 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       n ? h('div', { class: 'sec' }, h('h3', {}, 'Check ' + n + (n === 1 ? ' thing' : ' things') + ' before saving'), warns, reasonBox) : h('p', { class: 'muted' }, 'Nothing to check: the bill and the boxes agree.'),
       pend ? dlNosigBox() : null,
       save, hint,
-      h('div', { class: 'acts' }, h('button', { class: 'btn ghost', type: 'button', onclick: function () { dlDrawForm(); } }, 'Edit'))]));
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost', type: 'button', onclick: function () { if (ND) dlDrawForm(); } }, 'Edit'))]));
     gate();
   }
 
   // Save (or Send after a dropped signal): the body is kept on the phone before it leaves, so nothing is lost, and the same receipt id
   // means a resend is answered with the first save, never a second one.
   function sendDelivery(form, btn) {
+    if (!ND) return;
     var body = ND.pending || dlBody(form, Object.keys(ND.ticks).filter(function (k) { return ND.ticks[k]; }));
     ND.pending = body; dlSaveDraft();
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -1339,18 +1362,33 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       ND.err = r.j.error || 'Something went wrong. Try again.'; dlSaveDraft(); dlDrawForm();
     });
   }
+  // After a save: the saved page is drawn at once from the save's own answer, so the review (whose delivery is gone) never stays on
+  // screen. The full delivery page then loads over it; on a weak signal the saved page stays and says how to get back to it.
   function dlSaved(j) {
     dlClearDraft(); ND = null;
-    var n = (j.lots || []).length;
+    var d = j.delivery || {}, lots = j.lots || [], n = lots.length;
     toast(j.again ? 'This delivery was already saved. Opening it.' : 'Saved. ' + n + (n === 1 ? ' lot is' : ' lots are') + ' on hold: the website does not count them until each is released.', 6000);
     refreshLow();
-    openDelivery(j.delivery && j.delivery.id);
+    invShow('Saved', [
+      h('div', { class: 'muted' }, 'Bill ' + (d.billNo || '') + ', part ' + (d.part || 1) + '. ' + (j.again ? 'This delivery was already saved.' : n + (n === 1 ? ' lot is' : ' lots are') + ' on hold: the website does not count them until each is tasted and released.')),
+      section('Lots', lots.map(function (l) {
+        return h('div', { class: 'line dlsavedline' }, h('div', { class: 'dlotmain' }, h('b', { class: 'dlcode' }, l.code), h('small', {}, (DL_NAME[l.slug] || l.slug) + ' · ' + l.good + ' good boxes')), j.again ? null : h('span', { class: 'badge b-topack' }, 'On hold'));
+      })),
+      h('p', { class: 'muted', id: 'dlSavedNote', role: 'status' }, 'Opening the delivery…'),
+      h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
+    openDelivery(d.id, { over: 'dlSavedNote', failed: function () { var t = $('dlSavedNote'); if (t) t.textContent = 'Open it again from Stock when you have signal.'; } });
   }
 
   // The delivery page (read only for now): bill, part, arrival, each lot with its status, what to raise with Krazy Bakers, notes.
-  function openDelivery(id) {
+  // opts.over: an element id that must still be on screen (the person may have moved on: then nothing is drawn over them);
+  // opts.failed: called instead of a toast when the page cannot be loaded.
+  function openDelivery(id, opts) {
+    opts = opts || {};
+    var gone = function () { return !!opts.over && !$(opts.over); };
+    var fail = function (msg) { if (gone()) return; if (opts.failed) opts.failed(msg); else toast(msg, 6000); };
     api('/admin/api/stock/deliveries/' + encodeURIComponent(id || '')).then(function (j) {
-      if (!j.ok) return toast(j.error || 'Could not open the delivery.', 6000);
+      if (gone()) return;
+      if (!j.ok) return fail(j.error || 'Could not open the delivery.');
       var d = j.delivery || {};
       var lines = (j.lots || []).map(function (l) {
         var st = DL_STATUS[l.status] || [l.status || 'Unknown', 'b-unpaid'];
@@ -1371,7 +1409,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
         raise.length ? section('To raise with Krazy Bakers', raise) : null,
         notes.length ? section('Notes', notes) : null,
         h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
-    }, function () { toast('No signal. The delivery is saved: open it again when you have signal.', 6000); });
+    }, function () { fail('No signal. The delivery is saved: open it again when you have signal.'); });
   }
   function invForm(title, it, fields, onSave, saveLabel) {
     var save = h('button', { class: 'btn small', onclick: function (e) { e.target.disabled = true; onSave(function () { e.target.disabled = false; }); } }, saveLabel || 'Save');
