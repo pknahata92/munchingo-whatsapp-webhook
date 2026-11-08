@@ -349,13 +349,30 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     ownerPanel('How this works', [h('div', { class: 'muted', style: 'line-height:1.7' }, guideList()),
       h('p', { class: 'muted' }, 'Stock tab: New delivery when boxes arrive (they wait on hold until tasted and released), Count when you check the shelf, Mark low when something runs short. Packing an order takes its boxes off stock for you.')]);
   }
+  // The same GET asked for twice in one go (a stock action calls refreshLow() and then openInventory()) is sent once and shared
+  // (final review I4); a later call sends its own.
+  var sharedGets = {};
+  function sharedGet(path) {
+    if (!sharedGets[path]) { sharedGets[path] = api(path); setTimeout(function () { delete sharedGets[path]; }, 0); }
+    return sharedGets[path];
+  }
   function refreshLow() {
-    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; if (j && j.ok) setHeld(j.items); renderNeeds(); }).catch(function () {});
+    sharedGet('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; if (j && j.ok) setHeld(j.items); renderNeeds(); fillStockNeeds(); }).catch(function () {});
     refreshNeedsLot();
   }
-  // Boxes packed without a lot and packs whose lots were not checked (GET /stock/needs-lot), for the Needs cards.
+  // Boxes packed without a lot and packs whose lots were not checked (GET /stock/needs-lot), for the Needs cards; the strip on the Stock
+  // screen is filled in place when it answers.
   function refreshNeedsLot() {
-    return api('/admin/api/stock/needs-lot').then(function (j) { state.needsLot = j && j.ok ? { lines: j.lines || [], unplanned: j.unplanned } : null; renderNeeds(); }, function () {});
+    return sharedGet('/admin/api/stock/needs-lot').then(function (j) { state.needsLot = j && j.ok ? { lines: j.lines || [], unplanned: j.unplanned } : null; renderNeeds(); fillStockNeeds(); }, function () {});
+  }
+  // The stock items of Needs attention at the top of the Stock screen (#stockNeeds), from what is known now.
+  function fillStockNeeds(box) {
+    box = box || $('stockNeeds'); if (!box) return box;
+    box.textContent = '';
+    var sn = stockNeedCards().filter(function (c) { return c[0] > 0; });
+    box.hidden = !sn.length;
+    sn.forEach(function (c) { box.appendChild(h('button', { class: 'need' + (c[4] ? ' hot' : ''), type: 'button', onclick: function () { openStockAttention(); } }, h('b', {}, String(c[0])), h('span', {}, c[0] === 1 ? c[1] : c[2]))); });
+    return box;
   }
   // Lots on hold with boxes on the shelf, from the Stock overview (one per flavour and lot: boxes under an old or sticker code count with
   // their lot). state.held: new deliveries waiting for Release; state.ownerHeld: lots the owner put on hold (recall, complaint), which
@@ -1010,15 +1027,14 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
 
   function openInventory() {
-    // the stock items of Needs attention come along (never blocking the Stock screen if they cannot be read)
-    Promise.all([api('/admin/api/inventory'), api('/admin/api/stock/needs-lot').then(null, function () { return null; })]).then(function (rs) {
-      var j = rs[0], nl = rs[1];
+    // Drawn from /inventory alone. The stock items of Needs attention (needs-lot) are asked for at the same time and fill the strip in
+    // place when they answer, so a slow or failed needs-lot never delays or blocks the Stock screen (final review I4).
+    refreshNeedsLot();
+    sharedGet('/admin/api/inventory').then(function (j) {
       if (!j.ok) return toast(j.error || 'Could not load stock', 6000);
-      state.inv = j; setHeld(j.items);
-      if (nl && nl.ok) state.needsLot = { lines: nl.lines || [], unplanned: nl.unplanned };
+      state.inv = j; setHeld(j.items); state.low = j.low || [];
       renderNeeds();
-      var sn = stockNeedCards().filter(function (c) { return c[0] > 0; });
-      var needBox = sn.length ? h('div', { class: 'needs', id: 'stockNeeds' }, sn.map(function (c) { return h('button', { class: 'need' + (c[4] ? ' hot' : ''), type: 'button', onclick: function () { openStockAttention(); } }, h('b', {}, String(c[0])), h('span', {}, c[0] === 1 ? c[1] : c[2])); })) : null;
+      var needBox = fillStockNeeds(h('div', { class: 'needs', id: 'stockNeeds' }));
       var chanBox = null;
       if ('channels' in j) { state.channels = j.channels; renderNeeds(); chanBox = h('div', { class: 'sec', id: 'chanBox' }); drawChannels(chanBox, j.channels); }
       var row = function (it) {
@@ -1793,7 +1809,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   var UNPLANNED_WORDS = { plan: 'Packed without checking lots: check which lot the boxes came from.', write: 'Packed, but the boxes were not taken off stock: count the shelf.' };
   var unplannedKind = function (u) { return u.kind === 'write' || u.kind === 'plan' ? u.kind : (/not taken off stock/i.test(String(u.reason || '')) ? 'write' : 'plan'); };
   function openStockAttention(note) {
-    Promise.all([api('/admin/api/stock/needs-lot'), api('/admin/api/stock/lots')]).then(function (rs) {
+    Promise.all([sharedGet('/admin/api/stock/needs-lot'), api('/admin/api/stock/lots')]).then(function (rs) {   // shared with refreshLow() called just before (I4)
       var nl = rs[0], ll = rs[1];
       if (!nl.ok) return toast(nl.error || 'Could not load Needs attention.', 6000);
       var own = state.role === 'owner', lots = ll.ok ? ll.lots || [] : [];

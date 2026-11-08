@@ -402,6 +402,10 @@ async function login(email) {
     await devStock({ planFails: false });
     const u3 = await unplannedOf();
     ok(tp.j.ok && u3 && u3.length === 1 && u3[0].kind === 'plan', 'the new pack is listed again (' + JSON.stringify(u3) + ')');
+    // Final review I4: Needs attention reads the unplanned-pack events first and then only those orders, never the latest-orders list
+    const calls = async () => (await (await fetch('http://localhost:' + PORT + '/dev/calls')).json()).listRecentOrders;
+    const c0 = await calls(); const nl4 = await call('/stock/needs-lot', s.token); const c1 = await calls();
+    ok(nl4.j.ok && Array.isArray(nl4.j.unplanned) && nl4.j.unplanned.some((u) => u.orderId === I) && c1 === c0, 'I4: needs-lot lists the pack without reading the latest-orders list (' + c0 + ' -> ' + c1 + ')');
   }
   // Task 6b: packaging is a hand-kept list. Remove = archive, owner only; adding the same name brings it back.
   {

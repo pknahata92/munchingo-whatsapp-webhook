@@ -399,17 +399,25 @@ const UNPLANNED_WRITE = 'The boxes were not taken off stock. Count these flavour
 // was undone, or packed again since, drops off. A pack the owner marked checked (event stock_unplanned_checked for that pack, Task 12)
 // drops off too. [{ orderId, at, reason, kind, note }], oldest first; kind 'plan' (the lots were not checked) or 'write' (the boxes
 // were not taken off stock), so the screen can say it in its own words.
-async function unplannedOf(packed) {
+// `given`: the stock_unplanned events already read (unplannedPacks), so they are not read again.
+async function unplannedOf(packed, given = null) {
   if (!packed.length) return [];
   const ids = packed.map((o) => o.order_id);
   const packedAt = Object.fromEntries(packed.map((o) => [o.order_id, Date.parse(o.packed_at)]));
-  const [events, checks] = await Promise.all([db.listOrderEventsByName('stock_unplanned', ids), db.listOrderEventsByName('stock_unplanned_checked', ids)]);
+  const [events, checks] = await Promise.all([given ? given.filter((e) => e.order_id in packedAt) : db.listOrderEventsByName('stock_unplanned', ids), db.listOrderEventsByName('stock_unplanned_checked', ids)]);
   const checked = (e) => (checks || []).some((c) => c.order_id === e.order_id && c.meta && Date.parse(c.meta.at) === Date.parse(e.meta.at));
   return events.filter((e) => e.meta && Date.parse(e.meta.at) === packedAt[e.order_id] && !checked(e))
     .map((e) => ({ orderId: e.order_id, at: e.meta.at, reason: e.meta.reason, kind: e.meta.reason === UNPLANNED_WRITE ? 'write' : 'plan', note: e.meta.note || null }))
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
-async function unplannedPacks() { return unplannedOf((await db.listRecentOrders(600)).filter((o) => o.packed_at)); }
+// Needs attention (final review I4): the unplanned-pack events first (newest 200), then only those orders' packed time. It used to read
+// the 600 latest orders in full on every refresh of the admin.
+async function unplannedPacks() {
+  const events = await db.listRecentOrderEvents('stock_unplanned', 200);
+  if (!events.length) return [];
+  const packed = (await db.getOrdersPackedAt(events.map((e) => e.order_id))).filter((o) => o.packed_at);
+  return unplannedOf(packed, events);
+}
 
 // Owner: the unplanned pack of this order was looked at (which lot the boxes came from, or the shelf was counted). It only leaves the
 // list; nothing in stock changes and nothing is ever blocked. Tied to that pack (meta.at), so a later pack that is not checked shows again.

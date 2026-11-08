@@ -567,6 +567,22 @@ async function listOrderEventsByName(name, orderIds) {
   }
   return out;
 }
+// The newest events with this name, at most `limit` (Needs attention reads its stock_unplanned packs this way, then only those orders).
+async function listRecentOrderEvents(name, limit = 200) {
+  const { data, error } = await db().from('order_events').select('order_id,event,created_at,meta').eq('event', name).order('created_at', { ascending: false }).limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+// Only the order id and its packed time, for these orders (200 per query).
+async function getOrdersPackedAt(orderIds) {
+  const ids = [...new Set((orderIds || []).filter(Boolean))], out = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await db().from('orders').select('order_id, packed_at').in('order_id', ids.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+    out.push(...(data || []));
+  }
+  return out;
+}
 // Conditional update: only touches the row if every key in `where` still matches (null means "is null").
 // Returns true if a row changed, so two people clicking the same button cannot both succeed.
 async function updateOrderIf(orderId, where, fields) {
@@ -692,7 +708,7 @@ module.exports = {
   getOrdersByIds,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, listRecentMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, listRecentOrderEvents, getOrdersPackedAt, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, listRecentMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,

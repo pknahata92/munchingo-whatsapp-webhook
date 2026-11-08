@@ -76,9 +76,12 @@ const fakeStorage = { from: () => ({
   upload: async (p, bytes, opts) => { if (photoStore.has(p) && !(opts && opts.upsert)) return { error: { message: 'exists' } }; photoStore.set(p, Buffer.from(bytes)); return { error: null }; },
   createSignedUrl: async (p) => (photoStore.has(p) ? { data: { signedUrl: 'data:image/jpeg;base64,' + photoStore.get(p).toString('base64') }, error: null } : { data: null, error: { message: 'Object not found' } }),
 }) };
+const dbCalls = { listRecentOrders: 0 };   // GET /dev/calls: the practice checks count how often the order list is read (final review I4)
 stub('utils/database.js', {
   client: () => ({ storage: fakeStorage }),
-  listRecentOrders: async () => orders,
+  listRecentOrders: async () => { dbCalls.listRecentOrders++; return orders; },
+  listRecentOrderEvents: async (name, limit = 200) => events.filter((e) => e.event === name).slice().sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, limit),
+  getOrdersPackedAt: async (ids) => orders.filter((o) => ids.includes(o.order_id)).map((o) => ({ order_id: o.order_id, packed_at: o.packed_at || null })),
   getInvoicesByOrderIds: async (ids) => Object.fromEntries(ids.filter((i) => invoices[i]).map((i) => [i, invoices[i]])),
   getCreditNotesByOrderIds: async (ids) => cns.filter((c) => ids.includes(c.order_id)),
   getOrder: async (id) => orders.find((o) => o.order_id === id) || null,
@@ -157,6 +160,7 @@ const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.post('/dev/track', (req, res) => { global.__trackStatus = (req.body && req.body.status) || 'Manifested'; res.json({ ok: true }); });   // practice copy only: what the stand-in Delhivery tracking says
 app.post('/dev/sweep', async (req, res) => res.json(await require('../utils/orderUpdates').sweepOnce()));
+app.get('/dev/calls', (req, res) => res.json({ ...dbCalls }));
 app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body && req.body.ready); res.json({ ok: true }); });   // practice copy only: pretend the coupons migration has / has not run
 // Meta and Google on fake data (no network, no database): both have their keys, Google is already set up, and both start switched off,
 // like a fresh deploy. Each fake catalogue starts with the four flavours in stock at the practice prices, like the live ones, and shows a
@@ -266,10 +270,12 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
   inv.instance = () => real;
   // POST /dev/stock { planFails: true }: the packing planner throws (as if the lot table could not be read); { deductFails: true }: writing
   // the packed boxes off stock throws. Both check that packing still goes on and that the pack is raised for Needs attention.
-  let planFails = false, deductFails = false; const plan0 = real.planForOrder, deduct0 = real.deductForOrder;
+  // { slowNeedsMs: 3000 }: the Needs attention read (needs-lot) answers that much later, so the checks can see the Stock screen never waits for it.
+  let planFails = false, deductFails = false, slowNeedsMs = 0; const plan0 = real.planForOrder, deduct0 = real.deductForOrder, needs0 = real.needsLot;
   real.planForOrder = async (...a) => { if (planFails) throw new Error('practice: the lot table could not be read'); return plan0(...a); };
   real.deductForOrder = async (...a) => { if (deductFails) throw new Error('practice: the stock write failed'); return deduct0(...a); };
-  app.post('/dev/stock', (req, res) => { const b = req.body || {}; if ('planFails' in b) planFails = !!b.planFails; if ('deductFails' in b) deductFails = !!b.deductFails; res.json({ ok: true }); });
+  real.needsLot = async (...a) => { if (slowNeedsMs) await new Promise((r) => setTimeout(r, slowNeedsMs)); return needs0(...a); };
+  app.post('/dev/stock', (req, res) => { const b = req.body || {}; if ('planFails' in b) planFails = !!b.planFails; if ('deductFails' in b) deductFails = !!b.deductFails; if ('slowNeedsMs' in b) slowNeedsMs = Math.max(0, Number(b.slowNeedsMs) || 0); res.json({ ok: true }); });
   // Deliveries share the same store, so a delivery saved through the API is what packing and the Stock screen see.
   const dl = require(path.join(root, 'utils/deliveries.js')); const deliveries = dl.makeDeliveries(store);
   dl.instance = () => deliveries;

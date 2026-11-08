@@ -1206,6 +1206,8 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(o.qa('#viewStock .heldlot').some((c) => c.getAttribute('data-code') === KK), 'Lots on hold lists ' + KK);
     bad = tooWide(o); ok(bad.length === 0, 'the Needs attention page has nothing wider than the phone (' + bad.slice(0, 4).join(' | ') + ')');
     await toStock(s);
+    // Final review I4 changed this lookup (and the two below) to wait: the strip now fills in when needs-lot answers, after the screen is drawn
+    await until(() => s.qa('#stockNeeds .need').some((b) => /box packed without a lot/.test(s.text(b))), 5000, 'the strip').catch(() => {});
     const sn0 = s.qa('#stockNeeds .need').find((b) => /box packed without a lot/.test(s.text(b)));
     ok(!!sn0, 'the Stock screen shows the stock items of Needs attention too (staff)');
     if (sn0) s.click(sn0);
@@ -1219,6 +1221,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.click(o.q('#rel-tasted')); o.set(o.q('#rel-weight'), '252'); o.click(o.q('#rel-go'));
     await until(() => page(o) === KK && /Released/.test(o.text(o.q('#lotHead'))), 5000, 'released').catch(() => {});
     await toStock(o);
+    await until(() => o.qa('#stockNeeds .need').some((b) => /box packed without a lot/.test(o.text(b))), 5000, 'the strip').catch(() => {});   // I4: see above
     const sn = o.qa('#stockNeeds .need').find((b) => /box packed without a lot/.test(o.text(b)));
     if (sn) o.click(sn);
     await until(() => page(o) === 'Needs attention' && !!o.q('#viewStock .nlline select'), 5000, 'the attention page with a lot to choose').catch(() => {});
@@ -1241,6 +1244,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await devStock({ planFails: false });
     ok(!!U && up.j.ok, 'setup: ' + U + ' packs while the lot check fails');
     await toStock(s);
+    await until(() => s.qa('#stockNeeds .need').some((b) => /1\s*pack was not checked against lots/.test(s.text(b))), 5000, 'the strip').catch(() => {});   // I4: see above
     const sn2 = s.qa('#stockNeeds .need').find((b) => /1\s*pack was not checked against lots/.test(s.text(b)));
     ok(!!sn2, 'the Stock screen counts 1 pack not checked against lots (' + s.qa('#stockNeeds .need').map((b) => s.text(b)).join(' | ') + ')');
     if (sn2) s.click(sn2);
@@ -1385,6 +1389,40 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await until(() => /in lot /.test(o.text(o.q('#toast'))), 3000, 'the toast').catch(() => {});
     ok(new RegExp('^Fixed by \\+1 in lot ' + want).test(o.text(o.q('#toast'))), 'the toast names the lot (' + o.text(o.q('#toast')) + ')');
     ok(o.errors.length === 0, 'no page errors on the count form (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
+  // Final review I4: one stock action reads /inventory and needs-lot once each (not twice), and the Stock screen is drawn from /inventory
+  // without waiting for needs-lot (a slow Needs attention read never delays it); the strip fills in when needs-lot answers.
+  list.push(async () => {
+    const page = (w) => w.text(w.q('#viewStock .pagehead'));
+    const devStock = (b) => fetch(BASE + '/dev/stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+    const o = await openAdmin('owner', { width: 375 });
+    const seen = []; const f0 = o.win.fetch;
+    o.win.fetch = (u, opt) => { seen.push({ u: String(u), m: (opt && opt.method) || 'GET', t: Date.now() }); return f0(u, opt); };
+    o.click(o.byText('#tabs .tab', /^Stock$/)); await until(() => page(o) === 'Stock' && o.qa('#viewStock .line').length >= 4, 5000, 'the stock page');
+    await new Promise((r) => setTimeout(r, 500));
+    const kes = () => o.qa('#viewStock .line').find((l) => o.text(l).indexOf('Atta Kesari') === 0);
+    const lowBtn = () => Array.from(kes().querySelectorAll('button')).find((b) => /^(Mark low|Clear low flag)$/.test(o.text(b)));
+    const was = o.text(lowBtn());
+    seen.length = 0;
+    o.click(lowBtn());
+    await until(() => o.text(lowBtn() || o.doc.createElement('i')) !== was, 5000, 'the low flag to change').catch(() => {});
+    await new Promise((r) => setTimeout(r, 800));
+    const gets = (re) => seen.filter((x) => x.m === 'GET' && re.test(x.u)).length;
+    ok(gets(/\/admin\/api\/inventory$/) === 1 && gets(/\/admin\/api\/stock\/needs-lot$/) === 1, 'one stock action reads /inventory once and needs-lot once (' + seen.map((x) => x.m + ' ' + x.u.replace(/^.*\/admin\/api/, '')).join(', ') + ')');
+    o.click(lowBtn()); await new Promise((r) => setTimeout(r, 600));   // put the flag back
+    // a slow needs-lot: the Stock screen is drawn first, the strip fills in later
+    await devStock({ slowNeedsMs: 2500 });
+    o.q('#viewStock').textContent = '';
+    const t0 = Date.now(); o.click(o.byText('#tabs .tab', /^Orders$/)); o.click(o.byText('#tabs .tab', /^Stock$/));
+    let drawn = null; await until(() => (page(o) === 'Stock' && o.qa('#viewStock .line').length >= 4 ? (drawn = Date.now()) : null), 5000, 'the stock page while needs-lot is slow').catch(() => {});
+    ok(drawn != null && drawn - t0 < 1500, 'the Stock screen is drawn without waiting for a slow needs-lot (' + (drawn == null ? 'not drawn' : (drawn - t0) + ' ms') + ')');
+    const nlAt = () => seen.filter((x) => /needs-lot$/.test(x.u) && x.t >= t0).length;
+    ok(nlAt() >= 1 && page(o) === 'Stock', 'needs-lot was asked for, and the page did not wait for it');
+    await new Promise((r) => setTimeout(r, 3000));
+    ok(page(o) === 'Stock' && !!o.q('#stockNeeds') && o.errors.length === 0, 'when it answers, the strip is filled in place and the page stays (' + o.errors.join(' | ').slice(0, 200) + ')');
+    await devStock({ slowNeedsMs: 0 });
     o.close();
   });
 
