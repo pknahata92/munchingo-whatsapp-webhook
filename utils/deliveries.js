@@ -5,7 +5,8 @@
  * somebody releases them. The whole save is one atomic store call, so a failure leaves nothing behind, and the receipt id
  * makes a resend harmless. Later tasks add release, reject, corrections and lot pages on top of this module.
  */
-const { StockError, MAX_QTY, makeInventory } = require('./inventory');
+const { StockError, MAX_QTY, validLot, makeInventory } = require('./inventory');
+const REVERSE_FREE_MS = 24 * 3_600_000;   // same day-long window as the ledger's own reverse
 const lots = require('./lots');
 
 const PHOTO_PATH = /^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/;
@@ -42,6 +43,7 @@ const photo = (p) => { if (typeof p !== 'string' || !PHOTO_PATH.test(p)) fail('T
 
 function makeDeliveries(store, { now = () => Date.now() } = {}) {
   const inventory = () => makeInventory(store, { now });
+  const live = (list) => list.filter((d) => d.status !== 'void');   // a corrected (void) delivery frees its bill and part
   const nextPart = (list) => list.reduce((m, d) => Math.max(m, d.part || 1), 0) + 1;
   const clashText = (stored, billNo, part, next) => `Bill ${billNo} part ${part} is already saved (${stored ? dateWords(lots.todayIst(Date.parse(stored.created_at))) : 'earlier'}, ${(stored && (stored.saved_by_name || stored.saved_by_email)) || 'Staff'}). Tap "Add part ${next}" if this is the rest.`;
 
@@ -65,7 +67,7 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     if (topBake && topBake > arrivedOn) fail('The bake date cannot be after the day it arrived.');
 
     // bill + part
-    const sameBill = (await store.deliveriesByBill(supplier, billNo)) || [];
+    const sameBill = live((await store.deliveriesByBill(supplier, billNo)) || []);
     let part;
     if (input.addPart) part = nextPart(sameBill);
     else {
@@ -191,7 +193,7 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
       if (e && String(e.message).includes(BILL_ONCE)) {
         const first = await store.delivery(id);
         if (first) return { ...(first.result || {}), again: true };
-        const list = (await store.deliveriesByBill(supplier, billNo)) || [];
+        const list = live((await store.deliveriesByBill(supplier, billNo)) || []);
         throw new StockError(clashText(list.find((x) => (x.part || 1) === part), billNo, part, nextPart(list)), 400);
       }
       throw e;
@@ -225,7 +227,7 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     const have = new Set(((await store.lots()) || []).map((l) => `${l.item_slug}|${l.lot_code}`));
     const only = new Map();   // ledger-only candidates, keyed by flavour
     for (const r of ledger) {
-      if (r.lot_code !== c || (slug && r.item_slug !== slug) || have.has(`${r.item_slug}|${r.lot_code}`)) continue;
+      if (r.lot_code !== c || (slug && r.item_slug !== slug) || have.has(`${r.item_slug}|${r.lot_code}`) || rows.some((l) => l.item_slug === r.item_slug)) continue;   // ledger rows under an old code (now an alias) belong to the lot that has it
       const e = only.get(r.item_slug) || { slug: r.item_slug, bestBefore: null };
       if (r.best_before && (!e.bestBefore || r.best_before < e.bestBefore)) e.bestBefore = r.best_before;
       only.set(r.item_slug, e);
@@ -329,7 +331,96 @@ function makeDeliveries(store, { now = () => Date.now() } = {}) {
     return { lines: out };
   }
 
-  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired };
+  // ---- Corrections (spec 6.7) ----
+  // Correct whole delivery: only while every lot is still on hold (never released) and nothing but the delivery's own rows is on them.
+  // One REVERSAL per row not yet reversed (a retry after a partial failure skips the ones already done), then the lots, then the delivery
+  // go void. The form reopens from the stored input.
+  async function correctDelivery(input, { actor, isOwner } = {}) {
+    input = input || {};
+    const reason = reasonOf(input.reason);
+    const d = await store.delivery(String(input.id == null ? '' : input.id));
+    if (!d) throw new StockError('No such delivery.', 404);
+    if (d.status === 'void') throw new StockError('This delivery was already corrected.', 409);
+    const email = String((actor && actor.email) || '').toLowerCase();
+    if (!isOwner) {
+      if (now() - Date.parse(d.created_at) > REVERSE_FREE_MS) throw new StockError('Only the owner can correct a delivery older than a day.', 403);
+      if (!email || email !== String(d.saved_by_email || '').toLowerCase()) throw new StockError('Only the person who saved this delivery, or the owner, can correct it.', 403);
+    }
+    const mine = ((await store.lots()) || []).filter((l) => l.delivery_id === d.id);
+    if (mine.some((l) => l.status === 'released' || l.released_at)) throw new StockError('Released lots cannot be corrected here. Use Fix lot.', 409);
+    const USED = 'Boxes from this delivery have already been used. Correct it with Fix lot or a count instead.';
+    if (mine.some((l) => l.status !== 'hold' && l.status !== 'void')) throw new StockError(USED, 409);
+    const own = (await store.movementsByDelivery(d.id)) || [];
+    const ownIds = new Set(own.map((m) => m.id));
+    const pairs = new Set(mine.map((l) => `${l.item_slug}|${l.lot_code}`));
+    const onLots = ((await store.movementsByLots([...new Set(mine.map((l) => l.lot_code))])) || []).filter((m) => pairs.has(`${m.item_slug}|${m.lot_code}`));
+    if (onLots.some((m) => !ownIds.has(m.id) && !(m.reverses_id && ownIds.has(m.reverses_id)))) throw new StockError(USED, 409);
+
+    const rows = own.filter((m) => m.type !== 'REVERSAL' && !m.reverses_id);
+    const done = new Set((await store.reversedAmong(rows.map((m) => m.id))) || []);
+    const who = { actor_email: (actor && actor.email) || null, actor_name: (actor && (actor.name || actor.email)) || null };
+    const reversals = rows.filter((m) => !done.has(m.id)).map((m) => ({ item_slug: m.item_slug, qty: -m.qty, type: 'REVERSAL', lot_code: m.lot_code, best_before: m.best_before, ref: m.ref, note: reason, reverses_id: m.id, delivery_id: d.id, ...who }));
+    if (reversals.length) await store.insert(reversals);
+    for (const l of mine) if (l.status !== 'void') await store.updateLot(l.item_slug, l.lot_code, { status: 'void' });
+    await store.updateDelivery(d.id, { status: 'void' });
+    const prefill = JSON.parse(JSON.stringify(d.input || {}));
+    delete prefill.id;
+    return { prefill };
+  }
+
+  // Fix lot (owner): change a lot's code and/or bake date after the fact. Remaining stock moves with COUNT_FIX pairs (as renameLot
+  // does), the old code stays as an alias, and nothing in the ledger is edited.
+  async function fixLot(input, { actor, isOwner } = {}) {
+    if (!isOwner) throw new StockError('Only the owner can fix a lot.', 403);
+    input = input || {};
+    const lot = await findLot(input);
+    const newCodeIn = cleanText(input.newCode, 60), newBakeIn = empty(input.newBakeDate) ? null : String(input.newBakeDate).trim();
+    if (!newCodeIn && !newBakeIn) fail('Enter the new code or the new bake date.');
+    const settings = lots.readSettings(await store.settingsAll());
+    const oldCode = lot.lot_code, slug = lot.item_slug;
+    if (newBakeIn) {
+      if (!validDate(newBakeIn)) fail('Enter the new bake date as a real date.');
+      if (newBakeIn > lots.todayIst(now())) fail('The bake date cannot be in the future.');
+    }
+    const [lotRows, ledger] = await Promise.all([store.lots(), store.byLot()]);
+    let newCode = newCodeIn, bake = lot.bake_date ? String(lot.bake_date).slice(0, 10) : null, bestBefore = lot.best_before ? String(lot.best_before).slice(0, 10) : null, datesChange = false;
+    if (newCode) {
+      if (!validLot(newCode)) fail('The lot can use letters, numbers, space and . - / only.');
+      if (newCode === oldCode) fail('The new lot code must be different from the old one.');
+      const p = lots.parseCode(newCode);
+      if (p && p.slug !== slug) fail('That code is for a different flavour.');
+      if (p && !newBakeIn) { bake = p.bakeDate; datesChange = true; }
+      if (p && newBakeIn && p.bakeDate !== newBakeIn) fail('The new code and the new bake date do not match.');
+    }
+    if (newBakeIn) {
+      if (newBakeIn === bake && !newCode) fail('The new bake date is the same as the current one.');
+      bake = newBakeIn; datesChange = true;
+    }
+    const ownCodes = new Set([oldCode, ...(lot.aliases || [])]);
+    if (!newCode) {
+      const codes = [...(lotRows || []).flatMap((l) => [l.lot_code, ...(l.aliases || [])]), ...(ledger || []).map((l) => l.lot_code)].filter(Boolean);
+      newCode = lots.lotCode(slug, bake, lots.nextSeq(codes, slug, bake));
+    }
+    const usedElsewhere = (lotRows || []).some((l) => l.item_slug === slug && l.lot_code !== oldCode && (l.lot_code === newCode || (l.aliases || []).includes(newCode)))
+      || (!ownCodes.has(newCode) && (ledger || []).some((r) => r.item_slug === slug && r.lot_code === newCode));
+    if (usedElsewhere) fail('That code is already used by another lot.');
+    if (datesChange) bestBefore = lots.datesFor(bake, settings).bestBefore;
+
+    const note = `Lot fixed ${oldCode} to ${newCode}`;
+    const who = { actor_email: (actor && actor.email) || null, actor_name: (actor && (actor.name || actor.email)) || null };
+    const rows = [];
+    for (const g of (ledger || []).filter((r) => r.item_slug === slug && r.lot_code === oldCode && r.qty !== 0)) {
+      const to = datesChange ? bestBefore : (g.best_before || null);
+      rows.push({ item_slug: slug, type: 'COUNT_FIX', qty: -g.qty, lot_code: oldCode, best_before: g.best_before || null, note, ...who },
+        { item_slug: slug, type: 'COUNT_FIX', qty: g.qty, lot_code: newCode, best_before: to, note, ...who });
+    }
+    if (rows.length) await store.insert(rows);
+    const aliases = [...new Set([...(lot.aliases || []).filter((a) => a !== newCode), oldCode])];
+    await store.updateLot(slug, oldCode, { lot_code: newCode, bake_date: bake, best_before: bestBefore, aliases });
+    return { from: oldCode, to: newCode, warning: 'Stickers already printed carry the old code or date: reprint them.' };
+  }
+
+  return { save, lastPrefill, findLot, release, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, fixLot };
 }
 
 let real = null;

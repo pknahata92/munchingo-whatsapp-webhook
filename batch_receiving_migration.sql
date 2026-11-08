@@ -34,7 +34,8 @@ create table if not exists stock_deliveries (
   result         jsonb,                                  -- what Save returned
   created_at     timestamptz not null default now()
 );
-create unique index if not exists stock_deliveries_bill_part_once on stock_deliveries (lower(supplier), lower(bill_no), part);
+-- A corrected (void) delivery frees its bill and part so the right one can be saved again.
+create unique index if not exists stock_deliveries_bill_part_once on stock_deliveries (lower(supplier), lower(bill_no), part) where status <> 'void';
 
 -- 3. Lots: one per flavour per bake date. A lot in the ledger with no row here counts as released (the legacy rule).
 create table if not exists stock_lots (

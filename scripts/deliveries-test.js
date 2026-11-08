@@ -472,6 +472,209 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     }
   }
 
+  // Task 8: Correct whole delivery (while on hold) and Fix lot
+  {
+    const HOUR = 3600000;
+    const STAFF2 = { actor: { email: 'other@x.com', name: 'Other' }, isOwner: false };
+    const age = (st, id, hours) => st.updateDelivery(id, { created_at: new Date(NOW - hours * HOUR).toISOString() });
+    const sumLot = (st, code, slug) => st.mv.filter((m) => m.lot_code === code && (!slug || m.item_slug === slug)).reduce((a, m) => a + m.qty, 0);
+    const four = (over) => input({ billNo: 'C' + (++n), rows: rowsOf(over || { 'atta-ajwain': { broken: 2, brokenReason: 'transit', brokenPhoto: PH } }) });
+
+    // correct a hold delivery
+    {
+      const { st, dl, inv } = fresh();
+      for (const s of SLUGS) await inv.receive({ slug: s, received: 7, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
+      const onHand = async () => (await st.byLot()).reduce((a, r) => a + r.qty, 0);
+      const base = await onHand();
+      const inp = four();
+      const r = await dl.save(inp, A);
+      ok((await onHand()) === base + 398, 'setup: 398 good boxes on hand after the save');
+      await age(st, inp.id, 1);
+      await rejects(dl.correctDelivery({ id: inp.id, reason: '  ' }, A), /^Add a reason\.$/, 'a reason is required', 400);
+      await rejects(dl.correctDelivery({ id: 'nope', reason: 'x' }, A), /^No such delivery\.$/, 'unknown delivery', 404);
+      const out = await dl.correctDelivery({ id: inp.id, reason: 'typed the wrong bake date' }, A);
+      ok((await onHand()) === base, 'the corrected boxes leave on hand');
+      for (const l of r.lots) ok(sumLot(st, l.code, l.slug) === 0, 'lot ' + l.code + ' is back to zero');
+      const rev = st.mv.filter((m) => m.type === 'REVERSAL');
+      ok(rev.length === 5 && rev.every((m) => m.reverses_id && m.note === 'typed the wrong bake date' && m.actor_email === 'staff@x.com'), 'one REVERSAL per delivery row (5), each pointing at its row, note = the reason');
+      const orig = st.mv.filter((m) => m.delivery_id === inp.id && m.type !== 'REVERSAL');
+      ok(orig.length === 5 && rev.every((m) => { const o = st.mv.find((x) => x.id === m.reverses_id); return o && o.qty === -m.qty && o.lot_code === m.lot_code && o.best_before === m.best_before && o.ref === m.ref; }), 'each reversal mirrors its row (same lot, best before, ref); the original rows are untouched');
+      eq((await st.delivery(inp.id)).status, 'void', 'delivery is void');
+      const mine = (await st.lots()).filter((l) => l.delivery_id === inp.id);
+      ok(mine.length === 4 && mine.every((l) => l.status === 'void'), 'its four lots are void');
+      ok(out.prefill && out.prefill.id === undefined && out.prefill.billNo === inp.billNo && out.prefill.rows.length === 4 && out.prefill.cartons === 10, 'prefill is the stored input without its id');
+      await rejects(dl.correctDelivery({ id: inp.id, reason: 'again' }, OWNER), /^This delivery was already corrected\.$/, 'a second correction is refused', 409);
+      eq(st.mv.filter((m) => m.type === 'REVERSAL').length, 5, 'no further reversals written');
+    }
+    // the bill and part can be saved again; the void one is ignored everywhere
+    {
+      const { dl } = fresh();
+      const a = four(); await dl.save(a, A);
+      await rejects(dl.save({ ...a, id: 'other-id' }, A), /already saved/, 'two live deliveries with one bill + part clash', 400);
+      await dl.correctDelivery({ id: a.id, reason: 'redo' }, A);
+      const again = await dl.save({ ...a, id: 'rcpt-redo', bakeDate: '2026-11-04' }, A);
+      eq(again.delivery.part, 1, 'the corrected bill + part saves again as part 1');
+      eq(again.lots.map((l) => l.code), ['MNGO-261104-01', 'MNGK-261104-01', 'MNGA-261104-01', 'MNGL-261104-01'], 'the re-save makes its own lots');
+      await dl.correctDelivery({ id: 'rcpt-redo', reason: 'redo again' }, A);
+      const r3 = await dl.save({ ...a, id: 'rcpt-same-bake', bakeDate: '2026-11-04' }, A);
+      eq(r3.lots.map((l) => l.code), ['MNGO-261104-02', 'MNGK-261104-02', 'MNGA-261104-02', 'MNGL-261104-02'], 'codes of the voided lots are not reused (-02)');
+      await rejects(dl.save({ ...a, id: 'rcpt-clash' }, A), /^Bill C\d+ part 1 is already saved \(.*\)\. Tap "Add part 2" if this is the rest\.$/, 'the clash message offers part 2 (void ones are not counted)', 400);
+      const part2 = await dl.save({ ...a, id: 'rcpt-p2', addPart: true, bakeDate: '2026-11-05' }, A);
+      eq(part2.delivery.part, 2, 'Add part gives 2 when the live one is part 1');
+      // only void ones on the bill: Add part starts again at 1
+      const { st: s2, dl: d2 } = fresh();
+      const c = four(); await d2.save(c, A); await d2.correctDelivery({ id: c.id, reason: 'x' }, A);
+      const ap = await d2.save({ ...c, id: 'rcpt-ap', addPart: true }, A);
+      eq(ap.delivery.part, 1, 'Add part with only a void delivery on the bill gives part 1');
+      await rejects(s2.saveDelivery({ d: { id: 'zz', bill_no: c.billNo, part: 1 }, lots: [], moves: [] }).catch((e) => { throw new StockError(e.message, 500); }), /stock_deliveries_bill_part_once/, 'two live deliveries still clash in the store');
+      await s2.saveDelivery({ d: { id: 'zz2', bill_no: c.billNo, part: 1, status: 'void' }, lots: [], moves: [] }).then(() => ok(true, 'a void one never clashes'), (e) => ok(false, 'void clash ' + e.message));
+    }
+    // released lots are refused, even after Hold
+    {
+      const { st, dl } = fresh();
+      const a = four(); const r = await dl.save(a, A);
+      await dl.release({ code: r.lots[1].code, tasted: true, weightG: 300 }, A);
+      await rejects(dl.correctDelivery({ id: a.id, reason: 'x' }, OWNER), /^Released lots cannot be corrected here\. Use Fix lot\.$/, 'correct after one lot was released is refused', 409);
+      eq((await st.delivery(a.id)).status, 'received', 'nothing changed');
+      eq(st.mv.filter((m) => m.type === 'REVERSAL').length, 0, 'no reversal written');
+      await dl.hold({ code: r.lots[1].code, reason: 'back on hold' }, OWNER);
+      await rejects(dl.correctDelivery({ id: a.id, reason: 'x' }, OWNER), /^Released lots cannot be corrected here\. Use Fix lot\.$/, 'back on hold but released once is still refused', 409);
+    }
+    // boxes already used
+    {
+      const { st, dl } = fresh();
+      const a = four(); const r = await dl.save(a, A);
+      await st.insert([{ item_slug: 'atta-kesari', qty: -1, type: 'SAMPLE', lot_code: r.lots[1].code, best_before: r.lots[1].bestBefore }]);
+      await rejects(dl.correctDelivery({ id: a.id, reason: 'x' }, OWNER), /^Boxes from this delivery have already been used\. Correct it with Fix lot or a count instead\.$/, 'a row from outside the delivery on its lots refuses', 409);
+      eq(st.mv.filter((m) => m.type === 'REVERSAL').length, 0, 'nothing reversed');
+      // the same code on ANOTHER flavour is a different lot
+      const f2 = fresh();
+      const b = four(); const rb = await f2.dl.save(b, A);
+      await f2.st.insert([{ item_slug: 'atta-original', qty: 5, type: 'RECEIVE', lot_code: rb.lots[1].code, best_before: '2027-01-01' }]);
+      ok(!!(await f2.dl.correctDelivery({ id: b.id, reason: 'x' }, OWNER)).prefill, 'the same code on another flavour is not this delivery\'s lot');
+    }
+    // permissions and the 24 hour rule
+    {
+      const { st, dl } = fresh();
+      const a = four(); await dl.save(a, A);
+      await age(st, a.id, 2);
+      await rejects(dl.correctDelivery({ id: a.id, reason: 'x' }, STAFF2), /^Only the person who saved this delivery, or the owner, can correct it\.$/, 'staff cannot correct someone else\'s delivery', 403);
+      eq(st.mv.filter((m) => m.type === 'REVERSAL').length, 0, 'refused staff wrote nothing');
+      await age(st, a.id, 25);
+      await rejects(dl.correctDelivery({ id: a.id, reason: 'x' }, A), /^Only the owner can correct a delivery older than a day\.$/, 'the saver at 25 hours is refused', 403);
+      ok(!!(await dl.correctDelivery({ id: a.id, reason: 'late fix' }, OWNER)).prefill, 'the owner can at 25 hours');
+      const b = four(); await dl.save(b, A); await age(st, b.id, 23.5);
+      ok(!!(await dl.correctDelivery({ id: b.id, reason: 'x' }, A)).prefill, 'the saver at 23.5 hours is allowed');
+      const c = four(); await dl.save(c, A); await age(st, c.id, 3);
+      ok(!!(await dl.correctDelivery({ id: c.id, reason: 'x' }, { actor: { email: 'STAFF@x.com' }, isOwner: false })).prefill, 'the saver is matched ignoring case');
+    }
+    // a retry after a partial failure does not double-reverse
+    {
+      const { st, dl, inv } = fresh();
+      const a = four(); const r = await dl.save(a, A);
+      const dmg = st.mv.find((m) => m.delivery_id === a.id && m.type === 'DAMAGED');
+      await inv.reverse({ id: dmg.id, reason: 'manual', actor: A.actor, isOwner: false });   // one row already reversed by hand
+      let boom = true; const flaky = { ...st, updateDelivery: async (...x) => { if (boom) { boom = false; throw new Error('db down'); } return st.updateDelivery(...x); } };
+      const dl2 = makeDeliveries(flaky, { now: () => NOW });
+      await dl2.correctDelivery({ id: a.id, reason: 'x' }, A).then(() => ok(false, 'flaky did not throw'), (e) => ok(/db down/.test(e.message), 'the first attempt fails part way'));
+      ok(r.lots.every((l) => sumLot(st, l.code, l.slug) === 0), 'the reversals were already written');
+      ok(!!(await dl2.correctDelivery({ id: a.id, reason: 'x' }, A)).prefill, 'the retry completes');
+      eq(st.mv.filter((m) => m.type === 'REVERSAL').length, 5, 'five reversals in all (the hand one counted once): no double reverse');
+      ok(r.lots.every((l) => sumLot(st, l.code, l.slug) === 0) && (await st.delivery(a.id)).status === 'void', 'every lot is at zero and the delivery is void');
+    }
+
+    // ---- Fix lot ----
+    const total = async (st) => (await st.byLot()).reduce((a, r) => a + r.qty, 0);
+    {
+      const { st, dl } = fresh();
+      const a = four(); const r = await dl.save(a, A);
+      const K = r.lots.find((l) => l.slug === 'atta-kesari').code;
+      eq(K, 'MNGK-261105-01', 'setup: Kesari lot');
+      const t0 = await total(st);
+      await rejects(dl.fixLot({ code: K, newBakeDate: '2026-11-04' }, A), /^Only the owner can fix a lot\.$/, 'staff cannot fix a lot', 403);
+      await rejects(dl.fixLot({ code: K }, OWNER), /^Enter the new code or the new bake date\.$/, 'one of the two is required', 400);
+      await rejects(dl.fixLot({ code: K, newBakeDate: '2026-02-30' }, OWNER), /real date/i, 'a made-up date is refused', 400);
+      await rejects(dl.fixLot({ code: K, newBakeDate: '2026-11-08' }, OWNER), /cannot be in the future/i, 'after today (IST) is refused', 400);
+      await rejects(dl.fixLot({ code: K, newCode: 'bad!code' }, OWNER), /lot can use/i, 'invalid code', 400);
+      await rejects(dl.fixLot({ code: K, newCode: K }, OWNER), /different from the old one/i, 'same code', 400);
+      await rejects(dl.fixLot({ code: K, newCode: 'MNGO-261105-02' }, OWNER), /different flavour/i, 'an MNG code with another flavour\'s letter', 400);
+      await rejects(dl.fixLot({ code: 'NOPE-1', newBakeDate: '2026-11-04' }, OWNER), /^No lot with that code\.$/, 'unknown lot', 404);
+      eq(st.mv.filter((m) => m.type === 'COUNT_FIX').length, 0, 'refusals wrote nothing');
+      const out = await dl.fixLot({ code: K, newBakeDate: '2026-11-04' }, OWNER);
+      eq([out.from, out.to, out.warning], [K, 'MNGK-261104-01', 'Stickers already printed carry the old code or date: reprint them.'], 'new bake date gives the next code and the warning');
+      const lot = (await st.lots()).find((l) => l.item_slug === 'atta-kesari');
+      eq([lot.lot_code, lot.bake_date, lot.best_before, lot.status, lot.delivery_id, lot.aliases], ['MNGK-261104-01', '2026-11-04', '2027-02-02', 'hold', a.id, [K]], 'the lot row: new code, bake date, best before; status kept; old code is an alias');
+      const found = await st.lotsByCode(K);
+      ok(found.length === 1 && found[0].lot_code === 'MNGK-261104-01', 'lotsByCode of the old code finds the lot');
+      eq(await total(st), t0, 'total on hand is unchanged');
+      const fx = st.mv.filter((m) => m.type === 'COUNT_FIX');
+      eq(fx.map((m) => [m.item_slug, m.lot_code, m.qty, m.best_before, m.note]), [['atta-kesari', K, -100, '2027-02-03', 'Lot fixed MNGK-261105-01 to MNGK-261104-01'], ['atta-kesari', 'MNGK-261104-01', 100, '2027-02-02', 'Lot fixed MNGK-261105-01 to MNGK-261104-01']], 'a COUNT_FIX pair, out of the old code and best before, into the new');
+      eq(sumLot(st, K, 'atta-kesari'), 0, 'the old code holds nothing now');
+      await rejects(dl.fixLot({ code: 'MNGK-261104-01', newBakeDate: '2026-11-04' }, OWNER), /same as the current/i, 'the same bake date is refused', 400);
+      // code alone: an MNG code sets the dates; a free code leaves them
+      const out3 = await dl.fixLot({ code: K, newCode: 'MNGK-261103-01' }, OWNER);
+      eq([out3.from, out3.to], ['MNGK-261104-01', 'MNGK-261103-01'], 'the old alias still opens the lot, and the fix moves it again');
+      const l3 = (await st.lots()).find((l) => l.item_slug === 'atta-kesari');
+      eq([l3.lot_code, l3.bake_date, l3.best_before, l3.aliases], ['MNGK-261103-01', '2026-11-03', '2027-02-01', [K, 'MNGK-261104-01']], 'an MNG code sets the bake date and best before; both old codes are aliases');
+      const out4 = await dl.fixLot({ code: 'MNGK-261103-01', newCode: 'KESARI-A' }, OWNER);
+      const l4 = (await st.lots()).find((l) => l.item_slug === 'atta-kesari');
+      eq([out4.to, l4.lot_code, l4.bake_date, l4.best_before], ['KESARI-A', 'KESARI-A', '2026-11-03', '2027-02-01'], 'a free code leaves the dates alone');
+      eq(await total(st), t0, 'total on hand still unchanged');
+      eq(st.mv.filter((m) => m.type === 'COUNT_FIX').length, 6, 'three fixes, three pairs');
+    }
+    // renamed to its own alias: no duplicate; two best-before groups move in two pairs
+    {
+      const { st, dl, inv } = fresh();
+      await st.insertLots([{ item_slug: 'atta-original', lot_code: '27OCT26', aliases: ['MNGO-261027-01'], bake_date: '2026-10-27', best_before: '2027-01-25', status: 'released' },
+        { item_slug: 'atta-kesari', lot_code: '27OCT26', aliases: ['MNGK-261027-01'], bake_date: '2026-10-27', best_before: '2027-01-25', status: 'released' }]);
+      await inv.receive({ slug: 'atta-original', received: 30, lot: '27OCT26', bestBefore: '2027-01-25', actor: A.actor });
+      await inv.receive({ slug: 'atta-original', received: 5, lot: '27OCT26', bestBefore: '2027-01-26', actor: A.actor });
+      await inv.receive({ slug: 'atta-kesari', received: 9, lot: '27OCT26', bestBefore: '2027-01-25', actor: A.actor });
+      const t0 = await total(st);
+      await rejects(dl.fixLot({ code: '27OCT26', newCode: 'MNGO-261027-01' }, OWNER), /choose/i, 'a shared legacy code needs the flavour (R5)', 409);
+      const out = await dl.fixLot({ code: '27OCT26', slug: 'atta-original', newCode: 'MNGO-261027-01' }, OWNER);
+      eq(out.to, 'MNGO-261027-01', 'renamed to its own alias');
+      const lo = (await st.lots()).find((l) => l.item_slug === 'atta-original');
+      eq([lo.lot_code, lo.aliases, lo.bake_date, lo.best_before], ['MNGO-261027-01', ['27OCT26'], '2026-10-27', '2027-01-25'], 'aliases are exactly [27OCT26]: the new code is not its own alias');
+      eq((await st.lots()).find((l) => l.item_slug === 'atta-kesari').lot_code, '27OCT26', 'the other flavour is untouched');
+      eq(st.mv.filter((m) => m.type === 'COUNT_FIX' && m.lot_code === 'MNGO-261027-01').map((m) => [m.qty, m.best_before]), [[30, '2027-01-25'], [5, '2027-01-25']], 'dates came from the code (27 Oct + 90): both groups land on the new best before');
+      eq(sumLot(st, '27OCT26', 'atta-original'), 0, 'old code is empty for Original');
+      eq(await total(st), t0, 'total unchanged');
+    }
+    // refusals on a code another lot uses
+    {
+      const { st, dl, inv } = fresh();
+      await st.insertLots([{ item_slug: 'atta-original', lot_code: 'LOT-A', aliases: ['OLDA'], bake_date: '2026-10-01', best_before: '2026-12-30', status: 'released' }, { item_slug: 'atta-original', lot_code: 'LOT-B', bake_date: '2026-10-02', best_before: '2026-12-31', status: 'released' },
+        { item_slug: 'atta-kesari', lot_code: 'LOT-K', status: 'released' }]);
+      await inv.receive({ slug: 'atta-original', received: 4, lot: 'LOT-B', bestBefore: '2026-12-31', actor: A.actor });
+      await inv.receive({ slug: 'atta-original', received: 3, lot: 'LEDGERONLY', bestBefore: '2026-12-31', actor: A.actor });
+      await inv.receive({ slug: 'atta-original', received: 6, lot: 'LOT-A', bestBefore: '2026-12-30', actor: A.actor });
+      const msg = /^That code is already used by another lot\.$/;
+      await rejects(dl.fixLot({ code: 'LOT-A', newCode: 'LOT-B' }, OWNER), msg, 'a code another lot uses', 400);
+      await rejects(dl.fixLot({ code: 'LOT-A', newCode: 'LEDGERONLY' }, OWNER), msg, 'a ledger-only lot\'s code', 400);
+      await st.updateLot('atta-original', 'LOT-B', { aliases: ['OLDB'] });
+      await rejects(dl.fixLot({ code: 'LOT-A', newCode: 'OLDB' }, OWNER), msg, 'another lot\'s alias', 400);
+      eq(st.mv.filter((m) => m.type === 'COUNT_FIX').length, 0, 'nothing written for refused fixes');
+      eq((await dl.fixLot({ code: 'LOT-A', newCode: 'LOT-K' }, OWNER)).to, 'LOT-K', 'the same code on another flavour is allowed');
+      await dl.fixLot({ code: 'LOT-K', slug: 'atta-original', newCode: 'OLDA' }, OWNER);
+      eq((await st.lots()).find((l) => l.item_slug === 'atta-original' && l.lot_code === 'OLDA').aliases, ['LOT-A', 'LOT-K'], 'a lot may take back its own old alias (OLDA leaves the list)');
+    }
+    // a ledger-only lot: the row is created, then fixed
+    {
+      const { st, dl, inv } = fresh();
+      await inv.receive({ slug: 'atta-ajwain', received: 20, lot: 'MNGA-261101-01', bestBefore: '2027-01-30', actor: A.actor });
+      const out = await dl.fixLot({ code: 'MNGA-261101-01', newBakeDate: '2026-11-02' }, OWNER);
+      eq(out.to, 'MNGA-261102-01', 'ledger-only lot fixed by date');
+      const lot = (await st.lots())[0];
+      eq([lot.lot_code, lot.bake_date, lot.best_before, lot.status, lot.aliases], ['MNGA-261102-01', '2026-11-02', '2027-01-31', 'released', ['MNGA-261101-01']], 'the row was made, then fixed');
+      eq(st.mv.filter((m) => m.type === 'COUNT_FIX').map((m) => [m.lot_code, m.qty, m.best_before]), [['MNGA-261101-01', -20, '2027-01-30'], ['MNGA-261102-01', 20, '2027-01-31']], 'pair moved the ledger stock');
+      await inv.receive({ slug: 'atta-ajwain', received: 4, lot: 'MNGA-261103-01', bestBefore: '2027-02-01', actor: A.actor });
+      await inv.receive({ slug: 'atta-ajwain', received: 4, lot: 'MNGA-261110-01', bestBefore: '2027-02-08', actor: A.actor });
+      const o2 = await dl.fixLot({ code: 'MNGA-261110-01', newBakeDate: '2026-11-03' }, OWNER);
+      eq(o2.to, 'MNGA-261103-02', 'the next number looks at the ledger as well as the lots');
+    }
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

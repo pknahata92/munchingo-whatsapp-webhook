@@ -57,7 +57,7 @@ function memStore(trackingFrom) {
     setSetting: (k, v) => { settings[k] = v; },   // tests only (e.g. lots_from); the real store has no such call
     // batch receiving
     lots: async () => lots.slice(), lotsByCode: async (code) => lots.filter((l) => l.lot_code === code || (l.aliases || []).includes(code)),
-    updateLot: async (slug, code, fields) => { const l = lots.find((x) => x.item_slug === slug && x.lot_code === code); if (l) Object.assign(l, fields); },
+    updateLot: async (slug, code, fields) => { const l = lots.find((x) => x.item_slug === slug && x.lot_code === code); if (l) Object.assign(l, fields); },   // fields may include lot_code (Fix lot): the row's key moves with it
     insertLots: async (rows) => { checkLots(rows); rows.forEach((r) => lots.push(lotRow(r, r.delivery_id))); },
     delivery: async (i) => deliveries.find((d) => d.id === i) || null,
     deliveriesByBill: async (supplier, billNo) => deliveries.filter((d) => String(d.supplier).toLowerCase() === String(supplier).toLowerCase() && String(d.bill_no).toLowerCase() === String(billNo).toLowerCase()),
@@ -78,7 +78,7 @@ function memStore(trackingFrom) {
       const row = { supplier: 'Krazy Bakers', part: 1, bilty: null, arrived_on: null, cartons: null, invoice_paise: null, gst_paise: null, billed_kg: null, freight: {}, photos: [], note: null, status: 'received', saved_by_email: null, saved_by_name: null, input: null, result: null, created_at: new Date().toISOString(), ...d };
       row.supplier = d.supplier ?? 'Krazy Bakers'; row.part = d.part ?? 1; row.status = d.status ?? 'received'; row.freight = d.freight ?? {}; row.photos = d.photos ?? [];   // like the SQL coalesce
       if (!['received', 'void'].includes(row.status)) throw new Error('new row for relation "stock_deliveries" violates check constraint "stock_deliveries_status_check"');
-      if (deliveries.some((x) => billKey(x) === billKey(row))) throw new Error('duplicate key value violates unique constraint "stock_deliveries_bill_part_once"');
+      if (row.status !== 'void' && deliveries.some((x) => x.status !== 'void' && billKey(x) === billKey(row))) throw new Error('duplicate key value violates unique constraint "stock_deliveries_bill_part_once"');
       checkLots(newLots);
       const moveRows = moves.map((m) => ({ ...m, delivery_id: m.delivery_id ?? d.id }));
       checkRows(moveRows);
