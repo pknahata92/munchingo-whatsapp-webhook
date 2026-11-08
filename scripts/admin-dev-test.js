@@ -4,24 +4,26 @@
 // another test may have stopped or left in a different state)
 const fs = require('fs'), path = require('path');
 const { spawn, execSync } = require('child_process');
-const B = 'http://localhost:8430/admin/api';
+const PORT = Number(process.env.ADMIN_DEV_PORT) || 8430;
+const CODE_BASE = PORT === 8430 ? '/tmp/admin-dev-code' : '/tmp/admin-dev-code-' + PORT;
+const B = 'http://localhost:' + PORT + '/admin/api';
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
 const call = async (p, tok, body, method) => { const r = await fetch(B + p, { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) }, body: body ? JSON.stringify(body) : undefined }); return { s: r.status, j: await r.json().catch(() => ({})) }; };
 async function login(email) {
   await call('/login', null, { email });
   await new Promise((r) => setTimeout(r, 200));
-  const code = fs.readFileSync('/tmp/admin-dev-code-' + email.split('@')[0] + '.txt', 'utf8');
+  const code = fs.readFileSync(CODE_BASE + '-' + email.split('@')[0] + '.txt', 'utf8');
   const v = await call('/verify', null, { email, code });
   return v.j;
 }
 (async () => {
-  try { execSync('pkill -f scripts/admin-dev.js', { stdio: 'ignore' }); await new Promise((r) => setTimeout(r, 400)); } catch (e) { /* none running */ }
+  try { if (PORT === 8430) execSync('pkill -f scripts/admin-dev.js', { stdio: 'ignore' }); await new Promise((r) => setTimeout(r, 400)); } catch (e) { /* none running */ }
   const env = { ...process.env }; delete env.SHIPPED_WA_ENABLED;
   const dev = spawn(process.execPath, [path.join(__dirname, 'admin-dev.js')], { stdio: 'ignore', env });
   const stop = () => { try { dev.kill(); } catch (e) { /* already gone */ } };
   process.on('exit', stop);
-  for (let i = 0; i < 100; i++) { try { if ((await fetch('http://localhost:8430/admin')).ok) break; } catch (e) { /* not up yet */ } await new Promise((r) => setTimeout(r, 100)); }
+  for (let i = 0; i < 100; i++) { try { if ((await fetch('http://localhost:' + PORT + '/admin')).ok) break; } catch (e) { /* not up yet */ } await new Promise((r) => setTimeout(r, 100)); }
   const o = await login('owner@example.com'), s = await login('staff@example.com');
   ok(o.role === 'owner' && s.role === 'staff', 'roles at login');
   const bad = await call('/login', null, { email: 'nobody@example.com' }); ok(bad.j.ok, 'login answer does not leak');
@@ -157,11 +159,11 @@ async function login(email) {
   ok((await cp('/NOPE', o.token, { active: false })).s === 404, 'unknown code on update');
   ok((await cp('/FOUNDING10/delete', o.token, {})).s === 409, 'a used code cannot be deleted');
   ok((await cp('/FRIEND-HERA/delete', o.token, {})).j.ok && !(await cp('', o.token)).j.coupons.some((c) => c.code === 'FRIEND-HERA'), 'an unused code can be deleted');
-  await fetch('http://localhost:8430/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: false }) });
+  await fetch('http://localhost:' + PORT + '/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: false }) });
   ok((await cp('', o.token, { code: 'WITHNOTE', type: 'flat', value: 10, note: 'x' })).s === 409, 'notes need the migration: clear message when it has not run');
   ok((await cp('', o.token, { code: 'PLAIN', type: 'flat', value: 10 })).j.ok, 'plain codes still work without the migration');
   ok(!(await cp('', o.token)).j.ready, 'list reports the migration as missing');
-  await fetch('http://localhost:8430/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: true }) });
+  await fetch('http://localhost:' + PORT + '/dev/couponcols', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ready: true }) });
 
   // ── delivery methods on the ship step: hand, Porter, other courier ──
   for (const id of ['MNG-HAND-1012', 'MNG-PORT-1012', 'MNG-OTHR-1012']) await call(`/orders/${id}/advance`, s.token, { to: 'packed' });
@@ -227,7 +229,7 @@ async function login(email) {
   ok((await call('/reviews', o.token)).j.reviews.find((r) => r.id === 1).founding_taster === false, 'and their review loses the founding taster label');
 
   // ── Meta and Google follow the admin (fake catalogues in admin-dev.js: both keys set, Google set up, all four in stock, both off) ──
-  const devCh = async (b) => (await fetch('http://localhost:8430/dev/channels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
+  const devCh = async (b) => (await fetch('http://localhost:' + PORT + '/dev/channels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
   const chans = async (tok) => { const c = (await call('/channels', tok)).j.channels || {}; return { meta: c.meta || {}, google: c.google || {} }; };
   const setMode = (tok, b) => call('/channels/mode', tok, b);
   const sc = await call('/channels', s.token);

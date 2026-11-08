@@ -2,10 +2,13 @@
 /**
  * Practice copy of the admin page running on FAKE orders (no database, no email, no Razorpay).
  *   node scripts/admin-dev.js          -> http://localhost:8430/admin   (login code is printed here and saved to /tmp/admin-dev-code.txt)
+ *   ADMIN_DEV_PORT=8437 node scripts/admin-dev.js   -> another port; code files /tmp/admin-dev-code-8437.txt and -8437-<user>.txt
  */
 const path = require('path');
 const fs = require('fs');
 const root = path.join(__dirname, '..');
+const PORT = Number(process.env.ADMIN_DEV_PORT) || 8430;   // other sessions can run theirs on another port
+const CODE_BASE = PORT === 8430 ? '/tmp/admin-dev-code' : '/tmp/admin-dev-code-' + PORT;
 process.env.ADMIN_EMAILS = 'owner@example.com';
 const team = [{ email: 'staff@example.com', name: 'Staff', role: 'staff', active: true, created_at: new Date().toISOString() }];
 const events = [];
@@ -122,7 +125,7 @@ stub('utils/database.js', {
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
 stub('utils/mailer.js', {
-  sendAdminCode: async (email, code) => { fs.writeFileSync('/tmp/admin-dev-code-' + email.split('@')[0] + '.txt', code); fs.writeFileSync('/tmp/admin-dev-code.txt', code); console.log('[dev] login code for', email, '=', code); },
+  sendAdminCode: async (email, code) => { fs.writeFileSync(CODE_BASE + '-' + email.split('@')[0] + '.txt', code); fs.writeFileSync(CODE_BASE + '.txt', code); console.log('[dev] login code for', email, '=', code); },
   sendShippedEmail: async ({ order }) => console.log('[dev] shipped email ->', order.customer_email),
   sendPackedEmail: async ({ order }) => console.log('[dev] packed email ->', order.customer_email),
   sendDeliveredEmail: async ({ order }) => console.log('[dev] delivered email ->', order.customer_email),
@@ -140,7 +143,7 @@ stub('utils/razorpay.js', {
 });
 const express = require('express');
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.post('/dev/track', (req, res) => { global.__trackStatus = (req.body && req.body.status) || 'Manifested'; res.json({ ok: true }); });   // practice copy only: what the stand-in Delhivery tracking says
 app.post('/dev/sweep', async (req, res) => res.json(await require('../utils/orderUpdates').sweepOnce()));
 app.post('/dev/couponcols', (req, res) => { global.__couponCols = !!(req.body && req.body.ready); res.json({ ok: true }); });   // practice copy only: pretend the coupons migration has / has not run
@@ -230,4 +233,4 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
   real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: '2027-01-13', note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
   inv.instance = () => real;
 }
-app.listen(8430, () => console.log('Admin practice copy: http://localhost:8430/admin'));
+app.listen(PORT, () => console.log('Admin practice copy: http://localhost:' + PORT + '/admin'));

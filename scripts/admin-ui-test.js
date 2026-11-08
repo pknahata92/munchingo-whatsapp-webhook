@@ -10,8 +10,11 @@ const fs = require('fs'); const path = require('path');
 let JSDOM, VirtualConsole;
 try { ({ JSDOM, VirtualConsole } = require('jsdom')); } catch (e) { console.log('jsdom is not installed: run  npm install --no-save jsdom@24'); process.exit(2); }
 
-const BASE = 'http://localhost:8430';
-const CODE_FILE = '/tmp/admin-dev-code.txt';
+const PORT = Number(process.env.ADMIN_DEV_PORT) || 8430;
+const CODE_BASE = PORT === 8430 ? '/tmp/admin-dev-code' : '/tmp/admin-dev-code-' + PORT;
+const killOld = () => { if (PORT === 8430) require('child_process').execSync('pkill -f scripts/admin-dev.js', { stdio: 'ignore' }); };
+const BASE = 'http://localhost:' + PORT;
+const CODE_FILE = CODE_BASE + '.txt';
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -54,7 +57,7 @@ async function openAdmin(role, { width = 390, guide = false } = {}) {
 }
 
 async function main() {
-  try { require('child_process').execSync('pkill -f scripts/admin-dev.js', { stdio: 'ignore' }); await sleep(400); } catch (e) { /* none running */ }
+  try { killOld(); await sleep(400); } catch (e) { /* none running */ }
   const dev = spawn(process.execPath, [path.join(__dirname, 'admin-dev.js')], { stdio: 'ignore' });
   const stop = () => { try { dev.kill(); } catch (e) { /* already gone */ } };
   process.on('exit', stop); process.on('uncaughtException', (e) => { console.error(e); stop(); process.exit(1); });
