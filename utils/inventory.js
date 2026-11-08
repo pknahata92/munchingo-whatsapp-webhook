@@ -517,4 +517,4 @@ function supabaseStore() {
 let real = null;
 const instance = () => real || (real = makeInventory(supabaseStore()));
 
-module.exports = { makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, lotContext, committedBoxes, firstShortage, instance };
+module.exports = { MAX_QTY, makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, lotContext, committedBoxes, firstShortage, instance };
