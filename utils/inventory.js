@@ -398,7 +398,15 @@ function makeInventory(store) {
 // ── Real storage (Supabase) ───────────────────────────────────────────────────
 function supabaseStore() {
   const c = () => require('./database').client();
-  const ok = ({ data, error }) => { if (error) throw new Error(error.code === '42P01' || /does not exist|schema cache/.test(error.message) ? (/party|stock_totals/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : 'Run stock_ledger_migration.sql in Supabase first.') : (/stock_movements_type_check/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : error.message)); return data; };
+  const ok = ({ data, error }) => {
+    if (error) {
+      const missing = error.code === '42P01' || /does not exist|schema cache/.test(error.message);
+      if (missing && /stock_lots|stock_deliveries|stock_save_delivery|delivery_id/.test(error.message)) throw new Error('Run batch_receiving_migration.sql in Supabase first.');   // not the bill-once clash: that is a 23505, not a missing table
+      throw new Error(missing ? (/party|stock_totals/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : 'Run stock_ledger_migration.sql in Supabase first.') : (/stock_movements_type_check/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : error.message));
+    }
+    return data;
+  };
+  const like = (v) => String(v).replace(/[\\%_]/g, '\\$&');   // exact, case-insensitive match through ilike
   return {
     items: async () => ok(await c().from('stock_items').select('*')) || [],
     item: async (slug) => ok(await c().from('stock_items').select('*').eq('slug', slug).maybeSingle()) || null,
@@ -425,6 +433,22 @@ function supabaseStore() {
     events: async () => ok(await c().from('stock_events').select('*')) || [],
     eventRows: async (ref, slug) => ok(await c().from('stock_movements').select('*').eq('ref', ref).eq('item_slug', slug).in('type', ['EXHIBITION', 'EXHIBITION_RETURN'])) || [],
     salesOf: async (orderId) => ok(await c().from('stock_movements').select('*').like('ref', `${orderId}@%`).in('type', ['SALE', 'SALE_UNDO'])) || [],
+    // batch receiving (see batch_receiving_migration.sql)
+    settingsAll: async () => Object.fromEntries((ok(await c().from('stock_settings').select('key, value')) || []).map((r) => [r.key, r.value])),
+    lots: async () => ok(await c().from('stock_lots').select('*')) || [],
+    lotsByCode: async (code) => {
+      const [a, b] = [ok(await c().from('stock_lots').select('*').eq('lot_code', code)) || [], ok(await c().from('stock_lots').select('*').contains('aliases', [code])) || []];
+      return a.concat(b.filter((x) => !a.some((y) => y.item_slug === x.item_slug && y.lot_code === x.lot_code)));
+    },
+    updateLot: async (slug, code, fields) => { ok(await c().from('stock_lots').update(fields).eq('item_slug', slug).eq('lot_code', code)); },
+    insertLots: async (rows) => { ok(await c().from('stock_lots').insert(rows)); },
+    delivery: async (id) => ok(await c().from('stock_deliveries').select('*').eq('id', id).maybeSingle()) || null,
+    deliveriesByBill: async (supplier, billNo) => ok(await c().from('stock_deliveries').select('*').ilike('supplier', like(supplier)).ilike('bill_no', like(billNo))) || [],
+    lastDelivery: async () => ok(await c().from('stock_deliveries').select('*').neq('status', 'void').order('created_at', { ascending: false }).limit(1).maybeSingle()) || null,
+    updateDelivery: async (id, fields) => { ok(await c().from('stock_deliveries').update(fields).eq('id', id)); },
+    movementsByLots: async (codes) => (codes.length ? ok(await c().from('stock_movements').select('*').in('lot_code', codes)) || [] : []),
+    movementsByDelivery: async (id) => ok(await c().from('stock_movements').select('*').eq('delivery_id', id)) || [],
+    saveDelivery: async ({ d, lots, moves }) => ok(await c().rpc('stock_save_delivery', { d, lots, moves })),
   };
 }
 

@@ -225,11 +225,68 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     // the in-memory store refuses types the database refuses, and both lists match the latest migration
     let threw = false; try { await st3.insert([{ item_slug: 'atta-kesari', qty: -1, type: 'BOGUS' }]); } catch (e) { threw = /check constraint/.test(e.message); }
     ok(threw, 'the test store enforces the database type list');
-    const sql = require('fs').readFileSync(require('path').join(__dirname, '..', 'stock_event_sale_migration.sql'), 'utf8');
+    const sql = require('fs').readFileSync(require('path').join(__dirname, '..', 'batch_receiving_migration.sql'), 'utf8');
     const list = (sql.match(/check \(type in\s*\(([^)]*)\)\)/) || [])[1] || '';
     const dbTypes = list.split(',').map((x) => x.trim().replace(/'/g, '')).filter(Boolean).sort();
-    ok(dbTypes.includes('EVENT_SALE') && JSON.stringify(dbTypes) === JSON.stringify([...require('./inventory-memstore').TYPES].sort()), 'migration type list = test store type list (' + dbTypes.join(',') + ')');
-    for (const t of ['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL']) ok(dbTypes.includes(t), 'the migration keeps every existing type: ' + t);
+    ok(dbTypes.length === 17 && dbTypes.includes('EVENT_SALE') && JSON.stringify(dbTypes) === JSON.stringify([...require('./inventory-memstore').TYPES].sort()), 'migration type list = test store type list (' + dbTypes.join(',') + ')');
+    for (const t of ['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL', 'SUPPLIER_RETURN', 'EXPIRED', 'REPLACEMENT']) ok(dbTypes.includes(t), 'the migration lists the type: ' + t);
+
+    // batch receiving: the in-memory mirror of the new tables and the atomic save
+    const sb = memStore('2026-10-16T00:00:00.000Z');
+    const sets = {}; for (const m of sql.matchAll(/\(\s*'(shelf_days|ship_floor_days|dispatch_days|old_bake_days|sticker_flags)'\s*,\s*'([^']*)'\s*\)/g)) sets[m[1]] = m[2];
+    const got = await sb.settingsAll();
+    ok(Object.keys(sets).length === 5 && Object.keys(sets).every((k) => got[k] === sets[k]), 'memstore setting defaults equal the migration (' + JSON.stringify(sets) + ')');
+    ok(got.tracking_from === '2026-10-16T00:00:00.000Z' && await sb.setting('tracking_from') === '2026-10-16T00:00:00.000Z' && typeof got.lots_from === 'string', 'tracking_from and lots_from stay readable as settings');
+    for (const slug of ['mono-original', 'mono-kesari', 'mono-ajwain', 'mono-lite-sugar', 'label-stamp']) ok((await sb.item(slug)) && (await sb.item(slug)).kind === 'packaging', 'memstore has the packaging item ' + slug);
+    const D = (id, bill, part = 1) => ({ id, supplier: 'Krazy Bakers', bill_no: bill, part, arrived_on: '2026-11-05', cartons: 4, status: 'received', result: { id, saved: true } });
+    const L = (code, slug, extra = {}) => ({ item_slug: slug, lot_code: code, delivery_id: 'D1', bake_date: '2026-11-05', best_before: '2027-02-03', status: 'hold', aliases: [], ...extra });
+    const M = (type, qty, extra = {}) => ({ item_slug: 'atta-original', qty, type, lot_code: 'MNGO-261105-01', delivery_id: 'D1', ...extra });
+    const nb = sb.mv.length;
+    let bad = null; try { await sb.saveDelivery({ d: D('D1', 'A000269'), lots: [L('MNGO-261105-01', 'atta-original')], moves: [M('RECEIVE', 10), M('DAMAGED', -1, { reason: 'transit' }), M('NOPE', -1)] }); } catch (e) { bad = e; }
+    ok(bad && /check constraint/.test(bad.message) && sb.mv.length === nb && (await sb.lots()).length === 0 && (await sb.delivery('D1')) === null, 'a bad third movement throws and writes no delivery, lot or movement');
+    const saved = await sb.saveDelivery({ d: D('D1', 'A000269'), lots: [L('MNGO-261105-01', 'atta-original'), L('MNGK-261105-01', 'atta-kesari', { aliases: ['15OCT26'] })], moves: [M('RECEIVE', 10), M('DAMAGED', -1, { reason: 'transit' })] });
+    ok(saved.id === 'D1' && !saved.again && sb.mv.length === nb + 2 && (await sb.lots()).length === 2 && sb.mv.slice(-2).every((m) => m.delivery_id === 'D1'), 'a good save writes the delivery, both lots and both movements');
+    const again = await sb.saveDelivery({ d: D('D1', 'A000269'), lots: [L('MNGO-261105-02', 'atta-original')], moves: [M('RECEIVE', 99)] });
+    ok(again.again === true && again.saved === true && sb.mv.length === nb + 2 && (await sb.lots()).length === 2, 'the same receipt ID again returns the first result with again:true and writes nothing');
+    let dupErr = null; try { await sb.saveDelivery({ d: D('D2', 'a000269'), lots: [], moves: [] }); } catch (e) { dupErr = e; }
+    ok(dupErr && /stock_deliveries_bill_part_once/.test(dupErr.message) && (await sb.delivery('D2')) === null, 'the same bill and part under a new ID throws the bill-once error and writes nothing');
+    await sb.saveDelivery({ d: D('D3', 'A000269', 2), lots: [], moves: [] });
+    ok((await sb.deliveriesByBill('KRAZY BAKERS', 'a000269')).length === 2, 'deliveriesByBill ignores case on supplier and bill (two parts)');
+    ok((await sb.lastDelivery()).id === 'D3', 'lastDelivery is the newest delivery');
+    await sb.updateDelivery('D3', { status: 'void' });
+    ok((await sb.lastDelivery()).id === 'D1', 'lastDelivery skips void deliveries');
+    ok((await sb.lotsByCode('MNGO-261105-01')).length === 1 && (await sb.lotsByCode('15OCT26')).map((l) => l.item_slug).join() === 'atta-kesari' && (await sb.lotsByCode('15oct26')).length === 0, 'lotsByCode matches the code or an alias exactly');
+    await sb.updateLot('atta-original', 'MNGO-261105-01', { status: 'released', check_weight_g: 241 });
+    ok((await sb.lots()).find((l) => l.item_slug === 'atta-original').status === 'released', 'updateLot changes one lot');
+    await sb.insertLots([L('MNGO-261106-01', 'atta-original')]);
+    let dupLot = null; try { await sb.insertLots([L('MNGO-261106-01', 'atta-original')]); } catch (e) { dupLot = e; }
+    ok(dupLot && (await sb.lots()).length === 3, 'a lot (flavour + code) cannot be added twice');
+    ok((await sb.movementsByLots(['MNGO-261105-01'])).length === 2 && (await sb.movementsByDelivery('D1')).length === 2 && (await sb.movementsByDelivery('nope')).length === 0, 'movements can be read by lot code and by delivery');
+    let atomicFail = null; try { await sb.saveDelivery({ d: D('D4', 'B1'), lots: [L('MNGO-261106-01', 'atta-original')], moves: [M('RECEIVE', 1)] }); } catch (e) { atomicFail = e; }
+    ok(atomicFail && (await sb.delivery('D4')) === null && sb.mv.length === nb + 2, 'a lot clash rolls back the delivery and the movements too');
+
+    // the real store: every new method calls the right table or function, and a missing migration reads as a plain instruction
+    const dbPath = require.resolve('../utils/database'); const calls = []; let reply = { data: [], error: null };
+    const q = (t) => { const o = { t, ops: [] }; const chain = new Proxy(o, { get: (target, k) => (k === 'then' ? (res) => { calls.push(target); res(reply); } : (...a) => { target.ops.push([k, ...a]); return chain; }) }); return chain; };
+    require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { client: () => ({ from: (t) => q(t), rpc: async (fn, args) => { calls.push({ rpc: fn, args }); return reply; } }) } };
+    const real = require('../utils/inventory').supabaseStore();
+    reply = { data: { id: 'D1' }, error: null };
+    ok((await real.saveDelivery({ d: { id: 'D1' }, lots: [], moves: [] })).id === 'D1' && calls[calls.length - 1].rpc === 'stock_save_delivery' && Object.keys(calls[calls.length - 1].args).join() === 'd,lots,moves', 'saveDelivery calls the stock_save_delivery function');
+    reply = { data: [], error: null };
+    await real.lots(); await real.lotsByCode('X'); await real.deliveriesByBill('Krazy Bakers', 'A_1%'); await real.lastDelivery(); await real.movementsByLots(['X']); await real.movementsByDelivery('D1'); await real.settingsAll();
+    ok(['stock_lots', 'stock_lots', 'stock_lots', 'stock_deliveries', 'stock_deliveries', 'stock_movements', 'stock_movements', 'stock_settings'].join() === calls.slice(-8).map((c) => c.t).join(), 'the real store reads the new tables');
+    const bill = calls.slice(-8)[3]; ok(bill.ops.some((o) => o[0] === 'ilike' && o[1] === 'bill_no' && o[2] === 'A\\_1\\%'), 'bill number match is exact (wildcards escaped)');
+    for (const [msg, code] of [['relation "public.stock_lots" does not exist', '42P01'], ["Could not find the function public.stock_save_delivery(d, lots, moves) in the schema cache", 'PGRST202'], ['column stock_movements.delivery_id does not exist', '42703']]) {
+      reply = { data: null, error: { code, message: msg } };
+      let e = null; try { await real.lots(); } catch (x) { e = x; }
+      ok(e && e.message === 'Run batch_receiving_migration.sql in Supabase first.', 'missing migration is explained: ' + msg);
+    }
+    reply = { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "stock_deliveries_bill_part_once"' } };
+    let dupE = null; try { await real.saveDelivery({ d: {}, lots: [], moves: [] }); } catch (x) { dupE = x; }
+    ok(dupE && /stock_deliveries_bill_part_once/.test(dupE.message), 'the bill-once clash passes through (not mistaken for a missing migration)');
+    reply = { data: null, error: { code: '42P01', message: 'relation "stock_items" does not exist' } };
+    let oldE = null; try { await real.items(); } catch (x) { oldE = x; }
+    ok(oldE && oldE.message === 'Run stock_ledger_migration.sql in Supabase first.', 'the old ledger message still works');
   }
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
