@@ -894,5 +894,40 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     }
   }
 
+  // Final review I1: the code pushed before batch_receiving_migration.sql is run. The lot table (and maybe the settings) cannot be read:
+  // the website keeps its stock limits exactly as before lots, the Stock screen, take-outs and count-downs still work, and the log says
+  // once what to run. Any other failure still throws.
+  {
+    const MIGRATE = 'Run batch_receiving_migration.sql in Supabase first.';
+    const st = memStore('2026-10-16T00:00:00.000Z'); const inv = makeInventory(st);
+    await inv.receive({ slug: 'atta-kesari', received: 40, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+    await inv.receive({ slug: 'atta-original', received: 12, lot: '27OCT26', bestBefore: '2027-01-25', actor: A });
+    await st.insert([{ item_slug: 'atta-ajwain', qty: 5, type: 'RECEIVE', lot_code: null }]);
+    st.committedMap = { 'atta-kesari': 3 };
+    const preBranch = computeSellable(await st.items(), await st.byLot(), await st.committed());   // no lot context: every box counts
+    st.lots = async () => { throw new Error(MIGRATE); };
+    const logged = []; const err0 = console.error; console.error = (...a) => { logged.push(a.join(' ')); };
+    let got = null, ov = null, tk = null, cd = null;
+    try {
+      got = await inv.sellable().catch((e) => e);
+      ov = await inv.overview().catch((e) => e);
+      tk = await inv.take({ slug: 'atta-kesari', qty: 2, type: 'SAMPLE', actor: A }).catch((e) => e);
+      cd = await inv.count({ slug: 'atta-original', counted: 10, note: 'two broken', actor: A }).catch((e) => e);
+      st.settingsAll = async () => { throw new Error(MIGRATE); };
+      await inv.sellable().catch(() => {});
+      var ov2 = await inv.overview().catch((e) => e), got2 = await inv.sellable().catch((e) => e);
+    } finally { console.error = err0; }
+    ok(ov2 && !(ov2 instanceof Error) && JSON.stringify(got2) === JSON.stringify(computeSellable(await st.items(), await st.byLot(), await st.committed())), 'I1: with the settings missing too, the Stock screen and the website count still work (' + (ov2 instanceof Error ? ov2.message : JSON.stringify(got2)) + ')');
+    eq(got, preBranch, 'I1: with the lot table missing, sellable() equals the pre-branch computeSellable');
+    ok(ov && !(ov instanceof Error) && ov.items.find((i) => i.slug === 'atta-kesari').on_hand === 40, 'I1: the Stock screen (overview) still works (' + (ov instanceof Error ? ov.message : 'ok') + ')');
+    ok(tk && !(tk instanceof Error) && tk.onHand === 38, 'I1: a take-out still works (' + (tk instanceof Error ? tk.message : JSON.stringify(tk)) + ')');
+    ok(cd && !(cd instanceof Error) && cd.onHand === 10 && cd.diff === -2, 'I1: a count-down still works (' + (cd instanceof Error ? cd.message : JSON.stringify(cd)) + ')');
+    eq(logged.filter((l) => l === '[STOCK] batch receiving tables missing: run batch_receiving_migration.sql').length, 1, 'I1: one log line says what to run (' + JSON.stringify(logged) + ')');
+    const st2 = memStore('2026-10-16T00:00:00.000Z'); const inv2 = makeInventory(st2);
+    st2.lots = async () => { throw new Error('db down'); };
+    const other = await inv2.sellable().then(() => null, (e) => e);
+    ok(other && other.message === 'db down', 'I1: any other failure still throws (the last known answer is kept by utils/stock.js) (' + (other && other.message) + ')');
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

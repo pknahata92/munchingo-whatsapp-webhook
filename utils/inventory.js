@@ -44,8 +44,18 @@ function allocate(lots, qty) {
 // What the stock_lots table and the settings say, read once per question. `meta` is keyed 'slug|code' (codes are case-sensitive) and covers
 // every code of a lot, its aliases too (final review C2), so boxes booked under an old or sticker code are held, released and dated with
 // the lot. An alias another row of the flavour owns as its own code belongs to that row (lots.lotIndex).
+// Final review I1: the code pushed before batch_receiving_migration.sql is run. A missing lot table (or settings) reads as no lot rows
+// and the default settings, so every ledger lot is legacy (released) exactly as before lots, and the website keeps its stock limits.
+// Said once in the log. Any other failure still throws (utils/stock.js then keeps the last known answer).
+const MIGRATION_MISSING = /Run batch_receiving_migration\.sql/;
+let warnedMissing = false;
+const orMissing = (p, empty) => p.catch((e) => {
+  if (!MIGRATION_MISSING.test(String(e && e.message))) throw e;
+  if (!warnedMissing) { warnedMissing = true; console.error('[STOCK] batch receiving tables missing: run batch_receiving_migration.sql'); }
+  return empty;
+});
 async function lotContext(store, nowMs) {
-  const [rows, raw] = await Promise.all([store.lots(), store.settingsAll()]);
+  const [rows, raw] = await Promise.all([orMissing(Promise.resolve().then(() => store.lots()), []), orMissing(Promise.resolve().then(() => store.settingsAll()), {})]);
   const meta = {};
   for (const [k, l] of lotRules.lotIndex(rows || [])) meta[k] = { status: l.status == null ? null : l.status, best_before: l.best_before || null, lot: l.lot_code, ownerHold: lotRules.ownerHold(l) };
   return { meta, today: lotRules.todayIst(nowMs), s: lotRules.readSettings(raw) };
@@ -132,7 +142,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Biscuits: the sum of the whole ledger. Packaging is hand-kept: its count is the sum of the lines on or after packaging_count_from
   // (nothing is deleted; earlier lines stay in History), and an item with no line since then has no count (`any` false). No setting = no reset.
   async function onHandMap() {
-    const [rows, items, raw] = await Promise.all([store.byLot(), store.items(), store.settingsAll()]);   // rows: [{item_slug, lot_code, best_before, qty}]
+    const [rows, items, raw] = await Promise.all([store.byLot(), store.items(), orMissing(Promise.resolve().then(() => store.settingsAll()), {})]);   // rows: [{item_slug, lot_code, best_before, qty}]; settings missing (I1): no packaging reset
     const from = tsMs(lotRules.readSettings(raw).packaging_count_from);
     const pack = new Set(from == null ? [] : items.filter((i) => i.kind === 'packaging').map((i) => i.slug));
     const map = {};
