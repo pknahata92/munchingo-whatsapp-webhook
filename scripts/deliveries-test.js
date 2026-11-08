@@ -799,6 +799,22 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(n2.received - n2.broken - n2.damaged - n2.website - n2.offline - n2.fairs - n2.gifts - n2.samples - n2.returned - n2.expired + n2.fixes, n2.onHand, 'numbers still balance after Fix lot');
     eq(await L.search('MNG-BBBB-1010'), { orderLots: [{ slug: 'atta-kesari', code: KN, boxes: 2 }] }, 'order search maps the old code to the fixed lot');
   }
+  // Untraced: an undo of an old lot-less pack raises it back; a pack made after lots began (and its undo) stays out
+  {
+    const { st, dl } = fresh();
+    const L = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    await st.insert([{ item_slug: 'atta-original', qty: 20, type: 'RECEIVE', lot_code: null }, { item_slug: 'atta-original', qty: -3, type: 'SALE', lot_code: null, ref: 'MNG-OLD1-1010@2026-10-20T08:00:00.000Z' }]);
+    st.mv.forEach((m) => { m.created_at = '2026-10-20T08:00:00.000Z'; });
+    st.setSetting('lots_from', '2026-10-30T00:00:00.000Z');
+    const untraced = async () => (await L.listLots()).find((x) => x.code === null).onHand;
+    eq(await untraced(), 17, 'old pack counted');
+    await st.insert([{ item_slug: 'atta-original', qty: 3, type: 'SALE_UNDO', lot_code: null, ref: 'MNG-OLD1-1010@2026-10-20T08:00:00.000Z' }]);
+    eq(await untraced(), 20, 'undo of an old pack (written after lots_from) raises Untraced back by its boxes');
+    await st.insert([{ item_slug: 'atta-original', qty: -2, type: 'SALE', lot_code: null, ref: 'MNG-NEW1-1010@2026-11-06T08:00:00.000Z' }]);
+    eq(await untraced(), 20, 'a lot-less pack after lots_from belongs to Needs attention, not Untraced');
+    await st.insert([{ item_slug: 'atta-original', qty: 2, type: 'SALE_UNDO', lot_code: null, ref: 'MNG-NEW1-1010@2026-11-06T08:00:00.000Z' }]);
+    eq(await untraced(), 20, 'and its undo stays out too');
+  }
   // a lot with more than 500 buyers is looked up in chunks of 500
   {
     const { st, dl } = fresh();

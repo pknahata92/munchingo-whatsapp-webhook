@@ -507,7 +507,11 @@ function makeDeliveries(store, { now = () => Date.now(), db = null } = {}) {
       let qty = lotless.reduce((a, r) => a + r.qty, 0);
       if (Number.isFinite(from)) {
         const after = (await store.lotlessSales(new Date(from).toISOString())) || [];
-        qty -= after.filter((r) => Date.parse(r.created_at) > from).reduce((a, r) => a + r.qty, 0);
+        // Only a lot-less SALE written after lots_from, and an undo of THAT sale (same ref and flavour, as needsLot matches), are left out.
+        // An undo of an older pack stays in: the pack itself is still counted here.
+        const late = after.filter((r) => Date.parse(r.created_at) > from);
+        const lateSales = new Set(late.filter((r) => r.type === 'SALE').map((r) => `${r.ref}|${r.item_slug}`));
+        qty -= late.filter((r) => r.type === 'SALE' || lateSales.has(`${r.ref}|${r.item_slug}`)).reduce((a, r) => a + r.qty, 0);
       }
       const when = Number.isFinite(from) ? (() => { const d = lots.todayIst(from); return `${parseInt(d.slice(8, 10), 10)} ${MONTHS[parseInt(d.slice(5, 7), 10) - 1]} ${d.slice(0, 4)}`; })() : null;
       out.push({ code: null, slug: null, name: when ? `Untraced (before ${when})` : 'Untraced (before lots began)', status: null, onHand: qty, bakeDate: null, bestBefore: null, websiteStop: null, daysToStop: null });
