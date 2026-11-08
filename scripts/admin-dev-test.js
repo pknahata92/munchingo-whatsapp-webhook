@@ -438,6 +438,18 @@ async function login(email) {
     ok(dv.j.ok && dv.j.lots.length === 2, 'setup: a two-flavour delivery is saved (' + dv.s + ' ' + dv.j.error + ')');
     const lo = dv.j.lots.find((l) => l.slug === 'atta-original'), la = dv.j.lots.find((l) => l.slug === 'atta-ajwain');
     const enc = (c) => encodeURIComponent(c);
+    // a line a delivery wrote cannot be corrected or cancelled one line at a time (that would skip the hold check)
+    {
+      const FROM = 'This line came from a delivery. Use Correct whole delivery or Fix lot.';
+      const hl = ((await call('/inventory/history?slug=atta-ajwain&types=RECEIVE&limit=20', s.token)).j.movements || []).find((m) => m.lot_code === la.code);
+      const before = (await call('/inventory', o.token)).j.items.find((i) => i.slug === 'atta-ajwain').on_hand;
+      ok(!!hl && hl.delivery_id === 'practice-t10-' + stamp, 'setup: the history line of the new delivery carries its delivery_id');
+      const rc = await call('/inventory/receive', s.token, { slug: 'atta-ajwain', received: 12, lot: la.code, bestBefore: hl.best_before, replaces: hl.id });
+      ok(rc.s === 409 && rc.j.error === FROM, 'correcting a delivery line through receive+replaces is refused (' + rc.s + ' ' + rc.j.error + ')');
+      const rv = await call('/inventory/reverse', o.token, { id: hl.id, reason: 'typo' });
+      ok(rv.s === 409 && rv.j.error === FROM, 'cancelling a delivery line is refused, even for the owner (' + rv.s + ' ' + rv.j.error + ')');
+      ok((await call('/inventory', o.token)).j.items.find((i) => i.slug === 'atta-ajwain').on_hand === before, 'and nothing was written');
+    }
     // delivery page, prefill (registered before :id), lots list, lot page, search
     const pre = await call('/stock/deliveries/prefill', s.token);
     ok(pre.s === 200 && pre.j.ok && pre.j.rates && pre.j.rates['atta-original'] === 85 && pre.j.freight, 'prefill answers (not read as a delivery id): ' + pre.s + ' ' + JSON.stringify(pre.j).slice(0, 120));

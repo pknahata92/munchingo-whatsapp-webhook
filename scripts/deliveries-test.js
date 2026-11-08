@@ -573,7 +573,8 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
       const { st, dl, inv } = fresh();
       const a = four(); const r = await dl.save(a, A);
       const dmg = st.mv.find((m) => m.delivery_id === a.id && m.type === 'DAMAGED');
-      await inv.reverse({ id: dmg.id, reason: 'manual', actor: A.actor, isOwner: false });   // one row already reversed by hand
+      // one row already reversed (as a half-finished earlier attempt would leave it). inv.reverse now refuses delivery lines, so the REVERSAL row is written to the store directly.
+      await st.insert([{ item_slug: dmg.item_slug, qty: -dmg.qty, type: 'REVERSAL', lot_code: dmg.lot_code, best_before: dmg.best_before, ref: dmg.ref, note: 'manual', reverses_id: dmg.id, delivery_id: a.id }]);
       let boom = true; const flaky = { ...st, updateDelivery: async (...x) => { if (boom) { boom = false; throw new Error('db down'); } return st.updateDelivery(...x); } };
       const dl2 = makeDeliveries(flaky, { now: () => NOW });
       await dl2.correctDelivery({ id: a.id, reason: 'x' }, A).then(() => ok(false, 'flaky did not throw'), (e) => ok(/db down/.test(e.message), 'the first attempt fails part way'));

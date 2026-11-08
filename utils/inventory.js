@@ -225,6 +225,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (replacing) {
       old = await store.movement(Number(replaces));
       if (!old || old.type !== 'RECEIVE') throw new StockError('Only a receipt can be corrected.', 409);
+      if (old.delivery_id != null) throw new StockError('This line came from a delivery. Use Correct whole delivery or Fix lot.', 409);
       if (old.item_slug !== slug) throw new StockError('A correction must be for the same product as the receipt it replaces.', 409);
       if (old.reverses_id || await store.reversalOf(old.id)) throw new StockError('This line was already reversed.', 409);
       if (!isOwner && Date.now() - Date.parse(old.created_at) > REVERSE_FREE_MS) throw new StockError('Only the owner can reverse a line older than a day.', 403);
@@ -443,6 +444,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     const m = await store.movement(id);
     if (!m) throw new StockError('No such line.', 404);
     if (m.type === 'REVERSAL' || m.type === 'SALE' || m.type === 'SALE_UNDO') throw new StockError(m.type === 'REVERSAL' ? 'A reversal cannot be reversed. Enter the correct line instead.' : 'Sales are handled by the order. Use Undo on the order.', 409);
+    if (m.delivery_id != null) throw new StockError('This line came from a delivery. Use Correct whole delivery or Fix lot.', 409);
     if (m.reverses_id || await store.reversalOf(id)) throw new StockError('This line was already reversed.', 409);
     const rs = cleanText(reason, 300); if (!rs) throw new StockError('Add a short reason.');
     if (!isOwner && Date.now() - Date.parse(m.created_at) > REVERSE_FREE_MS) throw new StockError('Only the owner can reverse a line older than a day.', 403);

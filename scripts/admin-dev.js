@@ -69,7 +69,15 @@ const invoices = {};
 orders.filter((o) => o.payment_id && o.order_id !== 'MNG-FFFF-1010').forEach((o, i) => { const inv = buildInvoice(o, { invoiceNo: `MUN/26-27/${String(i + 1).padStart(4, '0')}`, issuedAt: new Date(o.created_at) }); invoices[o.order_id] = { order_id: o.order_id, invoice_no: inv.invoiceNo, supply_type: inv.supplyType, total_paise: inv.totalPaise, data: inv }; });
 const cns = [{ order_id: 'MNG-EEEE-1008', credit_note_no: 'CN/26-27/0001', amount_paise: 66500, issued_at: new Date(now - 2900000).toISOString(), is_full: true, reason_code: 'out_of_stock', data: { reasonLabel: 'Out of stock' } }];
 
+// Private photos: utils/stockPhotos.js is the REAL module (so the practice checks run its validation); only its storage client is faked,
+// in memory. A signed link is the stored image as a data: URL, so the page can show it.
+const photoStore = new Map();
+const fakeStorage = { from: () => ({
+  upload: async (p, bytes, opts) => { if (photoStore.has(p) && !(opts && opts.upsert)) return { error: { message: 'exists' } }; photoStore.set(p, Buffer.from(bytes)); return { error: null }; },
+  createSignedUrl: async (p) => (photoStore.has(p) ? { data: { signedUrl: 'data:image/jpeg;base64,' + photoStore.get(p).toString('base64') }, error: null } : { data: null, error: { message: 'Object not found' } }),
+}) };
 stub('utils/database.js', {
+  client: () => ({ storage: fakeStorage }),
   listRecentOrders: async () => orders,
   getInvoicesByOrderIds: async (ids) => Object.fromEntries(ids.filter((i) => invoices[i]).map((i) => [i, invoices[i]])),
   getCreditNotesByOrderIds: async (ids) => cns.filter((c) => ids.includes(c.order_id)),
@@ -125,21 +133,6 @@ stub('utils/database.js', {
   listStock: async () => stockRows,
   setStock: async (slug, available) => { stockRows.find((r) => r.slug === slug).available = available; },
 });
-// Private photos in memory (no storage): url() gives back a data: link of the stored image, like a signed link would show it.
-{
-  const photos = new Map(); const crypto = require('crypto');
-  stub('utils/stockPhotos.js', {
-    upload: async (dataUrl) => {
-      const { StockError } = require(path.join(root, 'utils/inventory.js'));
-      const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(dataUrl || ''));
-      if (!m) throw new StockError('Only a photo (JPEG) can be added.', 400);
-      if (Buffer.from(m[1], 'base64').length > 750 * 1024) throw new StockError('The photo is too large. Take it again.', 400);
-      const ist = new Date(Date.now() + 330 * 60000).toISOString(); const p = `${ist.slice(0, 4)}/${ist.slice(5, 7)}/${crypto.randomBytes(8).toString('hex')}.jpg`;
-      photos.set(p, dataUrl); return { path: p };
-    },
-    url: async (p) => { const { StockError } = require(path.join(root, 'utils/inventory.js')); if (!/^\d{4}\/\d{2}\/[0-9a-f]{16}\.jpg$/.test(String(p))) throw new StockError('That photo could not be found.', 400); if (!photos.has(p)) throw new StockError('That photo could not be found.', 404); return photos.get(p); },
-  });
-}
 stub('utils/mailer.js', {
   sendAdminCode: async (email, code) => { fs.writeFileSync(CODE_BASE + '-' + email.split('@')[0] + '.txt', code); fs.writeFileSync(CODE_BASE + '.txt', code); console.log('[dev] login code for', email, '=', code); },
   sendShippedEmail: async ({ order }) => console.log('[dev] shipped email ->', order.customer_email),

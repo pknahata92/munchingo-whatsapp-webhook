@@ -802,5 +802,22 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     }
   }
 
+  // Task 10 fix: a line written by a delivery can be corrected only as a whole delivery (Correct whole delivery / Fix lot), never one line at a time
+  {
+    const st2 = memStore('2026-10-16T00:00:00.000Z'); const inv2 = makeInventory(st2);
+    const FROM = /^This line came from a delivery\. Use Correct whole delivery or Fix lot\.$/;
+    await st2.insert([{ item_slug: 'atta-original', qty: 10, type: 'RECEIVE', lot_code: 'MNGO-261030-01', best_before: '2027-01-28', ref: 'B1', delivery_id: 'd-1', actor_email: 'staff@x.com' },
+      { item_slug: 'atta-original', qty: -1, type: 'DAMAGED', lot_code: 'MNGO-261030-01', best_before: '2027-01-28', ref: 'B1', delivery_id: 'd-1', reason: 'transit' }]);
+    const rows = st2.mv.filter((m) => m.delivery_id === 'd-1'), n0 = st2.mv.length;
+    const rcv = rows.find((m) => m.type === 'RECEIVE'), dmg = rows.find((m) => m.type === 'DAMAGED');
+    await rejects(inv2.receive({ slug: 'atta-original', received: 9, lot: 'MNGO-261030-01', bestBefore: '2027-01-28', replaces: rcv.id, actor: A }), FROM, 'correcting a delivery line through receive is refused');
+    await rejects(inv2.reverse({ id: rcv.id, reason: 'typo', actor: A }), FROM, 'cancelling a delivery RECEIVE line is refused');
+    await rejects(inv2.reverse({ id: dmg.id, reason: 'typo', actor: A, isOwner: true }), FROM, 'cancelling a delivery DAMAGED line is refused, even for the owner');
+    ok(st2.mv.length === n0, 'nothing was written by the refusals');
+    // a line with no delivery still works
+    await inv2.receive({ slug: 'atta-original', received: 4, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+    ok((await inv2.reverse({ id: st2.mv.find((m) => m.lot_code === '15OCT26' && m.type === 'RECEIVE').id, reason: 'typo', actor: A })).ok, 'an ordinary receipt can still be cancelled');
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
