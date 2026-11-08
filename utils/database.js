@@ -493,8 +493,8 @@ async function listMarketingContacts() {
   if (error) throw new Error(error.message);
   return data || [];
 }
-async function listMarketingSends() {   // small table (one row per broadcast message); broadcast.js filters by date and template
-  const { data, error } = await db().from('marketing_sends').select('phone, template, status, sent_at').eq('status', 'sent');
+async function listMarketingSends() {   // small table (one row per broadcast message); broadcast.js filters by status, date and template
+  const { data, error } = await db().from('marketing_sends').select('phone, template, status, error, sent_at');
   if (error) throw new Error(error.message);
   return data || [];
 }

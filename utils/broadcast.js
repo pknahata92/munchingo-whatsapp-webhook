@@ -11,6 +11,9 @@
 // Tests: scripts/broadcast-test.js
 
 const CAP = 3, CAP_DAYS = 30, GAP_MS = 1100;
+// Meta: after error 131049 (per-user marketing limit) do not resend to that person for at least 24 hours, or the block
+// deepens. We wait 48, across all marketing templates.
+const COOL_OFF_MS = 48 * 3_600_000;
 const SKIP_NAMES = /kaamke/i;   // Prashant's own test sign-up (3 Nov)
 const MODES = ['dry', 'test', 'send'];
 
@@ -64,13 +67,15 @@ async function audience(template, sources, exclude = []) {
   const since = new Date(now() - CAP_DAYS * 86_400_000).toISOString();
   const [contacts, sends] = await Promise.all([db.listMarketingContacts(), db.listMarketingSends({ sinceIso: since, template })]);
   const sent = sends.filter((s) => s.status === 'sent');
+  const coolSince = new Date(now() - COOL_OFF_MS).toISOString();
+  const cooling = new Set(sends.filter((s) => s.status === 'failed' && /^131049\b/.test(String(s.error || '')) && s.sent_at >= coolSince).map((s) => digits(s.phone)));
   const done = new Set(sent.filter((s) => s.template === template).map((s) => digits(s.phone)));
   const recent = {};
   for (const s of sent) if (s.sent_at >= since) recent[digits(s.phone)] = (recent[digits(s.phone)] || 0) + 1;
   const owner = ownerPhone();
-  const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0 };
+  const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0, cooling_off: 0 };
   const seen = new Set([owner]);
-  if (owner) { if (done.has(owner)) out.already_sent++; else out.list.push({ phone: owner, first: 'Prashant' }); }
+  if (owner) { if (done.has(owner)) out.already_sent++; else if (cooling.has(owner)) out.cooling_off++; else out.list.push({ phone: owner, first: 'Prashant' }); }
   const has = (c, list) => list.some((x) => [c.first_source, c.last_source].some((v) => String(v || '').startsWith(x)));
   const fromSource = (c) => (!sources.length || has(c, sources)) && !(exclude.length && has(c, exclude));
   for (const c of contacts) {
@@ -79,6 +84,7 @@ async function audience(template, sources, exclude = []) {
     seen.add(p);
     if (SKIP_NAMES.test(c.name || '')) { out.skipped++; continue; }
     if (done.has(p)) { out.already_sent++; continue; }
+    if (cooling.has(p)) { out.cooling_off++; continue; }
     if ((recent[p] || 0) >= CAP) { out.over_cap++; continue; }
     out.list.push({ phone: p, first: firstName(c.name) });
   }
@@ -99,7 +105,7 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   const { db, wa, wait, ownerPhone } = D();
   const header = video ? { type: 'video', link: video } : image ? { type: 'image', link: image } : null;
   const a = await audience(template, src, exc);
-  const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, to_send: a.list.length, recent: recent.slice() };
+  const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, cooling_off: a.cooling_off, to_send: a.list.length, recent: recent.slice() };
 
   if (mode === 'dry') return { ok: true, mode, template, ...counts };
 

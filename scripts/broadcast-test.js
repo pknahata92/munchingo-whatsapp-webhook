@@ -14,7 +14,7 @@ function world({ contacts, sends = [], failFor = [] }) {
   b.setDeps({
     db: {
       listMarketingContacts: async () => contacts.filter((c) => c.consent_marketing === true),
-      listMarketingSends: async (sinceIso) => sends.filter((s) => s.sent_at >= sinceIso || s.template),
+      listMarketingSends: async () => sends.slice(),
       insertMarketingSend: async (row) => { logged.push(row); sends.push({ ...row, sent_at: new Date(NOW).toISOString() }); },
       markMarketingSendFailed: async (waId, error) => { markedFailed.push({ waId, error }); const r = sends.find((x) => x.wa_message_id === waId); if (r) { r.status = 'failed'; r.error = error; } },
     },
@@ -121,10 +121,25 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   await new Promise((z) => setTimeout(z, 10));
   ok(w.markedFailed.length === 1 && w.markedFailed[0].waId === 'wamid-919000000001' && /131049/.test(w.markedFailed[0].error), 'a failed delivery marks its log row failed with the code');
   r = await b.run({ template: T, mode: 'dry' });
-  ok(r.to_send === 1 && r.already_sent === 2, 'the dropped person can be sent again; the two delivered are not');
+  ok(r.to_send === 0 && r.cooling_off === 1 && r.already_sent === 2, 'the dropped person is held for 48 hours (Meta: wait at least 24), the two delivered count as sent (got ' + JSON.stringify({ t: r.to_send, c: r.cooling_off, a: r.already_sent }) + ')');
   b.noteStatus({ id: 'wamid-919000000002', status: 'delivered' });
   await new Promise((z) => setTimeout(z, 10));
   ok(w.markedFailed.length === 1, 'a delivered status changes nothing in the log');
+
+  // Meta: do not resend to someone who got 131049 for at least 24 hours (resending sooner deepens the block). We wait 48.
+  const f = (h, code) => ({ phone: '919000000001', template: T, status: 'failed', error: code + ' healthy ecosystem', sent_at: new Date(NOW - h * 3_600_000).toISOString() });
+  w = world({ contacts: [C('919000000001', 'Asha')], sends: [f(3, '131049')] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 1 && r.cooling_off === 1, 'a 131049 failure 3 hours ago is held back (only the owner left) (got ' + JSON.stringify(r) + ')');
+  w = world({ contacts: [C('919000000001', 'Asha')], sends: [f(49, '131049')] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 2 && !r.cooling_off, 'after 48 hours it can be sent again');
+  w = world({ contacts: [C('919000000001', 'Asha')], sends: [f(3, '131026')] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 2, 'other failures are not held back');
+  w = world({ contacts: [C('919000000001', 'Asha')], sends: [{ ...f(3, '131049'), template: 'another_template' }] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 1 && r.cooling_off === 1, 'the cooling-off applies to any marketing template, not just the same one');
 
   // exclude: tomorrow's send skips the buyers Prashant messaged by hand today
   w = world({ contacts: [C('919000000001', 'Asha', true, 'stall:2026-11-01'), C('919000000002', 'Ravi', true, 'join:2026-10-25'), C('919000000003', 'Neha', true, 'fair:2026-10-25'), { phone: '919000000004', name: 'Om', consent_marketing: true, first_source: 'join:2026-10-25', last_source: 'stall:2026-11-06' }] });
