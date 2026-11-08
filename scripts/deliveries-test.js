@@ -6,7 +6,7 @@ const { PHOTO_PATH, inr } = deliveriesModule;
 const silentMailer = { sendDeliveryEmail: async () => {}, sendLotReleasedEmail: async () => {} };
 const makeDeliveries = (store, opts) => deliveriesModule.makeDeliveries(store, { mailer: silentMailer, ...(opts || {}) });
 const { makeInventory, StockError } = require('../utils/inventory');
-const { memStore } = require('./inventory-memstore');
+const { memStore, backfillLots } = require('./inventory-memstore');
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
 const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), m + ' (got ' + JSON.stringify(a) + ')');
@@ -1030,7 +1030,8 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
   const tryIt = async (fn) => { try { return { r: await fn() }; } catch (e) { return { e }; } };
   {
     // Sugar-Lite: received as 15Oct26, renamed to 15OCT26 on 22 Oct with the old Rename lot (COUNT_FIX pair); 13 sold under the old spelling.
-    // Rows exactly as the fixed backfill makes them: one per code, the sticker alias only on 15OCT26 (MNGL-261016-01 is not in the ledger).
+    // Rows as the backfill makes them (the shared mirror). The rename fold (owner's ruling) changed this block's expectations: 15Oct26 has
+    // no lot of its own any more, it is an alias of 15OCT26, so both spellings open one lot with both buyers.
     const { st, dl, inv } = fresh();
     await st.insert([
       { item_slug: 'atta-lite-sugar', qty: 33, type: 'RECEIVE', lot_code: '15Oct26', best_before: '2027-01-12' },
@@ -1039,30 +1040,28 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
       { item_slug: 'atta-lite-sugar', qty: 20, type: 'COUNT_FIX', lot_code: '15OCT26', best_before: '2027-01-12', note: 'Lot renamed 15Oct26 to 15OCT26' },
       { item_slug: 'atta-lite-sugar', qty: -2, type: 'SALE', lot_code: '15OCT26', best_before: '2027-01-12', ref: 'MNG-SL02-1025@2026-10-25T05:00:00.000Z' },
       { item_slug: 'atta-kesari', qty: 40, type: 'RECEIVE', lot_code: '15OCT26', best_before: '2027-01-13' }]);
-    await st.insertLots([
-      { item_slug: 'atta-lite-sugar', lot_code: '15Oct26', status: 'released', bake_date: '2026-10-15', best_before: '2027-01-12', aliases: [] },
-      { item_slug: 'atta-lite-sugar', lot_code: '15OCT26', status: 'released', bake_date: '2026-10-15', best_before: '2027-01-12', aliases: ['MNGL-261016-01'] },
-      { item_slug: 'atta-kesari', lot_code: '15OCT26', status: 'released', bake_date: '2026-10-15', best_before: '2027-01-13', aliases: ['MNGK-261016-01'] }]);
+    await st.insertLots(backfillLots(st.mv));
+    eq((await st.lots()).filter((l) => l.item_slug === 'atta-lite-sugar').map((l) => [l.lot_code, l.aliases]), [['15OCT26', ['MNGL-261016-01', '15Oct26']]], 'fold: the backfill makes one Sugar-Lite lot 1, 15Oct26 an alias');
     const dl2 = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async (ids) => ids.map((id) => ({ order_id: id, customer_name: 'Buyer ' + id.slice(4, 8), customer_phone: '919800000000', delivery_address: { city: 'Delhi' }, packed_at: null })) } });
     const lp = await tryIt(() => dl2.lotPage('15OCT26', 'atta-lite-sugar'));
-    ok(lp.r && lp.r.lot.code === '15OCT26' && lp.r.lot.slug === 'atta-lite-sugar' && lp.r.numbers.onHand === 18 && lp.r.orders.map((o) => o.orderId).join() === 'MNG-SL02-1025', 'C1 Sugar-Lite: lot page 15OCT26 opens its own lot (18 on hand, its buyer) (' + (lp.e ? lp.e.message + ' ' + JSON.stringify(lp.e.extra) : JSON.stringify([lp.r.lot.code, lp.r.numbers.onHand])) + ')');
+    ok(lp.r && lp.r.lot.code === '15OCT26' && lp.r.lot.slug === 'atta-lite-sugar' && lp.r.numbers.onHand === 18 && lp.r.orders.map((o) => o.orderId).join() === 'MNG-SL01-1020,MNG-SL02-1025', 'C1 Sugar-Lite: lot page 15OCT26 opens its lot (18 on hand, both buyers) (' + (lp.e ? lp.e.message + ' ' + JSON.stringify(lp.e.extra) : JSON.stringify([lp.r.lot.code, lp.r.numbers.onHand, lp.r.orders.map((o) => o.orderId)])) + ')');
     const lo = await tryIt(() => dl2.lotPage('15Oct26', 'atta-lite-sugar'));
-    ok(lo.r && lo.r.lot.code === '15Oct26' && lo.r.numbers.onHand === 0 && lo.r.orders.map((o) => o.orderId).join() === 'MNG-SL01-1020', 'C1 Sugar-Lite: lot page 15Oct26 opens the old spelling (0 on hand, the buyer of that time) (' + (lo.e ? lo.e.message : lo.r.lot.code) + ')');
+    ok(lo.r && lo.r.lot.code === '15OCT26' && lo.r.numbers.onHand === 18 && lo.r.orders.length === 2, 'C1 Sugar-Lite: the old spelling 15Oct26 opens the same lot, both buyers (' + (lo.e ? lo.e.message : lo.r.lot.code) + ')');
     const csv = await tryIt(() => dl2.buyersCsv('15OCT26', 'atta-lite-sugar'));
-    ok(csv.r && csv.r.split('\n').length === 2 && /MNG-SL02-1025/.test(csv.r), 'C1 Sugar-Lite: the buyer CSV of 15OCT26 is made (' + (csv.e ? csv.e.message : csv.r.split('\n').length + ' lines') + ')');
-    for (const [q, want] of [['15OCT26', 'atta-kesari:15OCT26,atta-lite-sugar:15OCT26'], ['15Oct26', 'atta-kesari:15OCT26,atta-lite-sugar:15Oct26'], ['MNGL-261016-01', { code: '15OCT26', slug: 'atta-lite-sugar' }]]) {
+    ok(csv.r && csv.r.split('\n').length === 3 && /MNG-SL01-1020/.test(csv.r) && /MNG-SL02-1025/.test(csv.r), 'C1 Sugar-Lite: the buyer CSV of 15OCT26 lists both buyers (' + (csv.e ? csv.e.message : csv.r.split('\n').length + ' lines') + ')');
+    for (const [q, want] of [['15OCT26', 'atta-kesari:15OCT26,atta-lite-sugar:15OCT26'], ['15Oct26', 'atta-kesari:15OCT26,atta-lite-sugar:15OCT26'], ['MNGL-261016-01', { code: '15OCT26', slug: 'atta-lite-sugar' }]]) {
       const s = await tryIt(() => dl2.search(q));
       if (typeof want !== 'string') eq(s.r && s.r.lot, want, 'C1 Sugar-Lite: search ' + q + ' opens one lot');
       else ok(s.r && Array.isArray(s.r.choose) && s.r.choose.map((c) => c.slug + ':' + c.code).sort().join() === want, 'C1: search ' + q + ' asks Kesari or Sugar-Lite, one entry each (' + JSON.stringify(s.r || s.e.message) + ')');
     }
     const pick2 = await tryIt(() => dl2.lotPage('15Oct26', 'atta-lite-sugar'));
-    ok(pick2.r && pick2.r.lot.code === '15Oct26', 'C1: choosing Sugar-Lite from that list opens 15Oct26');
+    ok(pick2.r && pick2.r.lot.code === '15OCT26', 'C1: choosing Sugar-Lite from that list opens lot 15OCT26 (15Oct26 is its alias)');
     const fx = await tryIt(() => dl2.fixLot({ code: '15OCT26', slug: 'atta-lite-sugar', newCode: 'MNGL-261016-01' }, OWN));
     ok(fx.r && fx.r.from === '15OCT26' && fx.r.to === 'MNGL-261016-01', 'C1 Sugar-Lite: Fix lot 15OCT26 -> MNGL-261016-01 works (' + (fx.e ? fx.e.message + ' ' + JSON.stringify(fx.e.extra) : JSON.stringify(fx.r)) + ')');
     const after = await tryIt(() => dl2.lotPage('MNGL-261016-01', 'atta-lite-sugar'));
-    ok(after.r && after.r.lot.code === 'MNGL-261016-01' && after.r.lot.aliases.includes('15OCT26') && after.r.numbers.onHand === 18, 'C1 Sugar-Lite: after Fix lot the lot page opens under the sticker code, the old code an alias, 18 on hand');
-    const byOld = await tryIt(() => dl2.lotPage('15OCT26', 'atta-lite-sugar'));
-    ok(byOld.r && byOld.r.lot.code === 'MNGL-261016-01', 'C1 Sugar-Lite: the old code 15OCT26 still reaches the fixed lot (' + (byOld.e ? byOld.e.message : byOld.r.lot.code) + ')');
+    ok(after.r && after.r.lot.code === 'MNGL-261016-01' && after.r.lot.aliases.includes('15OCT26') && after.r.lot.aliases.includes('15Oct26') && after.r.numbers.onHand === 18 && after.r.orders.length === 2, 'C1 Sugar-Lite: after Fix lot the lot page opens under the sticker code, both old codes aliases, 18 on hand, both buyers');
+    const byOld = await tryIt(() => dl2.lotPage('15OCT26', 'atta-lite-sugar')), byOlder = await tryIt(() => dl2.lotPage('15Oct26', 'atta-lite-sugar'));
+    ok(byOld.r && byOld.r.lot.code === 'MNGL-261016-01' && byOlder.r && byOlder.r.lot.code === 'MNGL-261016-01', 'C1 Sugar-Lite: both old codes still reach the fixed lot (' + (byOld.e ? byOld.e.message : byOld.r.lot.code) + ')');
     const sAfter = await dl2.search('15OCT26');
     ok(sAfter.choose && sAfter.choose.map((c) => c.slug + ':' + c.code).sort().join() === 'atta-kesari:15OCT26,atta-lite-sugar:MNGL-261016-01', 'C1: after Fix lot a search by the old shared code still lists both flavours, Sugar-Lite as its fixed lot (' + JSON.stringify(sAfter) + ')');
     const hd = await tryIt(() => dl2.hold({ code: '15OCT26', slug: 'atta-lite-sugar', reason: 'recall' }, OWN));
@@ -1070,20 +1069,19 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq((await inv.sellable())['atta-lite-sugar'], 0, 'C1 Sugar-Lite: nothing sellable once the fixed lot is held');
   }
   {
-    // Original lot 2: 27OCT26 renamed to its sticker code MNGO-261027-01 with the old Rename lot before the migration: both codes are in the
-    // ledger, so the fixed backfill gives 27OCT26 NO alias and MNGO-261027-01 its own row.
+    // Original lot 2: 27OCT26 renamed to its sticker code MNGO-261027-01 with the old Rename lot before the migration. The rename fold
+    // (owner's ruling) changed this block: 27OCT26 gets no lot of its own and is an alias of MNGO-261027-01 (it used to be its own lot).
     const { st, inv } = fresh();
     await st.insert([
       { item_slug: 'atta-original', qty: 80, type: 'RECEIVE', lot_code: '27OCT26', best_before: '2027-01-25' },
       { item_slug: 'atta-original', qty: -80, type: 'COUNT_FIX', lot_code: '27OCT26', best_before: '2027-01-25', note: 'Lot renamed 27OCT26 to MNGO-261027-01' },
       { item_slug: 'atta-original', qty: 80, type: 'COUNT_FIX', lot_code: 'MNGO-261027-01', best_before: '2027-01-25', note: 'Lot renamed 27OCT26 to MNGO-261027-01' }]);
-    await st.insertLots([
-      { item_slug: 'atta-original', lot_code: '27OCT26', status: 'released', bake_date: '2026-10-27', best_before: '2027-01-25', aliases: [] },
-      { item_slug: 'atta-original', lot_code: 'MNGO-261027-01', status: 'released', bake_date: '2026-10-27', best_before: '2027-01-25', aliases: [] }]);
+    await st.insertLots(backfillLots(st.mv));
+    eq((await st.lots()).map((l) => [l.lot_code, l.aliases]), [['MNGO-261027-01', ['27OCT26']]], 'fold: one Original lot 2, 27OCT26 its alias');
     const dl2 = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
     eq((await dl2.search('MNGO-261027-01')).lot, { code: 'MNGO-261027-01', slug: 'atta-original' }, 'C1 Original: search by the sticker code opens its lot');
     const a = await tryIt(() => dl2.lotPage('MNGO-261027-01', 'atta-original')), b = await tryIt(() => dl2.lotPage('27OCT26', 'atta-original'));
-    ok(a.r && a.r.lot.code === 'MNGO-261027-01' && a.r.numbers.onHand === 80 && b.r && b.r.lot.code === '27OCT26' && b.r.numbers.onHand === 0, 'C1 Original: each code opens its own lot (80 and 0 on hand)');
+    ok(a.r && a.r.lot.code === 'MNGO-261027-01' && a.r.numbers.onHand === 80 && b.r && b.r.lot.code === 'MNGO-261027-01' && b.r.numbers.onHand === 80, 'C1 Original: both codes open the one lot (80 on hand)');
     const h = await tryIt(() => dl2.hold({ code: 'MNGO-261027-01', slug: 'atta-original', reason: 'recall' }, OWN));
     ok(h.r && h.r.lot.lot_code === 'MNGO-261027-01' && h.r.lot.status === 'hold', 'C1 Original: Hold works (' + (h.e ? h.e.message + ' ' + JSON.stringify(h.e.extra) : '') + ')');
     eq((await inv.sellable())['atta-original'], 0, 'C1 Original: the held lot leaves the website');
@@ -1141,6 +1139,76 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     ok(!('ownerHold' in (await dl.listLots()).find((l) => l.code === k2.lots[0].code)), 'I2: a new delivery on hold carries no ownerHold mark in the Lots list');
     const ov = (await inv.overview()).items.find((i) => i.slug === 'atta-original');
     ok(ov.lots.some((l) => l.lot_code === '15OCT26' && l.status === 'hold' && l.owner_hold === true), 'I2: the Stock screen lot line says held by the owner (' + JSON.stringify(ov.lots) + ')');
+  }
+
+  // ---- Rename fold (owner's ruling after the re-review): a code the old Rename lot emptied is an alias of the lot it went to, never a
+  // lot of its own, so every read path lists every buyer of the lot and every write under the old code follows the lot's hold ----
+  {
+    const { computeSellable } = require('../utils/inventory');
+    const { st, inv } = fresh();
+    const SL = 'atta-lite-sugar', AJ = 'atta-ajwain', REN = 'Lot renamed 15Oct26 to 15OCT26', REN2 = 'Lot renamed 27OCT26 to MNGA-261027-01';
+    // the live shapes: Sugar-Lite lot 1 received as 15Oct26 (13 sold, 4 to a fair, 1 gift), renamed to 15OCT26 on 22 Oct, 2 sold after;
+    // Ajwain lot 2 renamed to its sticker code before the migration (1 buyer before, 1 after); Kesari and Original lot 1 untouched
+    await st.insert([
+      { item_slug: SL, qty: 33, type: 'RECEIVE', lot_code: '15Oct26', best_before: '2027-01-12' },
+      { item_slug: SL, qty: -13, type: 'SALE', lot_code: '15Oct26', best_before: '2027-01-12', ref: 'MNG-SL01-1020@2026-10-20T05:00:00.000Z' },
+      { item_slug: SL, qty: -4, type: 'EXHIBITION', lot_code: '15Oct26', best_before: '2027-01-12', ref: 'Diwali Mela' },
+      { item_slug: SL, qty: -1, type: 'GIFT', lot_code: '15Oct26', best_before: '2027-01-12', ref: 'Mrs Sharma' },
+      { item_slug: SL, qty: -15, type: 'COUNT_FIX', lot_code: '15Oct26', best_before: '2027-01-12', note: REN },
+      { item_slug: SL, qty: 15, type: 'COUNT_FIX', lot_code: '15OCT26', best_before: '2027-01-12', note: REN },
+      { item_slug: SL, qty: -2, type: 'SALE', lot_code: '15OCT26', best_before: '2027-01-12', ref: 'MNG-SL02-1025@2026-10-25T05:00:00.000Z' },
+      { item_slug: 'atta-kesari', qty: 160, type: 'RECEIVE', lot_code: '15OCT26', best_before: '2027-01-13' },
+      { item_slug: 'atta-original', qty: 100, type: 'RECEIVE', lot_code: '15OCT26', best_before: '2027-01-12' },
+      { item_slug: AJ, qty: 90, type: 'RECEIVE', lot_code: '27OCT26', best_before: '2027-01-25' },
+      { item_slug: AJ, qty: -10, type: 'SALE', lot_code: '27OCT26', best_before: '2027-01-25', ref: 'MNG-AJ01-1028@2026-10-28T05:00:00.000Z' },
+      { item_slug: AJ, qty: -80, type: 'COUNT_FIX', lot_code: '27OCT26', best_before: '2027-01-25', note: REN2 },
+      { item_slug: AJ, qty: 80, type: 'COUNT_FIX', lot_code: 'MNGA-261027-01', best_before: '2027-01-25', note: REN2 },
+      { item_slug: AJ, qty: -3, type: 'SALE', lot_code: 'MNGA-261027-01', best_before: '2027-01-25', ref: 'MNG-AJ02-1101@2026-11-01T05:00:00.000Z' }]);
+    const pre = computeSellable(await st.items(), await st.byLot(), await st.committed());   // before lots: every box counts
+    await st.insertLots(backfillLots(st.mv));
+    eq((await st.lots()).filter((l) => l.item_slug === SL || l.item_slug === AJ).map((l) => [l.item_slug, l.lot_code, l.aliases]),
+      [['atta-ajwain', 'MNGA-261027-01', ['27OCT26']], ['atta-lite-sugar', '15OCT26', ['MNGL-261016-01', '15Oct26']]], 'fold: one lot each, the emptied code an alias');
+    eq(await inv.sellable(), pre, 'fold: deploy-day sellable is identical to before lots');
+    const BUYERS = 'MNG-SL01-1020,MNG-SL02-1025';
+    const dl = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async (ids) => ids.map((id) => ({ order_id: id, customer_name: 'B ' + id, customer_phone: '91980', delivery_address: { city: 'Delhi' }, packed_at: null })) } });
+    const buyersOf = async (code, slug) => { try { const p = await dl.lotPage(code, slug); return p.lot.code + ':' + p.orders.map((o) => o.orderId).join(); } catch (e) { return 'ERR ' + e.message; } };
+    // the seven read paths
+    const row = (await dl.listLots()).filter((l) => l.slug === SL);
+    eq(row.map((l) => [l.code, l.onHand]), [['15OCT26', 13]], 'fold read 1: the Lots list has one Sugar-Lite lot 1 (15OCT26, all 13 boxes), no 15Oct26 row');
+    eq(await buyersOf(row[0].code, SL), '15OCT26:' + BUYERS, 'fold read 1: and its lot page lists both buyers');
+    const s1 = await dl.search('15OCT26'), c1 = (s1.choose || []).find((c) => c.slug === SL);
+    eq([c1 && c1.code, c1 && await buyersOf(c1.code, SL)], ['15OCT26', '15OCT26:' + BUYERS], 'fold read 2: search 15OCT26, then Sugar-Lite: both buyers');
+    const s2 = await dl.search('MNGL-261016-01');
+    eq([s2.lot && s2.lot.code, s2.lot && await buyersOf(s2.lot.code, s2.lot.slug)], ['15OCT26', '15OCT26:' + BUYERS], 'fold read 3: search by the sticker code: both buyers');
+    eq([await buyersOf('15oct26', SL), await buyersOf('15Oct26', SL)], ['15OCT26:' + BUYERS, '15OCT26:' + BUYERS], 'fold read 4: other spellings (15oct26, 15Oct26) open the same lot: both buyers');
+    const csv = await dl.buyersCsv('15OCT26', SL);
+    eq([csv.split('\n').length - 1, /MNG-SL01-1020/.test(csv) && /MNG-SL02-1025/.test(csv)], [2, true], 'fold read 5: Copy buyer list has both buyers (2 rows)');
+    const dg = (await dl.digestLines('2026-11-15')).stopSoon.filter((l) => /Sugar-Lite/.test(l.name));
+    eq([dg.map((l) => [l.code, l.onHand]), dg[0] && await buyersOf(dg[0].code, SL)], [[['15OCT26', 13]], '15OCT26:' + BUYERS], 'fold read 6: the 8:00 summary line (and its #lot= link code) is the one lot, 13 boxes, both buyers');
+    eq([await buyersOf('27OCT26', AJ), await buyersOf('MNGA-261027-01', AJ)], ['MNGA-261027-01:MNG-AJ01-1028,MNG-AJ02-1101', 'MNGA-261027-01:MNG-AJ01-1028,MNG-AJ02-1101'], 'fold: lot 2 Ajwain, both codes, both buyers');
+    // the write paths under the old code, while the lot is held for a recall
+    await dl.hold({ code: '15OCT26', slug: SL, reason: 'Krazy Bakers recall' }, OWN);
+    eq((await inv.sellable())[SL], 0, 'fold hold: Sugar-Lite off the website');
+    await inv.eventReturn({ slug: SL, qty: 4, ref: 'Diwali Mela', actor: OWN.actor });
+    ok(st.mv.slice(-1)[0].lot_code === '15Oct26', 'fold hold setup: the fair boxes come back under 15Oct26, where they left from');
+    eq((await inv.sellable())[SL], 0, 'fold hold: the fair return adds 0 to the website');
+    const plan = await inv.planForOrder({ items: [{ slug: SL, quantity: 2 }], at: new Date(NOW).toISOString() });
+    ok(plan.rows.length === 0 && plan.short.length === 1, 'fold hold: packing takes none of them (' + JSON.stringify(plan.rows) + ')');
+    const gift = st.mv.find((m) => m.type === 'GIFT' && m.lot_code === '15Oct26');
+    await inv.reverse({ id: gift.id, reason: 'not given after all', actor: OWN.actor, isOwner: true });
+    eq((await inv.sellable())[SL], 0, 'fold hold: the owner reversing a pre-rename line adds 0');
+    await inv.restoreForOrder({ orderId: 'MNG-SL01-1020' });
+    eq((await inv.sellable())[SL], 0, 'fold hold: undoing a pre-rename pack adds 0');
+    ok(!(await dl.listLots()).some((l) => l.slug === SL && l.code === '15Oct26'), 'fold: the count-up lot picker (the Lots list) never offers 15Oct26');
+    const have = (await inv.overview()).items.find((i) => i.slug === SL).on_hand;
+    await inv.count({ slug: SL, counted: have + 1, note: 'found one', lot: '15Oct26', actor: OWN.actor });
+    eq([st.mv.slice(-1)[0].lot_code, (await inv.sellable())[SL]], ['15OCT26', 0], 'fold: a count-up typed as 15Oct26 goes to lot 15OCT26 and stays held');
+    await rejects(dl.release({ code: '15OCT26', slug: SL, tasted: true, weightG: 260 }, A), /^This lot was put on hold by the owner\. Only the owner can release it\.$/, 'fold: staff release of the owner-held lot is still refused', 403);
+    // Fix lot (the owner chose not to for lot 1; the rule still holds): both old codes stay aliases, all buyers on one page
+    const fx = await dl.fixLot({ code: '15OCT26', slug: SL, newCode: 'MNGL-261016-01' }, OWN);
+    const fl = await dl.lotPage('MNGL-261016-01', SL);
+    ok(fx.to === 'MNGL-261016-01' && fl.lot.aliases.includes('15OCT26') && fl.lot.aliases.includes('15Oct26') && fl.lot.status === 'hold' && fl.orders.map((o) => o.orderId).join() === 'MNG-SL02-1025' && fl.lot.aliases.length === 2, 'fold read 7: after a later Fix lot both old codes are aliases and the page is the one lot (' + JSON.stringify([fl.lot.aliases, fl.orders.map((o) => o.orderId)]) + ')');
+    await rejects(dl.release({ code: 'MNGL-261016-01', slug: SL, tasted: true, weightG: 260 }, A), /put on hold by the owner/, 'fold: and after Fix lot staff still cannot release it', 403);
   }
 
   console.log(pass + ' passed, ' + fail + ' failed');

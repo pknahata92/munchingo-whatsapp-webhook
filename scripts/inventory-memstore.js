@@ -96,4 +96,64 @@ function memStore(trackingFrom) {
   };
 }
 
-module.exports = { memStore, TYPES };
+// What batch_receiving_migration.sql step 7 (the backfill) makes on its first run, from the ledger rows (st.mv): one released lot per
+// flavour and code, bake date from the code, the earliest best before, and the sticker alias of 15OCT26 / 27OCT26 unless that sticker
+// code is already in the ledger for the flavour. A code the old Rename lot emptied ("Lot renamed X to Y" COUNT_FIX pair) is no lot of
+// its own: it is an alias of the last lot of its rename chain (stock_lot_renames). The practice copy and the tests stand in for the
+// backfill with this; the PGlite verify script checks it gives exactly what the SQL gives.
+const LETTER = { 'atta-original': 'O', 'atta-kesari': 'K', 'atta-ajwain': 'A', 'atta-lite-sugar': 'L' };
+const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const realDate = (y, m, d) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? t.toISOString().slice(0, 10) : null; };
+function bakeOfCode(code) {   // stock_lot_bake_date(): DDMONYY any case, or MNG?-YYMMDD-NN
+  let m = /^(\d{2})([A-Za-z]{3})(\d{2})$/.exec(code);
+  if (m) { const mo = MON.indexOf(m[2].toUpperCase()); return mo < 0 ? null : realDate(2000 + Number(m[3]), mo + 1, Number(m[1])); }
+  m = /^MNG[OKAL]-(\d{2})(\d{2})(\d{2})-\d{2}$/.exec(code);
+  return m ? realDate(2000 + Number(m[1]), Number(m[2]), Number(m[3])) : null;
+}
+// [{ item_slug, old_code, final_code }], as stock_lot_renames(): a code renamed to two different codes, or a cycle, folds nothing.
+function renamesOf(movements) {
+  const plus = new Map();   // 'slug|note' -> codes with a +N COUNT_FIX line carrying that note
+  for (const b of movements || []) if (b.type === 'COUNT_FIX' && b.qty > 0 && b.lot_code != null && b.note != null) { const k = b.item_slug + '|' + b.note; (plus.get(k) || plus.set(k, new Set()).get(k)).add(b.lot_code); }
+  const ren = new Map();    // 'slug|old' -> Set of new codes
+  for (const a of movements || []) {
+    if (a.type !== 'COUNT_FIX' || !(a.qty < 0) || a.lot_code == null || a.note == null) continue;
+    for (const y of plus.get(a.item_slug + '|' + a.note) || []) if (a.note === 'Lot renamed ' + a.lot_code + ' to ' + y) { const k = a.item_slug + '|' + a.lot_code; (ren.get(k) || ren.set(k, new Set()).get(k)).add(y); }
+  }
+  const out = [];
+  for (const [k, ys] of ren) {
+    const slug = k.slice(0, k.indexOf('|')), old = k.slice(k.indexOf('|') + 1);
+    if (ys.size !== 1) continue;
+    let cur = [...ys][0]; const path = new Set([old]); let ok = true;
+    while (ren.has(slug + '|' + cur)) {
+      const next = ren.get(slug + '|' + cur);
+      if (next.size !== 1 || path.has(cur)) { ok = false; break; }
+      path.add(cur); cur = [...next][0];
+      if (path.has(cur)) { ok = false; break; }
+    }
+    if (ok) out.push({ item_slug: slug, old_code: old, final_code: cur });
+  }
+  return out;
+}
+function backfillLots(movements) {
+  const folded = renamesOf(movements);
+  const pairs = new Map();
+  for (const r of movements || []) {
+    if (r.lot_code == null) continue;
+    const k = r.item_slug + '|' + r.lot_code, e = pairs.get(k) || { item_slug: r.item_slug, lot_code: r.lot_code, best_before: null };
+    if (r.best_before && (!e.best_before || r.best_before < e.best_before)) e.best_before = r.best_before;
+    pairs.set(k, e);
+  }
+  const sticker = (e) => {
+    const l = LETTER[e.item_slug], s = e.lot_code === '15OCT26' ? '261016' : e.lot_code === '27OCT26' ? '261027' : null;
+    if (!l || !s) return [];
+    const code = 'MNG' + l + '-' + s + '-01';
+    return pairs.has(e.item_slug + '|' + code) ? [] : [code];
+  };
+  const gone = new Set(folded.map((f) => f.item_slug + '|' + f.old_code));
+  const into = (e) => folded.filter((f) => f.item_slug === e.item_slug && f.final_code === e.lot_code).map((f) => f.old_code).sort();
+  return [...pairs.values()].filter((e) => !gone.has(e.item_slug + '|' + e.lot_code))
+    .map((e) => ({ item_slug: e.item_slug, lot_code: e.lot_code, status: 'released', bake_date: bakeOfCode(e.lot_code), best_before: e.best_before, aliases: [...sticker(e), ...into(e)], delivery_id: null }))
+    .sort((a, b) => (a.item_slug < b.item_slug ? -1 : a.item_slug > b.item_slug ? 1 : a.lot_code < b.lot_code ? -1 : a.lot_code > b.lot_code ? 1 : 0));
+}
+
+module.exports = { memStore, TYPES, backfillLots, renamesOf };

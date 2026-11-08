@@ -145,6 +145,9 @@ end $$;
 --    the earliest one the ledger holds for that lot. The old shared codes get the sticker codes the printed boxes carry, unless that
 --    sticker code is already in the ledger for that flavour (the lot was renamed to it with the old Rename lot): then the sticker code
 --    is its own lot and the old code gets no alias, so no code ever means two lots of one flavour.
+--    A code the OLD Rename lot emptied (its "Lot renamed X to Y" COUNT_FIX pair: the -N line under X, the +N line under Y, same flavour)
+--    is not a lot of its own: X becomes an alias of Y's lot (of the last lot for a chain X -> Y -> Z), so the lot page, the buyer list and
+--    a Hold cover every box and every buyer of the lot, whatever code they were booked under. Nothing is ever deleted.
 create or replace function stock_lot_bake_date(code text) returns date language plpgsql immutable as $f$
 begin
   if code ~* '^\d{2}[A-Z]{3}\d{2}$' then return to_date(upper(code), 'DDMONYY'); end if;
@@ -155,6 +158,29 @@ exception when others then
 end
 $f$;
 
+-- The codes the old Rename lot emptied, each with the last code of its rename chain. The note is matched exactly as renameLot wrote it
+-- ("Lot renamed X to Y", unchanged since 22 Oct), codes with spaces too. A code renamed to two different codes, or a cycle, has no last
+-- code and folds nothing (it keeps its own lot, as before).
+create or replace function stock_lot_renames() returns table (item_slug text, old_code text, final_code text) language sql stable as $f$
+  with recursive ren as (
+    select distinct a.item_slug as slug, a.lot_code as old_c, b.lot_code as new_c
+    from stock_movements a
+    join stock_movements b on b.item_slug = a.item_slug and b.type = 'COUNT_FIX' and b.qty > 0 and b.lot_code is not null and b.note = a.note
+    where a.type = 'COUNT_FIX' and a.qty < 0 and a.lot_code is not null and a.note = 'Lot renamed ' || a.lot_code || ' to ' || b.lot_code
+  ),
+  one as (
+    select r.slug, r.old_c, min(r.new_c) as new_c from ren r group by r.slug, r.old_c having count(distinct r.new_c) = 1
+  ),
+  walk as (
+    select o.slug, o.old_c, o.new_c as cur, array[o.old_c, o.new_c] as path from one o
+    union all
+    select w.slug, w.old_c, o.new_c, w.path || o.new_c from walk w join one o on o.slug = w.slug and o.old_c = w.cur
+    where not (o.new_c = any(w.path))
+  )
+  select w.slug, w.old_c, w.cur from walk w where not exists (select 1 from ren r where r.slug = w.slug and r.old_c = w.cur)
+$f$;
+
+with folded as (select * from stock_lot_renames())
 insert into stock_lots (item_slug, lot_code, status, bake_date, best_before, aliases)
 select m.item_slug, m.lot_code, 'released', stock_lot_bake_date(m.lot_code), min(m.best_before),
        case
@@ -171,10 +197,28 @@ left join (values ('atta-original', 'O'), ('atta-kesari', 'K'), ('atta-ajwain', 
 where m.lot_code is not null
   -- a code that only survives as another lot's alias (after Fix lot) is not a lot of its own
   and not exists (select 1 from stock_lots s where s.item_slug = m.item_slug and m.lot_code = any(s.aliases))
+  -- a code the old Rename lot emptied is not a lot of its own: it becomes an alias of the lot it went to (next statement)
+  and not exists (select 1 from folded f where f.item_slug = m.item_slug and f.old_code = m.lot_code)
 group by m.item_slug, m.lot_code, l.letter
 on conflict (item_slug, lot_code) do nothing;
 
+-- 7b. Each emptied code joins the aliases of the lot its chain ended at: the lot whose own code that is or, if Fix lot has moved that lot
+--     since, the lot that has it as an alias. Only codes no lot has yet (as its own code or an alias), so a second run changes nothing.
+with folded as (select * from stock_lot_renames()),
+fold_codes as (
+  select f.item_slug, f.final_code, array_agg(f.old_code order by f.old_code) as codes
+  from folded f
+  where not exists (select 1 from stock_lots o where o.item_slug = f.item_slug and (o.lot_code = f.old_code or f.old_code = any(o.aliases)))
+  group by f.item_slug, f.final_code
+)
+update stock_lots s set aliases = s.aliases || c.codes
+from fold_codes c
+where s.item_slug = c.item_slug
+  and (s.lot_code = c.final_code
+       or (c.final_code = any(s.aliases) and not exists (select 1 from stock_lots z where z.item_slug = c.item_slug and z.lot_code = c.final_code)));
+
 drop function if exists stock_lot_bake_date(text);
+drop function if exists stock_lot_renames();
 
 -- Read-back: expect 19 deliveries columns (incl. gst_paise), 16 lots columns, the type check listing 17 types, 7 settings, and the
 -- number of lots filled in from the ledger (lots with no delivery).

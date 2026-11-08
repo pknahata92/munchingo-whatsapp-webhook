@@ -104,6 +104,9 @@ ok(L.stickerCommand('MNGO-261105-01', 1, null) === 'python3 make_stamp_labels.py
   const fixed = [{ item_slug: 'atta-lite-sugar', lot_code: '15Oct26', status: 'released', aliases: [] }, { item_slug: 'atta-lite-sugar', lot_code: 'MNGL-261016-01', status: 'hold', aliases: ['15OCT26'] }];
   const fl = [{ item_slug: 'atta-lite-sugar', lot_code: '15Oct26', qty: 0 }, { item_slug: 'atta-lite-sugar', lot_code: 'MNGL-261016-01', qty: 18 }, { item_slug: 'atta-lite-sugar', lot_code: '15OCT26', qty: 1 }];
   eq(['15OCT26', '15oct26', '15Oct26'].map((x) => L.resolveCode(fixed, fl, x, 'atta-lite-sugar').map((y) => y.code + ':' + y.how).join()), ['MNGL-261016-01:alias', 'MNGL-261016-01:alias', '15Oct26:exact'], 'the old code (any case) reaches the fixed lot; only the exact other spelling opens the empty lot');
+  // the shape the backfill makes now (rename fold): the emptied spelling is an alias of the lot it was renamed to
+  const foldRows = [{ item_slug: 'atta-lite-sugar', lot_code: '15OCT26', status: 'released', aliases: ['MNGL-261016-01', '15Oct26'] }];
+  eq(['15Oct26', '15OCT26', '15oct26', 'MNGL-261016-01'].map((x) => L.resolveCode(foldRows, [], x, 'atta-lite-sugar').map((y) => y.code + ':' + y.how).join()), ['15OCT26:alias', '15OCT26:exact', '15OCT26:case', '15OCT26:alias'], 'fold shape: every spelling of lot 1 reaches the one lot');
   const idx = L.lotIndex(rows);
   eq(L.codesOfLot(idx, rows[3]), ['27OCT26'], 'a lot\'s codes leave out an alias another lot owns');
   eq(L.codesOfLot(idx, rows[1]), ['15OCT26', 'MNGL-261016-01'], 'a lot\'s codes: its own and its aliases');
