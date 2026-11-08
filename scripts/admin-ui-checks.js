@@ -449,7 +449,9 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const inputs = qa('#viewStock input');
     ok(inputs[0].value === '33' && inputs[1].value === '3' && inputs.some((i) => i.value === '15OCT26'), 'the form is filled with the old receipt: 33 received, 3 damaged, lot 15OCT26 (saw ' + inputs.map((i) => i.value).join('/') + ')');
     const dates = qa('#viewStock input[type=date]');
-    ok(dates.length === 2 && dates[0].value === '2026-10-15' && dates[1].value === '2027-01-13', 'the dates are calendar pickers, refilled from the old receipt: prepared 2026-10-15, best before 2027-01-13 (saw ' + dates.map((d) => d.value).join(' / ') + ')');
+    // the practice admin seeds best before relative to its start time (so it never ages past a cut-off), so read the seeded date back; the prepared date comes from the lot code 15OCT26
+    const seededBB = ((await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').lots.find((l) => l.lot_code === '15OCT26') || {}).best_before;
+    ok(dates.length === 2 && !!seededBB && dates[0].value === '2026-10-15' && dates[1].value === seededBB, 'the dates are calendar pickers, refilled from the old receipt: prepared 2026-10-15 (from the lot code), best before ' + seededBB + ' (the practice stock\'s seeded date) (saw ' + dates.map((d) => d.value).join(' / ') + ')');
     ok(inputs.some((i) => i.value === '15OCT26'), 'correcting without touching the date keeps the old lot code exactly');
     ok(inputs.some((i) => i.value === '3 crushed'), 'the old note is carried over');
     ok((await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand === before, 'opening Correct changes nothing yet');

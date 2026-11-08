@@ -229,8 +229,10 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
   const store = require('./inventory-memstore').memStore(new Date(Date.now() - 86400_000).toISOString());
   store.paused = async () => stockRows.filter((r) => r.available === false).map((r) => r.slug);   // the practice copy's Pause selling switch
   const real = inv.makeInventory(store);
-  real.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', bestBefore: '2027-01-13', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
-  real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: '2027-01-13', note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
+  // Best before is set relative to the start time (80 days ahead, IST date), so the practice stock never ages past a cut-off date as the calendar moves. The lot codes stay as they were.
+  const bb = new Date(Date.now() + 330 * 60000 + 80 * 86400_000).toISOString().slice(0, 10);
+  real.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
+  real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: bb, note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
   inv.instance = () => real;
 }
 app.listen(PORT, () => console.log('Admin practice copy: http://localhost:' + PORT + '/admin'));

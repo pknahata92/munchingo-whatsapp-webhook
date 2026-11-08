@@ -9,7 +9,9 @@
  * block packing: any failure here is logged and the order still moves on.
  */
 const { flavoursOf } = require('./orderText');
+const lotRules = require('./lots');
 
+const HELD_NOTE = 'on hold or past best before';
 class StockError extends Error { constructor(msg, status = 400, extra = {}) { super(msg); this.status = status; this.extra = extra; } }
 
 const TYPES_OUT = { USE: 'Used', DAMAGED: 'Damaged or not okay', SAMPLE: 'Sample or tasting', GIFT: 'Given away', EXHIBITION: 'Taken to an exhibition or event', EVENT_SALE: 'Sold at an exhibition or event', OFFLINE_SALE: 'Sold offline (bulk order or hamper)' };
@@ -36,6 +38,20 @@ function allocate(lots, qty) {
   return { pieces, short: left };
 }
 
+// What the stock_lots table and the settings say, read once per question. `meta` is keyed 'slug|code' (codes are case-sensitive).
+async function lotContext(store, nowMs) {
+  const [rows, raw] = await Promise.all([store.lots(), store.settingsAll()]);
+  const meta = {};
+  for (const l of rows || []) meta[`${l.item_slug}|${l.lot_code}`] = { status: l.status == null ? null : l.status, best_before: l.best_before || null };
+  return { meta, today: lotRules.todayIst(nowMs), s: lotRules.readSettings(raw) };
+}
+// A ledger row's lot: the stock_lots row decides the status (and the best before when it has one); a row with no lot row, or no lot code, is legacy.
+function lotInfo(ctx, r) {
+  const m = r.lot_code != null ? ctx.meta[`${r.item_slug}|${r.lot_code}`] : null;
+  return m ? { status: m.status, best_before: m.best_before || r.best_before || null } : { status: null, best_before: r.best_before || null };
+}
+const eligibleRow = (ctx, r, purpose) => lotRules.eligible(lotInfo(ctx, r), purpose, ctx.today, ctx.s);
+
 // Boxes of each flavour inside an order (gift sets opened up): { 'atta-kesari': 2, ... }
 function boxesBySlug(items) {
   const out = {};
@@ -48,9 +64,11 @@ function boxesBySlug(items) {
 
 // What the website may still sell per flavour: boxes on the shelf minus boxes already paid for but not yet packed (stock is only
 // deducted at Packed). Only flavours that have stock recorded are included; an item nobody has counted yet is left alone.
-function computeSellable(items, byLotRows, committed) {
+// With `ctx` (from lotContext) only boxes in lots the website may sell count: released or legacy, and today before the website stop date.
+// Without it every box counts, as before lots existed.
+function computeSellable(items, byLotRows, committed, ctx) {
   const out = {}; const has = new Set(); const sum = {};
-  for (const r of byLotRows) { has.add(r.item_slug); sum[r.item_slug] = (sum[r.item_slug] || 0) + r.qty; }
+  for (const r of byLotRows) { has.add(r.item_slug); if (ctx && !eligibleRow(ctx, r, 'web')) continue; sum[r.item_slug] = (sum[r.item_slug] || 0) + r.qty; }
   for (const i of items) { if (i.kind === 'product' && i.active && has.has(i.slug)) out[i.slug] = (sum[i.slug] || 0) - ((committed || {})[i.slug] || 0); }
   return out;
 }
@@ -75,7 +93,7 @@ function firstShortage(cartItems, sellable) {
   return null;
 }
 
-function makeInventory(store) {
+function makeInventory(store, { now = () => Date.now() } = {}) {
   async function onHandMap() {
     const rows = await store.byLot();   // [{item_slug, lot_code, best_before, qty}]
     const map = {};
@@ -92,13 +110,17 @@ function makeInventory(store) {
   }
 
   async function overview() {
-    const [items, map, ev, committed, paused] = await Promise.all([store.items(), onHandMap(), store.events(), store.committed().catch(() => ({})), store.paused().catch(() => [])]);
+    const [items, map, ev, committed, paused, ctx] = await Promise.all([store.items(), onHandMap(), store.events(), store.committed().catch(() => ({})), store.paused().catch(() => []), lotContext(store, now())]);
     const outAt = {}; const events = {};
     for (const e of ev) { const out = e.taken - e.returned; if (out <= 0) continue; outAt[e.item_slug] = (outAt[e.item_slug] || 0) + out; (events[e.ref] = events[e.ref] || []).push({ slug: e.item_slug, taken: e.taken, returned: e.returned, out }); }
     const list = items.filter((i) => i.active).sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name)).map((i) => {
       const m = map[i.slug];
-      const lots = m ? m.lots.filter((l) => l.qty !== 0).sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9'))) : [];
-      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, committed: committed[i.slug] || 0, sellable: i.kind === 'product' && m && m.any ? m.total - (committed[i.slug] || 0) : null, paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots };
+      const lotList = m ? m.lots.filter((l) => l.qty !== 0).sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9'))).map((l) => {
+        const info = lotInfo(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }); const c = lotRules.cutoffs(info.best_before, ctx.s);
+        return { ...l, status: info.status || 'legacy', lastShip: c ? c.lastShip : null, websiteStop: c ? c.websiteStop : null };
+      }) : [];
+      const usable = i.kind === 'product' ? (m ? m.lots.filter((l) => eligibleRow(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }, 'other')).reduce((n, l) => n + l.qty, 0) : 0) : null;
+      return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, committed: committed[i.slug] || 0, sellable: i.kind === 'product' && m && m.any ? m.total - (committed[i.slug] || 0) : null, paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), status: statusOf(i, m), lots: lotList };
     });
     const nameOf = Object.fromEntries(items.map((i) => [i.slug, i.name]));
     const open = Object.keys(events).map((ref) => ({ ref, items: events[ref].map((x) => ({ ...x, name: nameOf[x.slug] || x.slug })) }));
@@ -111,6 +133,18 @@ function makeInventory(store) {
     return item;
   }
   async function onHand(slug) { const map = await onHandMap(); return map[slug] ? map[slug].total : 0; }
+  // Boxes a take-out may use: on hand, less what is on hold or past best before. Packaging has no lots, so all of it counts.
+  // `held` is how many more boxes are on the shelf but not usable (never negative: a lot-less shortfall row is not "held").
+  async function usableOf(item, ctx, purpose = 'other') {
+    const rows = (await store.byLot()).filter((r) => r.item_slug === item.slug);
+    const total = rows.reduce((n, r) => n + r.qty, 0);
+    if (item.kind !== 'product') return { have: total, usable: total, held: 0 };
+    const eligibleSum = rows.filter((r) => eligibleRow(ctx, r, purpose)).reduce((n, r) => n + r.qty, 0);
+    const usable = Math.min(total, eligibleSum);
+    return { have: total, usable, held: total - usable };
+  }
+  const shortMsg = (item, u) => (u.held > 0 ? `Only ${u.usable} ${item.unit} can be used (${u.held} more are ${HELD_NOTE}). Count first, or confirm to go below zero.` : `Only ${u.have} ${item.unit} on hand. Count first, or confirm to go below zero.`);
+  const shortLine = (item, q, u) => `${item.name}: need ${q}, have ${u.usable}` + (u.held > 0 ? ` (${u.held} more are ${HELD_NOTE})` : '');
   const who = (actor) => ({ actor_email: actor && actor.email || null, actor_name: actor && (actor.name || actor.email) || null });
 
   // Stock arrived: boxes received, how many of them damaged or not okay, lot, best-before, supplier challan, optional billing.
@@ -154,7 +188,7 @@ function makeInventory(store) {
   }
 
   // Take stock out: used (packaging), damaged or not okay, or a sample/gift. Oldest lot first for products.
-  async function take({ slug, qty, type, note, who: whoFor, invoice, allowNegative = false, actor }) {
+  async function take({ slug, qty, type, note, who: whoFor, invoice, lot = null, allowNegative = false, actor }) {
     const item = await need(slug);
     if (!TYPES_OUT[type]) throw new StockError('Choose what happened: used, damaged, or sample.');
     const n = int(qty);
@@ -162,12 +196,14 @@ function makeInventory(store) {
     if (type === 'DAMAGED' && !cleanText(note, 300)) throw new StockError('Add a short note on what was wrong.');
     const forWhom = cleanText(whoFor, 80);
     if (NEEDS_WHO[type] && !forWhom) throw new StockError(NEEDS_WHO[type]);
-    const have = await onHand(slug);
-    if (n > have && !allowNegative) throw new StockError(`Only ${have} ${item.unit} on hand. Count first, or confirm to go below zero.`, 409, { needsConfirm: 'negative', onHand: have });
+    const ctx = await lotContext(store, now());
+    if (lot) await checkNamedLot(item, lot, ctx);
+    const u = await usableOf(item, ctx);
+    if (n > u.usable && !allowNegative) throw new StockError(shortMsg(item, u), 409, { needsConfirm: 'negative', onHand: u.have, usable: u.usable });
     const inv = cleanText(invoice, 40);
     if (type === 'OFFLINE_SALE' && !inv) throw new StockError('Enter the invoice number (write PENDING if it is not made yet and fix it later).');
     const base = type === 'OFFLINE_SALE' ? { type, note: cleanText(note, 300) || null, ref: inv, party: forWhom, ...who(actor) } : { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) };
-    const rows = await outRows(item, n, base);
+    const rows = await outRows(item, n, base, { lot, ctx });
     await store.insert(rows);
     return { onHand: await onHand(slug) };
   }
@@ -190,8 +226,8 @@ function makeInventory(store) {
     }
     if (!plan.length) throw new StockError('Enter how many of at least one item.');
     if (!allowNegative) {
-      const short = [];
-      for (const x of plan) { const have = await onHand(x.item.slug); if (x.qty > have) short.push(`${x.item.name}: need ${x.qty}, have ${have}`); }
+      const short = []; const ctx = await lotContext(store, now());
+      for (const x of plan) { const u = await usableOf(x.item, ctx); if (x.qty > u.usable) short.push(shortLine(x.item, x.qty, u)); }
       if (short.length) throw new StockError('Not enough on hand: ' + short.join('; ') + '. Count first, or confirm to go below zero.', 409, { needsConfirm: 'negative' });
     }
     const base = type === 'OFFLINE_SALE' ? { type, note: cleanText(note, 300) || null, ref: inv, party: forWhom, ...who(actor) } : { type, note: cleanText(note, 300) || null, ref: forWhom || null, ...who(actor) };
@@ -215,8 +251,8 @@ function makeInventory(store) {
     for (const [slug, b] of Object.entries(boxes)) { const q = int(b || 0); if (!q) continue; if (!Number.isInteger(q) || q < 0 || q > MAX_QTY) throw new StockError('Boxes opened must be whole numbers.'); const item = await need(slug); if (item.kind !== 'product') throw new StockError('Only biscuit boxes are counted for hampers.'); plan.push({ item, qty: q }); }
     if (!plan.length) throw new StockError('Enter how many boxes you opened for these hampers, so the biscuits are taken off stock.');
     if (!allowNegative) {
-      const short = [];
-      for (const x of plan) { const have = await onHand(x.item.slug); if (x.qty > have) short.push(`${x.item.name}: need ${x.qty}, have ${have}`); }
+      const short = []; const ctx = await lotContext(store, now());
+      for (const x of plan) { const u = await usableOf(x.item, ctx); if (x.qty > u.usable) short.push(shortLine(x.item, x.qty, u)); }
       if (short.length) throw new StockError('Not enough on hand: ' + short.join('; ') + '. Count first, or confirm to go below zero.', 409, { needsConfirm: 'negative' });
     }
     const tag = `Hamper: ${name} x ${n}`, extra = cleanText(note, 200);
@@ -242,12 +278,31 @@ function makeInventory(store) {
     return { items: out };
   }
 
-  // Rows that remove n from stock: split across lots (oldest first) for products; one plain row for packaging.
-  async function outRows(item, n, base) {
-    const all = await store.byLot();
-    const lots = all.filter((r) => r.item_slug === item.slug);
+  // A named lot must be a lot of this product, not on hold, and not past its best before.
+  async function checkNamedLot(item, lot, ctx) {
+    const rows = (await store.byLot()).filter((r) => r.item_slug === item.slug && r.lot_code === lot);
+    if (!rows.length && !ctx.meta[`${item.slug}|${lot}`]) throw new StockError(`${lot} is not a lot of ${item.name}.`, 409);
+    const infos = rows.map((r) => lotInfo(ctx, r)); const m = ctx.meta[`${item.slug}|${lot}`];
+    const status = m ? m.status : null;
+    if (status === 'hold' || status === 'rejected' || status === 'void') throw new StockError(`Lot ${lot} is on hold`, 409);
+    const bbs = (m && m.best_before ? [m.best_before] : []).concat(infos.map((x) => x.best_before).filter(Boolean)).sort();
+    if (bbs.length && ctx.today > bbs[0]) throw new StockError(`Lot ${lot} is past best before: use Throw away expired`, 409);
+  }
+
+  // Rows that remove n from stock: split across lots (oldest best-before first) for products; one plain row for packaging.
+  // Only lots that are released or legacy and still inside the window for `purpose` are used. With `lot`, that lot goes first and
+  // the rest (if it cannot cover n) comes from the other usable lots. Whatever the lots cannot cover becomes a lot-less line.
+  async function outRows(item, n, base, { purpose = 'other', lot = null, ctx = null } = {}) {
     if (item.kind !== 'product') return [{ ...base, item_slug: item.slug, qty: -n, lot_code: null, best_before: null }];
-    const { pieces, short } = allocate(lots, n);
+    const c = ctx || await lotContext(store, now());
+    const all = (await store.byLot()).filter((r) => r.item_slug === item.slug);
+    const usable = all.filter((r) => eligibleRow(c, r, purpose));
+    let pieces = [], short = n;
+    if (lot) {
+      await checkNamedLot(item, lot, c);
+      const first = allocate(usable.filter((r) => r.lot_code === lot), n); pieces = first.pieces; short = first.short;
+    }
+    if (short > 0) { const rest = allocate(usable.filter((r) => !lot || r.lot_code !== lot), short); pieces = pieces.concat(rest.pieces); short = rest.short; }
     const rows = pieces.map((p) => ({ ...base, item_slug: item.slug, qty: -p.qty, lot_code: p.lot_code, best_before: p.best_before }));
     if (short > 0) rows.push({ ...base, item_slug: item.slug, qty: -short, lot_code: null, best_before: null });
     return rows;
@@ -390,7 +445,8 @@ function makeInventory(store) {
   }
 
   // { slug: boxes still sellable } for the flavours that have stock recorded (used by utils/stock.js for the automatic sold-out).
-  async function sellable() { const [items, rows, committed] = await Promise.all([store.items(), store.byLot(), store.committed()]); return computeSellable(items, rows, committed); }
+  // Only boxes the website may sell count (released or legacy lots, before their website stop date).
+  async function sellable() { const [items, rows, committed, ctx] = await Promise.all([store.items(), store.byLot(), store.committed(), lotContext(store, now())]); return computeSellable(items, rows, committed, ctx); }
 
   return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
 }
@@ -455,4 +511,4 @@ function supabaseStore() {
 let real = null;
 const instance = () => real || (real = makeInventory(supabaseStore()));
 
-module.exports = { makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, committedBoxes, firstShortage, instance };
+module.exports = { makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, lotContext, committedBoxes, firstShortage, instance };
