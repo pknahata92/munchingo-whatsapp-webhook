@@ -1357,5 +1357,36 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close(); s.close();
   });
 
+  // Final review I3: the biscuit count form asks for the lot only when the count is higher than on hand, prefilled with the oldest lot
+  // that can still ship; the extra boxes go to that lot.
+  list.push(async () => {
+    const page = (w) => w.text(w.q('#viewStock .pagehead'));
+    const o = await openAdmin('owner', { width: 375 });
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const apiGet = async (p) => (await (await fetch(BASE + p, { headers: { Authorization: 'Bearer ' + token } })).json());
+    o.click(o.byText('#tabs .tab', /^Stock$/)); await until(() => page(o) === 'Stock' && o.qa('#viewStock .line').length >= 4, 5000, 'the stock page');
+    const row = o.qa('#viewStock .line').find((l) => o.text(l).indexOf('Atta Ajwain') === 0);
+    const inv0 = (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-ajwain');
+    const lots = ((await apiGet('/admin/api/stock/lots')).lots || []).filter((l) => l.code && l.slug === 'atta-ajwain' && l.status !== 'rejected' && l.status !== 'void').sort((a, b) => String(a.bestBefore || '9').localeCompare(String(b.bestBefore || '9')));
+    const want = (lots.find((l) => l.canShip) || lots[0] || {}).code;
+    o.click(Array.from(row.querySelectorAll('button')).find((b) => /^Count$/.test(o.text(b))));
+    await until(() => /^Count: Atta Ajwain/.test(page(o)) && o.q('#cnt-lot') && o.q('#cnt-lot').options.length > 0 && o.q('#cnt-lot').value !== '', 5000, 'the count form with its lots').catch(() => {});
+    const box = o.q('#cnt-lotbox'), sel = o.q('#cnt-lot'), num = o.qa('#viewStock input')[0];
+    ok(!!box && box.hidden, 'the lot picker is hidden until the count is higher than on hand');
+    o.set(num, String(Math.max(0, inv0.on_hand - 1)));
+    ok(box && box.hidden, 'a lower count shows no lot picker');
+    o.set(num, String(inv0.on_hand + 1));
+    ok(box && !box.hidden && sel.value === want && Array.from(sel.options).every((x) => lots.some((l) => l.code === x.value)), 'a higher count shows the lot picker, prefilled with the oldest lot that can still ship (' + (sel ? sel.value + ' of ' + Array.from(sel.options).map((x) => x.value).join(',') : 'none') + ', want ' + want + ')');
+    o.set(o.qa('#viewStock input')[1], 'found one behind the shelf');
+    o.click(o.byText('#viewStock button', /^Save count$/));
+    await until(async () => (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-ajwain').on_hand === inv0.on_hand + 1, 5000, 'the count to save').catch(() => {});
+    const h1 = ((await apiGet('/admin/api/inventory/history?slug=atta-ajwain&limit=1')).movements || [])[0] || {};
+    ok(h1.type === 'COUNT_FIX' && h1.qty === 1 && h1.lot_code === want, 'saving puts the extra box in that lot (' + JSON.stringify([h1.type, h1.qty, h1.lot_code]) + ')');
+    await until(() => /in lot /.test(o.text(o.q('#toast'))), 3000, 'the toast').catch(() => {});
+    ok(new RegExp('^Fixed by \\+1 in lot ' + want).test(o.text(o.q('#toast'))), 'the toast names the lot (' + o.text(o.q('#toast')) + ')');
+    ok(o.errors.length === 0, 'no page errors on the count form (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };

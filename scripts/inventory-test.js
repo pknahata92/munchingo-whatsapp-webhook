@@ -619,7 +619,9 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       // P1 (fix round 1): packing never sends a box without a lot (spec 1). Stock with no lot (a count up) is not packable, so a
       // lot-less sale after lots_from is always an owner override, a fallback shortfall or an untracked flavour, and needsLot is right.
       const { st, inv } = mk6();
-      await inv.count({ slug: 'atta-kesari', counted: 3, note: 'found 3 boxes', actor: A });   // a count up is a lot-less line
+      // Final review I3 changed this setup: a biscuit count-up now names its lot, so the lot-less stock here is an old count-up written
+      // before that change (the live ledger can hold such lines); the checks below are unchanged
+      await st.insert([{ item_slug: 'atta-kesari', qty: 3, type: 'COUNT_FIX', lot_code: null, best_before: null, note: 'found 3 boxes' }]);
       const plan = await inv.planForOrder({ items: KES2, at: AT });
       ok(plan.rows.length === 0 && plan.short.length === 1 && plan.short[0].boxes === 2 && plan.short[0].hint === 'Receive the delivery first.', 'P1: 3 boxes counted with no lot do not cover a pack of 2 (' + JSON.stringify(plan) + ')');
       const r = await inv.deductForOrder({ orderId: 'MNG-T6C', items: [], at: AT, plan, overrideNote: 'found in the store' });
@@ -927,6 +929,38 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     st2.lots = async () => { throw new Error('db down'); };
     const other = await inv2.sellable().then(() => null, (e) => e);
     ok(other && other.message === 'db down', 'I1: any other failure still throws (the last known answer is kept by utils/stock.js) (' + (other && other.message) + ')');
+  }
+
+  // Final review I3: a biscuit count higher than on hand says which lot the extra boxes belong to, so the website never sells boxes
+  // packing would refuse. Count-downs and packaging are unchanged.
+  {
+    const st = memStore('2026-10-16T00:00:00.000Z'); const inv = makeInventory(st);
+    await st.insertLots([
+      { item_slug: 'atta-ajwain', lot_code: 'MNGA-261020-01', status: 'released', best_before: '2027-01-18', aliases: ['20OCT26'] },
+      { item_slug: 'atta-ajwain', lot_code: 'MNGA-261025-01', status: 'hold', best_before: '2027-01-23', aliases: [] },
+      { item_slug: 'atta-ajwain', lot_code: 'MNGA-261001-01', status: 'rejected', best_before: '2026-12-30', aliases: [] }]);
+    await st.insert([{ item_slug: 'atta-ajwain', qty: 2, type: 'RECEIVE', lot_code: 'MNGA-261020-01', best_before: '2027-01-18' }, { item_slug: 'atta-ajwain', qty: 4, type: 'RECEIVE', lot_code: 'MNGA-261025-01', best_before: '2027-01-23' },
+      { item_slug: 'atta-ajwain', qty: 1, type: 'RECEIVE', lot_code: 'OLDLEG', best_before: '2027-01-10' }]);
+    const n0 = st.mv.length;
+    await rejects(inv.count({ slug: 'atta-ajwain', counted: 10, note: 'found 3', actor: A }), /^Choose which lot the extra boxes belong to\.$/, 'I3: a biscuit count-up needs the lot');
+    await rejects(inv.count({ slug: 'atta-ajwain', counted: 10, note: 'found 3', lot: 'NOPE-1', actor: A }), /^NOPE-1 is not a lot of Atta Ajwain\.$/, 'I3: the lot must be a lot of that flavour');
+    await rejects(inv.count({ slug: 'atta-ajwain', counted: 10, note: 'found 3', lot: 'MNGK-261020-01', actor: A }), /is not a lot of Atta Ajwain/, 'I3: another flavour\'s lot is refused');
+    await rejects(inv.count({ slug: 'atta-ajwain', counted: 10, note: 'found 3', lot: 'MNGA-261001-01', actor: A }), /^Lot MNGA-261001-01 was rejected or corrected, so boxes cannot be added to it\.$/, 'I3: a rejected lot is refused');
+    await rejects(inv.count({ slug: 'atta-ajwain', counted: 10, lot: 'MNGA-261020-01', actor: A }), /Add a short note/, 'I3: the note is still asked for first');
+    eq(st.mv.length, n0, 'I3: refused counts write nothing');
+    const r = await inv.count({ slug: 'atta-ajwain', counted: 10, note: 'found 3', lot: '20oct26', actor: A });   // an alias, any case (C1 rule)
+    const fix = st.mv.slice(-1)[0];
+    eq([r.diff, r.onHand, fix.type, fix.qty, fix.lot_code, fix.best_before], [3, 10, 'COUNT_FIX', 3, 'MNGA-261020-01', '2027-01-18'], 'I3: the +3 line carries the lot (resolved from its alias) and the lot\'s best before');
+    const plan = await inv.planForOrder({ items: [{ slug: 'atta-ajwain', quantity: 6 }], at: '2026-10-31T06:00:00.000Z' });
+    eq([(await inv.sellable())['atta-ajwain'], plan.short.length, plan.rows.reduce((n, x) => n - x.qty, 0)], [6, 0, 6], 'I3: what the website sells (6) packing can pack (the 4 held boxes are neither)');
+    await inv.count({ slug: 'atta-ajwain', counted: 12, note: 'found 2 more', lot: 'MNGA-261025-01', actor: A });
+    eq([st.mv.slice(-1)[0].lot_code, (await inv.sellable())['atta-ajwain']], ['MNGA-261025-01', 6], 'I3: boxes added to a held lot stay held');
+    await inv.count({ slug: 'atta-ajwain', counted: 13, note: 'one more', lot: 'OLDLEG', actor: A });
+    eq([st.mv.slice(-1)[0].lot_code, st.mv.slice(-1)[0].best_before], ['OLDLEG', '2027-01-10'], 'I3: a lot from before lots began (ledger only) can take them, with its best before');
+    const down = await inv.count({ slug: 'atta-ajwain', counted: 11, note: 'two broken', actor: A });
+    ok(down.diff === -2 && st.mv.slice(-1)[0].type === 'COUNT_FIX' && st.mv.slice(-1)[0].qty < 0, 'I3: a count-down needs no lot (unchanged)');
+    const pk = await inv.count({ slug: 'packing-tape', counted: 5, note: 'bought', actor: A });
+    ok(pk.diff === 5 && st.mv.slice(-1)[0].lot_code === null, 'I3: a packaging count-up needs no lot (unchanged)');
   }
 
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

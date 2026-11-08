@@ -1930,8 +1930,27 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   function invCount(it) {
     var pk = it.kind === 'packaging';
     var c = numIn('what you counted'), note = h('input', { placeholder: pk ? 'Note (optional)' : 'Why it differs (needed if the number changes)' });
-    invForm('Count', it, [h('label', {}, 'Counted on the shelf'), c, h('label', {}, 'Note'), note], function (done) {
-      postInv('count', { slug: it.slug, counted: c.value, note: note.value || (pk ? 'Counted by hand' : '') }, done, function (x) { return pk ? 'Count saved: ' + x.onHand + ' ' + it.unit + (x.diff ? '' : ' (same as before)') : (x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'); });
+    // Biscuits (final review I3): more boxes than on hand must go to a lot, or the website would sell boxes packing refuses. The lot
+    // picker shows only then, filled with the oldest lot that can still ship.
+    var lotSel = null, lotWrap = null;
+    if (!pk) {
+      lotSel = h('select', { id: 'cnt-lot', 'aria-label': 'Lot of the extra boxes' }, h('option', { value: '' }, 'Loading the lots...'));
+      lotWrap = h('div', { id: 'cnt-lotbox', hidden: true }, h('label', { for: 'cnt-lot' }, 'Which lot are the extra boxes from?'), lotSel);
+      var syncLot = function () { lotWrap.hidden = !(dlTrim(c.value) !== '' && Number(c.value) > it.on_hand); };
+      c.addEventListener('input', syncLot); c.addEventListener('change', syncLot);
+      api('/admin/api/stock/lots').then(function (j) {
+        var mine = (j && j.ok ? j.lots || [] : []).filter(function (l) { return l.code && l.slug === it.slug && l.status !== 'rejected' && l.status !== 'void'; })
+          .sort(function (a, b) { return String(a.bestBefore || '9').localeCompare(String(b.bestBefore || '9')); });
+        lotSel.textContent = '';
+        if (!mine.length) return lotSel.appendChild(h('option', { value: '' }, 'No ' + it.name + ' lot yet: receive the boxes with New delivery'));
+        mine.forEach(function (l) { lotSel.appendChild(h('option', { value: l.code }, l.code + ' (' + l.onHand + ' on hand' + (l.status === 'hold' ? ', on hold' : '') + ')')); });
+        lotSel.value = (mine.filter(function (l) { return l.canShip; })[0] || mine[0]).code;
+      }, function () { lotSel.textContent = ''; lotSel.appendChild(h('option', { value: '' }, 'No signal: the lots could not be loaded')); });
+    }
+    invForm('Count', it, [h('label', {}, 'Counted on the shelf'), c, lotWrap, h('label', {}, 'Note'), note], function (done) {
+      var body = { slug: it.slug, counted: c.value, note: note.value || (pk ? 'Counted by hand' : '') };
+      if (lotWrap && !lotWrap.hidden) body.lot = lotSel.value;
+      postInv('count', body, done, function (x) { return pk ? 'Count saved: ' + x.onHand + ' ' + it.unit + (x.diff ? '' : ' (same as before)') : (x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + (body.lot ? ' in lot ' + body.lot : '') + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'); });
     }, 'Save count');
   }
   // Several flavours in one entry (e.g. everything sold at a fair): one reason, one note, a count per flavour; all or nothing.

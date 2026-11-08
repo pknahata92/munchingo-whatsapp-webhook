@@ -381,8 +381,22 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     return rows;
   }
 
-  // Physical count: type what is on the shelf; the difference is written as one COUNT_FIX line with a note.
-  async function count({ slug, counted, note, actor }) {
+  // A biscuit count-up names the lot the extra boxes belong to (final review I3): a lot of that flavour, own code or alias resolved as
+  // everywhere else, not rejected or corrected (a held lot is fine: the boxes stay held). Lot-less boxes would be sold by the website and
+  // refused by packing.
+  async function countLot(item, lot) {
+    const code = cleanText(lot, 60);
+    if (!code) throw new StockError('Choose which lot the extra boxes belong to.');
+    const [lotRows, ledger] = await Promise.all([orMissing(Promise.resolve().then(() => store.lots()), []), store.byLot()]);
+    const t = await lotOf(item.slug, code, { lotRows: lotRows || [], ledger: ledger || [] });
+    if (!t) throw new StockError(`${code} is not a lot of ${item.name}.`, 409);
+    if (t.status === 'rejected' || t.status === 'void') throw new StockError(`Lot ${t.lot_code} was rejected or corrected, so boxes cannot be added to it.`, 409);
+    return t;
+  }
+
+  // Physical count: type what is on the shelf; the difference is written as one COUNT_FIX line with a note. A biscuit count higher than
+  // on hand needs `lot` (countLot); count-downs come off the usable lots, oldest first, as before.
+  async function count({ slug, counted, note, lot = null, actor }) {
     const item = await need(slug);
     const c = int(counted);
     if (!Number.isInteger(c) || c < 0 || c > MAX_QTY) throw new StockError('Enter the number you counted (0 or more).');
@@ -394,7 +408,9 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     const nt = cleanText(note, 300);
     if (!nt) throw new StockError(`The system says ${have}, you counted ${c}. Add a short note on why (breakage, miscount, sample...).`, 400, { diff, onHand: have });
     const base = { type: 'COUNT_FIX', note: nt, ...who(actor) };
-    const rows = diff > 0 ? [{ ...base, item_slug: slug, qty: diff, lot_code: null, best_before: null }] : await outRows(item, -diff, base);
+    let rows;
+    if (diff > 0 && item.kind === 'product') { const t = await countLot(item, lot); rows = [{ ...base, item_slug: slug, qty: diff, lot_code: t.lot_code, best_before: t.best_before || null }]; }
+    else rows = diff > 0 ? [{ ...base, item_slug: slug, qty: diff, lot_code: null, best_before: null }] : await outRows(item, -diff, base);
     await store.insert(rows);
     await stamp();
     return { onHand: await onHand(slug), diff };

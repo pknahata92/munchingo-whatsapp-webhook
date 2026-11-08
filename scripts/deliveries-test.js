@@ -498,7 +498,8 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
       await inv.receive({ slug: 'atta-ajwain', received: 2, lot: 'HELD', bestBefore: '2026-11-01', actor: A.actor });
       await inv.receive({ slug: 'atta-lite-sugar', received: 9, lot: 'NOROW', bestBefore: '2026-10-01', actor: A.actor });   // legacy, ledger only, expired
       await inv.receive({ slug: 'atta-lite-sugar', received: 7, lot: 'UNDATED', actor: A.actor });
-      await inv.count({ slug: 'atta-lite-sugar', counted: 23, note: 'found', actor: A.actor });   // +7 with no lot
+      // Final review I3 changed this setup: a biscuit count-up now names its lot, so the +7 with no lot is an old count-up line from before
+      await st.insert([{ item_slug: 'atta-lite-sugar', qty: 7, type: 'COUNT_FIX', lot_code: null, best_before: null, note: 'found' }]);   // +7 with no lot
       await rejects(dl.throwExpired({}, A), /^Only the owner can throw away expired stock\.$/, 'staff refused', 403);
       eq(st.mv.filter((x) => x.type === 'EXPIRED').length, 0, 'staff wrote nothing');
       const r = await dl.throwExpired({ slug: 'atta-kesari' }, OWNER);

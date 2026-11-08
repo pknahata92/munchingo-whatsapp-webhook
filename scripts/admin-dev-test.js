@@ -441,6 +441,19 @@ async function login(email) {
     ok((await list()).find((i) => i.slug === 'label-stamp').status === 'out', 'with a low level of 5 the counted 0 shows OUT');
   }
 
+  // Final review I3: a biscuit count higher than on hand names the lot of the extra boxes; a count-down does not
+  {
+    const ajw = async () => (await call('/inventory', s.token)).j.items.find((i) => i.slug === 'atta-ajwain');
+    const a0 = await ajw();
+    const up0 = await call('/inventory/count', s.token, { slug: 'atta-ajwain', counted: a0.on_hand + 2, note: 'found two' });
+    ok(up0.s === 400 && up0.j.error === 'Choose which lot the extra boxes belong to.' && (await ajw()).on_hand === a0.on_hand, 'I3: a count-up with no lot is refused and changes nothing (' + up0.s + ' ' + up0.j.error + ')');
+    const up1 = await call('/inventory/count', s.token, { slug: 'atta-ajwain', counted: a0.on_hand + 2, note: 'found two', lot: 'mngA-261016-01' });
+    const a1 = await ajw(), h1 = (await call('/inventory/history?slug=atta-ajwain&limit=1', s.token)).j.movements[0];
+    ok(up1.j.ok && up1.j.diff === 2 && a1.on_hand === a0.on_hand + 2 && h1.type === 'COUNT_FIX' && h1.qty === 2 && h1.lot_code === '15OCT26', 'I3: with the lot (its sticker code, any case) the +2 goes to lot 15OCT26 (' + JSON.stringify([up1.s, up1.j.error, h1 && h1.lot_code]) + ')');
+    const dn = await call('/inventory/count', s.token, { slug: 'atta-ajwain', counted: a1.on_hand - 2, note: 'back to the shelf count' });
+    ok(dn.j.ok && dn.j.diff === -2, 'I3: a count-down needs no lot (' + dn.s + ' ' + dn.j.error + ')');
+  }
+
   // ── Batch receiving, Task 10: lot and delivery routes, private photos, biscuit receipts only through New delivery ──
   {
     const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
