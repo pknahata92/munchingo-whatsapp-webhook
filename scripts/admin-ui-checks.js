@@ -1315,5 +1315,47 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     odd.close();
   });
 
+  // Final review I2: a lot the owner put on hold (recall, complaint) is shown as "Held by the owner" with no Release for staff; the
+  // staff "lots on hold" count is new deliveries only; the owner sees both, labelled.
+  list.push(async () => {
+    const page = (w) => w.text(w.q('#viewStock .pagehead'));
+    const btn = (w, re, root) => Array.from((root || w.q('#viewStock')).querySelectorAll('button')).find((b) => re.test(w.text(b)));
+    const istDay = (n) => new Date(Date.now() + 330 * 60000 - n * 86400000).toISOString().slice(0, 10);
+    const stamp = String(Date.now()).slice(-7);
+    const o = await openAdmin('owner', { width: 375 }), s = await openAdmin('staff', { width: 375 });
+    const tok = { o: o.win.localStorage.getItem('mngAdminToken'), s: s.win.localStorage.getItem('mngAdminToken') };
+    const api = async (p, who, body) => { const r = await fetch(BASE + p, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok[who] }, body: body ? JSON.stringify(body) : undefined }); return { s: r.status, j: await r.json().catch(() => ({})) }; };
+    const d = await api('/admin/api/stock/deliveries', 's', { id: 'practice-i2-' + stamp, billNo: 'I2-' + stamp, bakeDate: istDay(2), cartons: 1, invoiceRupees: 1, freight: { porter: 100 }, confirm: ['invoice_mismatch', 'no_freight', 'cost_jump', 'stop_soon', 'old_bake', 'large'], rows: [{ slug: 'atta-ajwain', invoiceBoxes: 5, counted: 5, rateRupees: 85 }] });
+    const K = d.j.ok ? d.j.lots[0].code : null;
+    const rl = K ? await api('/admin/api/stock/lots/' + encodeURIComponent(K) + '/release', 's', { slug: 'atta-ajwain', tasted: true, weightG: 258 }) : { j: {} };
+    const hd = K ? await api('/admin/api/stock/lots/' + encodeURIComponent(K) + '/hold', 'o', { slug: 'atta-ajwain', reason: 'recall test' }) : { j: {} };
+    ok(!!K && rl.j.ok && hd.j.ok, 'setup: staff save and release an Ajwain lot, the owner holds it (' + JSON.stringify([d.s, d.j.error, rl.j.error, hd.j.error]) + ')');
+    const openLotOf = async (w) => { w.q('#viewStock').textContent = ''; w.click(w.byText('#tabs .tab', /^Stock$/)); await until(() => page(w) === 'Stock' && !!btn(w, /^Lots$/), 5000, 'the stock page'); w.click(btn(w, /^Lots$/)); await until(() => w.qa('#viewStock .lotcard').some((c) => c.getAttribute('data-code') === K), 5000, 'the Lots list'); w.click(w.qa('#viewStock .lotcard').find((c) => c.getAttribute('data-code') === K)); await until(() => page(w) === K, 5000, 'the lot page'); };
+    await openLotOf(s);
+    let v = s.text(s.q('#viewStock'));
+    ok(/Held by the owner: recall test\. Only the owner can release it\./.test(v) && !btn(s, /^Release$/), 'staff: the lot page says Held by the owner with the reason, and has no Release (' + v.slice(0, 200) + ')');
+    await openLotOf(o);
+    v = o.text(o.q('#viewStock'));
+    ok(/Held by the owner: recall test/.test(v) && !/Only the owner can release it/.test(v) && !!btn(o, /^Release$/), 'owner: the same line, and Release');
+    // Needs attention: the held lot is listed apart, with its reason; staff get no Release there either
+    s.q('#viewStock').textContent = ''; s.click(s.byText('#tabs .tab', /^Stock$/)); await until(() => page(s) === 'Stock', 5000, 'stock');
+    await new Promise((r) => setTimeout(r, 400));   // let the needs strip fill in
+    ok(!s.qa('#needs .need, #stockNeeds .need').some((b) => /you put on hold/.test(s.text(b))), 'staff never see the owner\'s held-lots card (' + s.qa('#needs .need, #stockNeeds .need').map((b) => s.text(b)).join(' | ') + ')');
+    o.q('#viewStock').textContent = ''; o.click(o.byText('#tabs .tab', /^Stock$/)); await until(() => page(o) === 'Stock', 5000, 'stock');
+    await until(() => o.qa('#needs .need, #stockNeeds .need').some((b) => /\d+\s*lots? you put on hold: tap to see/.test(o.text(b))), 5000, 'the owner card').catch(() => {});
+    const oc = o.qa('#stockNeeds .need, #needs .need').find((b) => /\d+\s*lots? you put on hold: tap to see/.test(o.text(b)));
+    ok(!!oc, 'the owner sees a labelled card for the lots they put on hold (' + o.qa('#needs .need, #stockNeeds .need').map((b) => o.text(b)).join(' | ') + ')');
+    if (oc) o.click(oc);
+    await until(() => page(o) === 'Needs attention', 5000, 'the owner attention page').catch(() => {});
+    const card = o.qa('#viewStock .ownerheld').find((c) => c.getAttribute('data-code') === K);
+    ok(!!card && /Held by the owner: recall test/.test(o.text(card)) && !o.qa('#viewStock .heldlot').some((c) => c.getAttribute('data-code') === K), 'Needs attention lists it under Held by the owner with the reason, not under Lots on hold');
+    // the server agrees: staff release is refused
+    const sr = await api('/admin/api/stock/lots/' + encodeURIComponent(K) + '/release', 's', { slug: 'atta-ajwain', tasted: true, weightG: 258 });
+    ok(sr.s === 403 && sr.j.error === 'This lot was put on hold by the owner. Only the owner can release it.', 'and the server refuses a staff release (' + sr.s + ' ' + sr.j.error + ')');
+    ok(o.errors.length === 0 && s.errors.length === 0, 'no page errors (' + o.errors.concat(s.errors).join(' | ').slice(0, 300) + ')');
+    await api('/admin/api/stock/lots/' + encodeURIComponent(K) + '/release', 'o', { slug: 'atta-ajwain', tasted: true, weightG: 258 });   // leave the practice stock as it was
+    o.close(); s.close();
+  });
+
   return list;
 };

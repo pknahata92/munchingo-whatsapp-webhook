@@ -396,12 +396,13 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     await st.insertLots([{ item_slug: 'atta-kesari', lot_code: '15OCT26', bake_date: '2026-10-16', best_before: '2027-01-13', status: 'released' }]);
     await inv.receive({ slug: 'atta-kesari', received: 50, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
     await dl.hold({ code: '15OCT26', reason: 'x' }, OWNER);
-    const r = await dl.release({ code: '15OCT26', tasted: true, weightG: 300 }, A);
+    // Final review I2 changed this release from staff (A) to the owner: only the owner releases a lot the owner put on hold
+    const r = await dl.release({ code: '15OCT26', tasted: true, weightG: 300 }, OWNER);
     eq([st.mv.filter((m) => m.type === 'USE').length], [0], 'legacy lot: Hold -> Release writes no USE rows');
     // ledger-only lot created by findLot
     await inv.receive({ slug: 'atta-ajwain', received: 20, lot: 'MNGA-261101-01', bestBefore: '2027-01-30', actor: A.actor });
     await dl.hold({ code: 'MNGA-261101-01', reason: 'x' }, OWNER);
-    const r2 = await dl.release({ code: 'MNGA-261101-01', tasted: true, weightG: 300 }, A);
+    const r2 = await dl.release({ code: 'MNGA-261101-01', tasted: true, weightG: 300 }, OWNER);   // I2: owner, as above
     eq([st.mv.filter((m) => m.type === 'USE').length], [0], 'ledger-only lot: Hold -> Release writes no USE rows');
   }
   {
@@ -1108,6 +1109,37 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     const lst = (await dl2.listLots()).filter((l) => l.slug === 'atta-original').map((l) => l.code + ':' + l.onHand).sort();
     eq(lst, ['27OCT26:0', 'MNGO-261027-01:80'], 'C1 old shape: the Lots list never counts the 80 boxes twice');
     eq((await inv.sellable())['atta-original'], 0, 'C1 old shape: the hold takes the 80 boxes off the website');
+  }
+
+  // ---- Final review I2: staff release a new delivery, never a lot the owner put on hold (recall, complaint) ----
+  {
+    const { st, dl, inv } = fresh();
+    const OWNER_HELD = 'This lot was put on hold by the owner. Only the owner can release it.';
+    const r = await dl.save(input({ invoiceRupees: 10000, rows: [{ slug: 'atta-kesari', invoiceBoxes: 100, counted: 100, rateRupees: 100 }] }), A);
+    const K = r.lots[0].code;
+    const fresh1 = (await dl.listLots()).find((l) => l.code === K);
+    ok(fresh1.status === 'hold' && !fresh1.ownerHold, 'I2: a new delivery is on hold, not held by the owner');
+    eq((await dl.release({ code: K, tasted: true, weightG: 260 }, A)).lot.status, 'released', 'I2: staff release a new delivery');
+    await dl.hold({ code: K, reason: 'Customer complaint: soft biscuits' }, OWN);
+    await rejects(dl.release({ code: K, tasted: true, weightG: 260 }, A), new RegExp('^' + OWNER_HELD.replace(/\./g, '\\.') + '$'), 'I2: staff cannot release a lot the owner held after release', 403);
+    eq((await inv.sellable())['atta-kesari'], 0, 'I2: and it stays off the website');
+    const held = (await dl.listLots()).find((l) => l.code === K);
+    eq([held.status, held.ownerHold, held.holdReason], ['hold', true, 'Customer complaint: soft biscuits'], 'I2: the Lots list marks it held by the owner, with the reason');
+    const lp = await dl.lotPage(K);
+    eq([lp.lot.status, lp.lot.ownerHold, lp.lot.holdReason], ['hold', true, 'Customer complaint: soft biscuits'], 'I2: the lot page too');
+    const dp = await dl.deliveryPage(r.delivery.id, A);
+    eq([dp.lots[0].status, dp.lots[0].ownerHold], ['hold', true], 'I2: and the delivery page');
+    eq((await dl.release({ code: K, tasted: true, weightG: 262 }, OWN)).lot.status, 'released', 'I2: the owner releases it');
+    // a backfilled lot (released by the migration, no released_at) held for a recall: still the owner's
+    await st.insertLots([{ item_slug: 'atta-original', lot_code: '15OCT26', status: 'released', best_before: '2027-01-13', aliases: ['MNGO-261016-01'] }]);
+    await st.insert([{ item_slug: 'atta-original', qty: 30, type: 'RECEIVE', lot_code: '15OCT26', best_before: '2027-01-13' }]);
+    await dl.hold({ code: '15OCT26', slug: 'atta-original', reason: 'Krazy Bakers recall' }, OWN);
+    await rejects(dl.release({ code: '15OCT26', slug: 'atta-original', tasted: true, weightG: 260 }, A), /^This lot was put on hold by the owner\. Only the owner can release it\.$/, 'I2: staff cannot release a backfilled lot the owner held', 403);
+    ok((await dl.listLots()).find((l) => l.code === '15OCT26' && l.slug === 'atta-original').ownerHold === true, 'I2: the backfilled lot is listed as held by the owner');
+    const k2 = await dl.save(input({ billNo: 'I2-2', invoiceRupees: 8500, rows: [{ slug: 'atta-ajwain', invoiceBoxes: 100, counted: 100, rateRupees: 85 }] }), A);
+    ok(!('ownerHold' in (await dl.listLots()).find((l) => l.code === k2.lots[0].code)), 'I2: a new delivery on hold carries no ownerHold mark in the Lots list');
+    const ov = (await inv.overview()).items.find((i) => i.slug === 'atta-original');
+    ok(ov.lots.some((l) => l.lot_code === '15OCT26' && l.status === 'hold' && l.owner_hold === true), 'I2: the Stock screen lot line says held by the owner (' + JSON.stringify(ov.lots) + ')');
   }
 
   console.log(pass + ' passed, ' + fail + ' failed');

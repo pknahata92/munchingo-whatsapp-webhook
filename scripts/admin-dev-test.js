@@ -520,9 +520,16 @@ async function login(email) {
     ok(br.j.ok, 'staff record a box broken while cartoning (' + br.s + ' ' + br.j.error + ')');
     const hd = await call(`/stock/lots/${enc(lo.code)}/hold`, o.token, { reason: 'second look' });
     ok(hd.j.ok && hd.j.lot.status === 'hold', 'the owner puts the released lot on hold');
+    // Final review I2: staff cannot release a lot the owner put on hold (a recall or complaint); the Lots list marks it
+    const srI2 = await call(`/stock/lots/${enc(lo.code)}/release`, s.token, { tasted: true, weightG: 260 });
+    ok(srI2.s === 403 && srI2.j.error === 'This lot was put on hold by the owner. Only the owner can release it.', 'staff release of a lot the owner held is refused (' + srI2.s + ' ' + srI2.j.error + ')');
+    const lsI2 = ((await call('/stock/lots', s.token)).j.lots || []).find((l) => l.code === lo.code);
+    ok(lsI2 && lsI2.status === 'hold' && lsI2.ownerHold === true && lsI2.holdReason === 'second look', 'the Lots list marks it held by the owner, with the reason (' + JSON.stringify(lsI2) + ')');
     ok((await call(`/stock/lots/${enc(la.code)}/reject`, o.token, { reason: 'stale smell' })).j.ok, 'the owner rejects a lot still on hold');
     const fx = await call(`/stock/lots/${enc(lo.code)}/fix`, o.token, { newBakeDate: new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10) });
     ok(fx.j.ok && fx.j.to && fx.j.to !== lo.code, 'the owner fixes the bake date and the lot gets a new code (' + fx.s + ' ' + JSON.stringify(fx.j).slice(0, 160) + ')');
+    const orl = await call(`/stock/lots/${enc(fx.j.to || lo.code)}/release`, o.token, { tasted: true, weightG: 261 });
+    ok(orl.j.ok && orl.j.lot.status === 'released', 'I2: the owner releases the lot they held (' + orl.s + ' ' + orl.j.error + ')');
     const ex = await call('/stock/expired', o.token, { slug: 'atta-original' });
     ok(ex.j.ok && Array.isArray(ex.j.lines), 'the owner can run Throw away expired (' + ex.s + ')');
     // correct a delivery: staff who saved it, within a day

@@ -272,6 +272,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     const lot = await findLot(input);
     if (lot.status === 'released') fail('This lot is already released.');
     if (lot.status === 'rejected' || lot.status === 'void') fail('This lot was rejected or corrected, so it cannot be released.');
+    // Final review I2: staff release a new delivery (never released); a lot the owner put on hold after release (a recall, a complaint)
+    // waits for the owner.
+    if (!isOwner && lots.ownerHold(lot)) throw new StockError('This lot was put on hold by the owner. Only the owner can release it.', 403);
     if (input.tasted !== true) fail('Tick that you tasted one box and it is OK.');
     const w = typeof input.weightG === 'number' ? input.weightG : (empty(input.weightG) ? NaN : Number(String(input.weightG).trim()));
     if (!Number.isInteger(w) || w < 100 || w > 1000) fail('Enter the weight of one box in grams.');
@@ -416,7 +419,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       // its own line of the saved result: by code (or an older code it was fixed from), else the flavour's (two lots of one flavour differ)
       const was = stored.find((x) => x.slug === l.item_slug && (x.code === l.lot_code || (l.aliases || []).includes(x.code))) || stored.find((x) => x.slug === l.item_slug) || {};
       const bb = l.best_before ? String(l.best_before).slice(0, 10) : null, cut = bb ? lots.cutoffs(bb, s) : null;
-      out.push({ code: l.lot_code, slug: l.item_slug, name: await nameOf(l.item_slug), status: l.status, good: was.good != null ? was.good : null, onHand: onHandOf(ledger, l.item_slug, l.lot_code),
+      out.push({ code: l.lot_code, slug: l.item_slug, name: await nameOf(l.item_slug), status: l.status, ownerHold: lots.ownerHold(l), good: was.good != null ? was.good : null, onHand: onHandOf(ledger, l.item_slug, l.lot_code),
         bakeDate: l.bake_date ? String(l.bake_date).slice(0, 10) : null, bestBefore: bb, websiteStop: cut ? cut.websiteStop : null, lastShip: cut ? cut.lastShip : null,
         perGoodPaise: l.unit_cost_paise != null ? Number(l.unit_cost_paise) : (was.perGoodPaise != null ? was.perGoodPaise : null) });
     }
@@ -551,7 +554,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       const rows = w.ledger.filter((r) => r.item_slug === l.item_slug && codes.includes(r.lot_code) && r.best_before);
       const bb = day(l.best_before) || rows.map((r) => day(r.best_before)).sort()[0] || null;
       const p = lots.parseCode(l.lot_code);
-      out.push(entry(l.item_slug, l.lot_code, l.status == null ? null : l.status, day(l.bake_date) || (p && p.bakeDate) || null, bb, sumOf(l.item_slug, codes)));
+      const e = entry(l.item_slug, l.lot_code, l.status == null ? null : l.status, day(l.bake_date) || (p && p.bakeDate) || null, bb, sumOf(l.item_slug, codes));
+      if (lots.ownerHold(l)) { e.ownerHold = true; e.holdReason = l.hold_reason || null; }   // I2: held by the owner, not a new delivery
+      out.push(e);
     }
     const legacy = new Map();
     for (const r of w.ledger) {
@@ -648,7 +653,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     const current = lot ? lot.lot_code : cand.code;
     return {
       lot: { code: current, slug: cand.slug, name: w.products.get(cand.slug), status: lot ? (lot.status == null ? null : lot.status) : null, legacy: !lot, aliases: lot ? (lot.aliases || []) : [], supplierBatch: lot ? lot.supplier_batch || null : null,
-        holdReason: lot ? lot.hold_reason || null : null, rejectReason: lot ? lot.reject_reason || null : null, releasedAt: lot ? lot.released_at || null : null, releasedBy: lot ? lot.released_by || null : null, checkWeightG: lot ? lot.check_weight_g || null : null },
+        holdReason: lot ? lot.hold_reason || null : null, ownerHold: lots.ownerHold(lot), rejectReason: lot ? lot.reject_reason || null : null, releasedAt: lot ? lot.released_at || null : null, releasedBy: lot ? lot.released_by || null : null, checkWeightG: lot ? lot.check_weight_g || null : null },
       delivery, dates, numbers: n,
       perGoodPaise: lot && lot.unit_cost_paise != null ? Number(lot.unit_cost_paise) : null,
       orders,

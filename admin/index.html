@@ -232,7 +232,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var token = ''; try { token = localStorage.getItem('mngAdminToken') || ''; } catch (e) {}
-  var state = { role: 'staff', sel: {}, orders: [], filter: 'topack', reasons: {}, open: null, sort: 'new', range: 'all', from: '', to: '', gift: false, coupon: false, set: false, refused: {}, needsLot: null, held: 0 };
+  var state = { role: 'staff', sel: {}, orders: [], filter: 'topack', reasons: {}, open: null, sort: 'new', range: 'all', from: '', to: '', gift: false, coupon: false, set: false, refused: {}, needsLot: null, held: 0, ownerHeld: 0 };
   try { var saved = JSON.parse(localStorage.getItem('mngAdminView') || '{}'); ['filter', 'sort', 'range', 'from', 'to', 'gift', 'coupon', 'set'].forEach(function (k) { if (saved[k] != null) state[k] = saved[k]; }); } catch (e) {}
   function saveView() { try { localStorage.setItem('mngAdminView', JSON.stringify({ filter: state.filter, sort: state.sort, range: state.range, from: state.from, to: state.to, gift: state.gift, coupon: state.coupon, set: state.set })); } catch (e) {} }
   var IST = 5.5 * 3600 * 1000;
@@ -350,18 +350,20 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       h('p', { class: 'muted' }, 'Stock tab: New delivery when boxes arrive (they wait on hold until tasted and released), Count when you check the shelf, Mark low when something runs short. Packing an order takes its boxes off stock for you.')]);
   }
   function refreshLow() {
-    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; if (j && j.ok) state.held = heldLots(j.items); renderNeeds(); }).catch(function () {});
+    api('/admin/api/inventory').then(function (j) { state.low = j && j.ok ? j.low : []; state.channels = j && j.ok ? j.channels : null; if (j && j.ok) setHeld(j.items); renderNeeds(); }).catch(function () {});
     refreshNeedsLot();
   }
   // Boxes packed without a lot and packs whose lots were not checked (GET /stock/needs-lot), for the Needs cards.
   function refreshNeedsLot() {
     return api('/admin/api/stock/needs-lot').then(function (j) { state.needsLot = j && j.ok ? { lines: j.lines || [], unplanned: j.unplanned } : null; renderNeeds(); }, function () {});
   }
-  // Lots on hold with boxes on the shelf, from the Stock overview (one per flavour and code).
-  function heldLots(items) {
-    var seen = {};
-    (items || []).forEach(function (it) { if (it.kind === 'product') (it.lots || []).forEach(function (l) { if (l.status === 'hold' && l.qty > 0 && l.lot_code) seen[it.slug + '|' + l.lot_code] = 1; }); });
-    return Object.keys(seen).length;
+  // Lots on hold with boxes on the shelf, from the Stock overview (one per flavour and lot: boxes under an old or sticker code count with
+  // their lot). state.held: new deliveries waiting for Release; state.ownerHeld: lots the owner put on hold (recall, complaint), which
+  // only the owner can release (final review I2).
+  function setHeld(items) {
+    var fresh = {}, owner = {};
+    (items || []).forEach(function (it) { if (it.kind === 'product') (it.lots || []).forEach(function (l) { if (l.status === 'hold' && l.qty > 0 && l.lot_code) (l.owner_hold ? owner : fresh)[it.slug + '|' + (l.lot || l.lot_code)] = 1; }); });
+    state.held = Object.keys(fresh).length; state.ownerHeld = Object.keys(owner).length;
   }
   // The stock items of Needs attention: [count, one, many, tap, red]. Shown in Needs you now and at the top of Stock.
   function stockNeedCards() {
@@ -369,6 +371,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     var boxes = nl ? nl.lines.reduce(function (a, l) { return a + (Number(l.boxes) || 0); }, 0) : 0, up = nl && Array.isArray(nl.unplanned) ? nl.unplanned.length : 0;
     return [[boxes, 'box packed without a lot: tap to assign', 'boxes packed without a lot: tap to assign', go, true],
       [state.held || 0, 'lot on hold: tap to release', 'lots on hold: tap to release', go, false],
+      [state.role === 'owner' ? state.ownerHeld || 0 : 0, 'lot you put on hold: tap to see', 'lots you put on hold: tap to see', go, false],   // staff cannot release these
       [up, 'pack was not checked against lots: tap to see', 'packs were not checked against lots: tap to see', go, true]];
   }
   function load() {
@@ -1011,7 +1014,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     Promise.all([api('/admin/api/inventory'), api('/admin/api/stock/needs-lot').then(null, function () { return null; })]).then(function (rs) {
       var j = rs[0], nl = rs[1];
       if (!j.ok) return toast(j.error || 'Could not load stock', 6000);
-      state.inv = j; state.held = heldLots(j.items);
+      state.inv = j; setHeld(j.items);
       if (nl && nl.ok) state.needsLot = { lines: nl.lines || [], unplanned: nl.unplanned };
       renderNeeds();
       var sn = stockNeedCards().filter(function (c) { return c[0] > 0; });
@@ -1468,7 +1471,8 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
           h('div', { class: 'dlotmain' }, h('b', { class: 'dlcode' }, l.code),
             h('small', {}, [l.name || DL_NAME[l.slug] || l.slug, l.good != null ? l.good + ' good boxes' : null, l.perGoodPaise != null ? dlRs(l.perGoodPaise) + ' a box' : null].filter(Boolean).join(' · ')),
             l.websiteStop ? h('small', {}, 'Website stops ' + dlWords(l.websiteStop) + ' · last ship ' + dlWords(l.lastShip) + ' · best before ' + dlWords(l.bestBefore)) : null,
-            h('div', { class: 'acts' }, l.status === 'hold' ? h('button', { class: 'btn small', type: 'button', onclick: function () { openRelease(l, again); } }, 'Release') : null,
+            l.ownerHold ? h('small', {}, 'Held by the owner' + (state.role === 'owner' ? ' (you)' : '') + '.') : null,
+            h('div', { class: 'acts' }, l.status === 'hold' && (!l.ownerHold || state.role === 'owner') ? h('button', { class: 'btn small', type: 'button', onclick: function () { openRelease(l, again); } }, 'Release') : null,
               h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openLot(l.code, l.slug); } }, 'Open lot'))),
           h('span', { class: 'badge ' + st[1] }, st[0]));
       });
@@ -1614,7 +1618,8 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     var cmdBox = h('div', {});
     var about = [];
     if (L.aliases && L.aliases.length) about.push((L.aliases.length === 1 ? 'Sticker code ' : 'Sticker codes ') + L.aliases.join(', '));
-    if (L.status === 'hold' && L.holdReason) about.push('On hold: ' + L.holdReason);
+    if (L.status === 'hold' && L.ownerHold) about.push('Held by the owner: ' + (L.holdReason || 'no reason given') + (own ? '' : '. Only the owner can release it.'));
+    else if (L.status === 'hold' && L.holdReason) about.push('On hold: ' + L.holdReason);
     if (L.status === 'rejected' && L.rejectReason) about.push('Rejected: ' + L.rejectReason);
     if (L.status === 'void') about.push('Its delivery was corrected: this lot no longer counts.');
     if (L.releasedAt) about.push((L.status === 'released' ? 'Released' : 'Released before') + (L.releasedBy ? ' by ' + L.releasedBy : '') + ', ' + when(L.releasedAt) + (L.checkWeightG ? ' (one box weighed ' + L.checkWeightG + ' g)' : ''));
@@ -1635,7 +1640,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       h('div', { class: 'dldates' }, dlDate('Baked', dt.bakeDate), dlDate('Website stops', dt.websiteStop), dlDate('Last ship', dt.lastShip), dlDate('Best before', dt.bestBefore)),
       left ? h('div', { class: 'muted' }, left) : null,
       h('div', { class: 'acts' },
-        L.status === 'hold' ? h('button', { class: 'btn small', type: 'button', onclick: function () { openRelease(lot, again); } }, 'Release') : null,
+        L.status === 'hold' && (own || !L.ownerHold) ? h('button', { class: 'btn small', type: 'button', onclick: function () { openRelease(lot, again); } }, 'Release') : null,
         own && sellable ? h('button', { class: 'btn ghost red small', type: 'button', onclick: function () { lotReasonForm(lot, 'hold', again); } }, 'Hold this lot') : null,
         own && L.status === 'hold' && !L.releasedAt ? h('button', { class: 'btn ghost red small', type: 'button', onclick: function () { lotReasonForm(lot, 'reject', again); } }, 'Reject') : null,
         own && live ? h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openFixLot(lot, dt, again); } }, 'Fix lot') : null,
@@ -1792,8 +1797,9 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       var nl = rs[0], ll = rs[1];
       if (!nl.ok) return toast(nl.error || 'Could not load Needs attention.', 6000);
       var own = state.role === 'owner', lots = ll.ok ? ll.lots || [] : [];
-      var held = lots.filter(function (l) { return l.code && l.status === 'hold' && l.onHand > 0; });
-      state.needsLot = { lines: nl.lines || [], unplanned: nl.unplanned }; state.held = held.length; renderNeeds();
+      var held = lots.filter(function (l) { return l.code && l.status === 'hold' && l.onHand > 0 && !l.ownerHold; });
+      var ownerHeld = lots.filter(function (l) { return l.code && l.status === 'hold' && l.onHand > 0 && l.ownerHold; });   // I2: only the owner releases these
+      state.needsLot = { lines: nl.lines || [], unplanned: nl.unplanned }; state.held = held.length; state.ownerHeld = ownerHeld.length; renderNeeds();
       var lines = (nl.lines || []).map(function (x) {
         var nm = DL_NAME[x.slug] || x.slug, b = boxesText(x.boxes), ctl;
         var can = lots.filter(function (l) { return l.code && l.slug === x.slug && l.canShip && l.onHand >= x.boxes; })
@@ -1812,6 +1818,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
           ctl, h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openOrder(x.orderId); } }, 'Open order')));
       });
       var heldCards = held.map(function (l) { var c = lotCard(l); c.classList.add('heldlot'); return c; });
+      var ownerCards = ownerHeld.map(function (l) { var c = lotCard(l, boxesText(l.onHand) + ' on hand · Held by the owner: ' + (l.holdReason || 'no reason given')); c.classList.add('ownerheld'); return c; });
       var ups = Array.isArray(nl.unplanned) ? nl.unplanned.map(function (u) {
         var mc = own ? h('button', { class: 'btn small', type: 'button', onclick: function () {
           stockSend(mc, '/admin/api/orders/' + encodeURIComponent(u.orderId) + '/stock-checked', {}, function () { refreshLow(); openStockAttention(u.orderId + ' marked checked.'); });
@@ -1823,9 +1830,10 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       var body = [note ? h('div', { class: 'hint', role: 'status' }, note) : null];
       if (lines.length) body.push(section('Boxes packed without a lot', h('p', { class: 'muted', style: 'margin-top:0' }, 'Packed with Pack anyway, or when the lot check could not run. Give each the lot its boxes came from, so a recall finds the buyer.'), lines));
       if (held.length) body.push(section('Lots on hold', h('p', { class: 'muted', style: 'margin-top:0' }, 'On the shelf, but not on the website and not packed until someone tastes, weighs and releases them.'), heldCards));
+      if (ownerHeld.length) body.push(section('Held by the owner', h('p', { class: 'muted', style: 'margin-top:0' }, own ? 'You put these on hold (a recall or a complaint). They stay off the website and out of packing until you release them.' : 'The owner put these on hold (a recall or a complaint). Only the owner can release them.'), ownerCards));
       if (ups === null) body.push(section('Packs not checked against lots', h('p', { class: 'muted' }, 'Could not read these just now. Try again later.')));
       else if (ups.length) body.push(section('Packs not checked against lots', h('p', { class: 'muted', style: 'margin-top:0' }, 'Packed while the lot check could not run, so nothing was blocked. Look at each one' + (own ? ', then mark it checked.' : '; the owner marks it checked.')), ups));
-      if (!lines.length && !held.length && ups && !ups.length) body.push(h('p', { class: 'muted' }, 'Nothing in stock needs attention right now.'));
+      if (!lines.length && !held.length && !ownerHeld.length && ups && !ups.length) body.push(h('p', { class: 'muted' }, 'Nothing in stock needs attention right now.'));
       body.push(h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openLots(); } }, 'Lots'), h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock')));
       invShow('Needs attention', body);
     }, function () { toast('No signal. Try again.', 6000); });
