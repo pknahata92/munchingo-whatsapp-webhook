@@ -460,7 +460,7 @@ router.get('/api/stock', rateLimit({ windowMs: 60_000, max: 60 }), async (req, r
 // on the server regardless of what the browser says.
 router.get('/api/prices', rateLimit({ windowMs: 60_000, max: 60 }), async (req, res) => {
   await require('../utils/stock').ensureFresh();      // refreshes stock and prices together
-  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, prices: require('../utils/catalog').priceBook() });
+  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, prices: require('../utils/catalog').priceBook(), boxRule: Object.fromEntries(Object.entries(require('../utils/boxPricing').BOX_DISCOUNT).map(([n, d]) => [n, d * 100])) });
 });
 
 // Public, read-only: how many Founding 100 places are left. Nothing else about the coupon is exposed.

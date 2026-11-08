@@ -10,13 +10,11 @@ const PRICES = {
   'atta-kesari':      299,
   'atta-lite-sugar':  329,   // Prashant, 27 Oct 2026 (was 299; MRP 350 unchanged)
   'atta-ajwain':      259,
-  'full-range-set':   999,
 };
 
 // The Trio gift set's slug is built dynamically from the 3 chosen flavours
-// (e.g. "trio-gift-set-ajwain-kesari-original") but the price is flat.
+// (e.g. "trio-gift-set-ajwain-kesari-original"); its price comes from the box rule (utils/boxPricing.js).
 const TRIO_PREFIX = 'trio-gift-set';
-const TRIO_PRICE = 799;
 const TRIO_TOKENS = ['ajwain', 'kesari', 'lite-sugar', 'original'];
 
 // A gift set never holds two boxes of the same flavour: a Trio is exactly 3 DIFFERENT flavours (the website builder and
@@ -79,44 +77,46 @@ function boxesForSlug(slug) {
   return 1;
 }
 
+// Single-box price: the live table, else the built-in prices. Set prices never come from here (see utils/boxPricing.js).
+function singlePrice(slug) {
+  const live = require('./prices').current();
+  if (live && live[slug]) return live[slug].price;
+  return PRICES[slug];
+}
+
 /**
  * Look up the real price for a website cart item slug.
  * Returns the price in rupees, or null if the slug isn't recognised.
  */
 function priceForSlug(slug) {
-  const live = require('./prices').current();
-  const key = typeof slug === 'string' && slug.startsWith(TRIO_PREFIX) ? 'trio-gift-set' : slug;
-  const promo = require('./giftPromo');
-  if (live && live[key]) return promo.effective(key, live[key].price);
-  if (Object.prototype.hasOwnProperty.call(PRICES, slug)) return promo.effective(slug, PRICES[slug]);
-  if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) return promo.effective('trio-gift-set', TRIO_PRICE);
-  return null;
+  const box = require('./boxPricing');
+  if (slug === 'full-range-set') return box.boxPrice(BASE_SLUGS, singlePrice);
+  if (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX)) {
+    const mix = box.mixOf(slug);
+    return mix ? box.boxPrice(mix, singlePrice) : null;
+  }
+  return Object.prototype.hasOwnProperty.call(PRICES, slug) ? singlePrice(slug) : null;
 }
 
-// What the shop shows struck through (printed MRP), or null for none. Display only: never used to charge.
+// What the shop shows struck through (printed MRP), or null for none. Display only: never used to charge. Sets have none.
 function mrpForSlug(slug) {
+  if (slug === 'full-range-set' || (typeof slug === 'string' && slug.startsWith(TRIO_PREFIX))) return null;
   const live = require('./prices').current();
-  const key = typeof slug === 'string' && slug.startsWith(TRIO_PREFIX) ? 'trio-gift-set' : slug;
-  return live && live[key] ? live[key].mrp : null;
+  return live && live[slug] ? live[slug].mrp : null;
 }
 
 // Everything the website needs to show prices: the live table, or the built-in prices before the table is switched on.
-// Gift sets: the price charged today (see utils/giftPromo.js) plus, while the pre-Diwali offer runs, a `promo` note.
+// Sets are always priced by the box rule: the Trio shows its cheapest mix ("from") plus every mix's price; no MRP, no promo.
 function priceBook() {
+  const box = require('./boxPricing');
   const live = require('./prices').current();
-  let book = {};
+  const book = {};
   if (live) Object.keys(live).forEach((k) => { book[k] = { ...live[k] }; });
-  else {
-    Object.keys(PRICES).forEach((k) => { book[k] = { price: PRICES[k], mrp: MRPS[k] || null }; });
-    book['trio-gift-set'] = { price: TRIO_PRICE, mrp: null };
-  }
-  const promo = require('./giftPromo');
-  ['trio-gift-set', 'full-range-set'].forEach((k) => {
-    if (!book[k]) return;
-    const p = promo.promoFor(k, book[k].price);
-    book[k].price = promo.effective(k, book[k].price);
-    if (p) book[k].promo = p;
-  });
+  else Object.keys(PRICES).forEach((k) => { book[k] = { price: PRICES[k], mrp: MRPS[k] || null }; });
+  const byMix = {};
+  box.allTrioMixes().forEach((slug) => { byMix[slug.slice(TRIO_PREFIX.length + 1)] = priceForSlug(slug); });
+  book['trio-gift-set'] = { price: Math.min(...Object.values(byMix)), mrp: null, from: true, byMix };
+  book['full-range-set'] = { price: priceForSlug('full-range-set'), mrp: null };
   return book;
 }
 
