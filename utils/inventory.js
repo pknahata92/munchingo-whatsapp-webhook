@@ -135,6 +135,13 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     const map = {};
     for (const r of rows) { if (pack.has(r.item_slug)) continue; const m = map[r.item_slug] || (map[r.item_slug] = { total: 0, lots: [], any: false }); m.total += r.qty; m.any = true; m.lots.push({ lot_code: r.lot_code, best_before: r.best_before, qty: r.qty }); }
     if (pack.size) for (const t of await store.totalsSince(new Date(from).toISOString(), [...pack])) map[t.item_slug] = { total: t.qty, lots: [{ lot_code: null, best_before: null, qty: t.qty }], any: true, last: t.last || null };
+    // A typed count (counted_at, on or after the reset) makes the item counted even with no ledger line, e.g. a count of 0.
+    for (const i of items) {
+      const at = i.kind === 'packaging' ? tsMs(i.counted_at) : null;
+      if (at == null || (from != null && at < from)) continue;
+      const m = map[i.slug] || (map[i.slug] = { total: 0, lots: [], any: true });
+      m.any = true; if (!m.last || at > Date.parse(m.last)) m.last = new Date(at).toISOString();
+    }
     return map;
   }
 
@@ -361,12 +368,15 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (!Number.isInteger(c) || c < 0 || c > MAX_QTY) throw new StockError('Enter the number you counted (0 or more).');
     const have = await onHand(slug);
     const diff = c - have;
-    if (diff === 0) return { onHand: have, diff: 0 };
+    // Packaging: typing a count always records it (counted_at), even 0 and even the same number; the ledger line is written only when the number changes.
+    const stamp = () => (item.kind === 'packaging' ? store.updateItem(slug, { counted_at: new Date().toISOString() }) : null);
+    if (diff === 0) { await stamp(); return { onHand: have, diff: 0 }; }
     const nt = cleanText(note, 300);
     if (!nt) throw new StockError(`The system says ${have}, you counted ${c}. Add a short note on why (breakage, miscount, sample...).`, 400, { diff, onHand: have });
     const base = { type: 'COUNT_FIX', note: nt, ...who(actor) };
     const rows = diff > 0 ? [{ ...base, item_slug: slug, qty: diff, lot_code: null, best_before: null }] : await outRows(item, -diff, base);
     await store.insert(rows);
+    await stamp();
     return { onHand: await onHand(slug), diff };
   }
 
@@ -394,14 +404,18 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (!['product', 'packaging'].includes(kind)) throw new StockError('Choose product or packaging.');
     const slug = nm.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
     if (!slug) throw new StockError('Use letters or numbers in the name.');
-    const had = await store.item(slug);
+    // The name decides (case and spaces ignored): an active item with it blocks a second one; an archived packaging item comes back with its slug and history.
+    const key = (v) => String(v == null ? '' : v).toLowerCase().replace(/\s+/g, '');
+    const same = ((await store.items()) || []).filter((i) => key(i.name) === key(nm));
+    if (same.some((i) => i.active)) throw new StockError('That item is already on the list.', 409);
+    const had = same.find((i) => i.kind === 'packaging') || (same.length ? null : await store.item(slug));
+    if (same.length && !had) throw new StockError('That item already exists.', 409);
     if (had) {
-      // an archived packaging item comes back with the same slug and history
       if (had.active || had.kind !== 'packaging') throw new StockError('That item already exists.', 409);
-      const back = { active: true, name: nm, unit: cleanText(unit, 20) || had.unit };
+      const back = { active: true, unit: cleanText(unit, 20) || had.unit };   // the name matched, so the item keeps its own spelling
       if (lowLevel != null && lowLevel !== '') back.low_level = Math.max(0, int(lowLevel) || 0);
-      await store.updateItem(slug, back);
-      return { slug, restored: true };
+      await store.updateItem(had.slug, back);
+      return { slug: had.slug, restored: true };
     }
     await store.insertItem({ slug, name: nm, kind, unit: cleanText(unit, 20) || 'pcs', low_level: Math.max(0, int(lowLevel) || 0), sort: 90 });
     return { slug };
@@ -613,7 +627,7 @@ function supabaseStore() {
   const ok = ({ data, error }) => {
     if (error) {
       const missing = error.code === '42P01' || /does not exist|schema cache/.test(error.message);
-      if (missing && /stock_lots|stock_deliveries|stock_save_delivery|delivery_id/.test(error.message)) throw new Error('Run batch_receiving_migration.sql in Supabase first.');   // not the bill-once clash: that is a 23505, not a missing table
+      if (missing && /stock_lots|stock_deliveries|stock_save_delivery|delivery_id|counted_at/.test(error.message)) throw new Error('Run batch_receiving_migration.sql in Supabase first.');   // not the bill-once clash: that is a 23505, not a missing table
       throw new Error(missing ? (/party|stock_totals/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : 'Run stock_ledger_migration.sql in Supabase first.') : (/stock_movements_type_check/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : error.message));
     }
     return data;

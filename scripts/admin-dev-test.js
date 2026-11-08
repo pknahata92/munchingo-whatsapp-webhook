@@ -402,5 +402,20 @@ async function login(email) {
     const it2 = (await list()).find((i) => i.slug === 'practice-bubble-wrap');
     ok(back.j.ok && back.j.slug === 'practice-bubble-wrap' && it2 && it2.on_hand === 9, 'adding the name again brings it back with its count');
   }
+  // fix round 1: re-add by name for the seeded items, and a typed count of 0 is recorded
+  {
+    const list = async () => (await call('/inventory', o.token)).j.items || [];
+    ok((await call('/inventory/item/remove', o.token, { slug: 'mono-kesari' })).j.ok && !(await list()).some((i) => i.slug === 'mono-kesari'), 'owner removes the seeded Mono carton: Kesari');
+    const dup = await call('/inventory/item', o.token, { name: 'Mono carton: Kesari', kind: 'packaging', unit: 'cartons' });
+    const mk = (await list()).find((i) => i.slug === 'mono-kesari');
+    ok(dup.j.ok && dup.j.slug === 'mono-kesari' && dup.j.restored === true && !!mk && !(await list()).some((i) => i.slug === 'mono-carton-kesari'), 'adding its name brings mono-kesari back, no look-alike item (' + JSON.stringify(dup.j) + ')');
+    const again = await call('/inventory/item', o.token, { name: ' mono CARTON: kesari', kind: 'packaging' });
+    ok(again.s === 409 && again.j.error === 'That item is already on the list.', 'an active item with that name is refused (' + again.s + ' ' + again.j.error + ')');
+    const z = await call('/inventory/count', s.token, { slug: 'label-stamp', counted: 0 });
+    const ls = (await list()).find((i) => i.slug === 'label-stamp');
+    ok(z.j.ok && z.j.onHand === 0 && ls.counted === true && ls.on_hand === 0 && typeof ls.last_counted === 'string' && ls.status === 'ok', 'staff types 0 for labels: recorded as a count (' + JSON.stringify([ls.counted, ls.status]) + ')');
+    await call('/inventory/level', o.token, { slug: 'label-stamp', lowLevel: 5 });
+    ok((await list()).find((i) => i.slug === 'label-stamp').status === 'out', 'with a low level of 5 the counted 0 shows OUT');
+  }
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

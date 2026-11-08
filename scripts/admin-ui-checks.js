@@ -731,7 +731,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const packRows = sec ? Array.from(sec.querySelectorAll('.line')) : [];
     ok(packRows.length >= 3 && packRows.every((l) => /no count/.test(text(l))), 'every packaging row says "no count" at the start (' + packRows.map((l) => text(l).slice(0, 40)).join(' | ') + ')');
     ok(packRows.every((l) => !/Not counted yet|OK|LOW|OUT/.test(Array.from(l.querySelectorAll('.badge')).map((b) => text(b)).join('|'))), 'no alert badge on a packaging row with no count');
-    const tape = btnsOf(/Packing tape/);
+    const tape = btnsOf(/Mono carton: Kesari/);
     ok(tape.includes('Set count') && tape.includes('Remove') && tape.some((b) => /^Low level/.test(b)) && !tape.includes('Receive') && !tape.includes('Take out'), 'the owner sees Set count, Low level and Remove on a packaging row (' + tape.join(',') + ')');
     ok(!!o.byText('#viewStock button', /^Add packaging item$/) && !o.byText('#viewStock button', /^Add item$/), 'the owner has Add packaging item');
     const prods = btnsOf(/Atta Kesari/);
@@ -739,28 +739,36 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     // pickers list biscuits only
     click(o.byText('#viewStock button', /^Receive stock$/)); await until(() => /Which item/.test(view()), 3000, 'the receive picker');
     const picks = qa('#viewStock .moregrid button').map((b) => text(b));
-    ok(picks.length === 4 && picks.every((t) => /^Atta /.test(t)) && !/Packing tape|Mono carton|Stamp/.test(picks.join('|')), 'the Receive picker lists the four biscuits only (' + picks.join(' | ') + ')');
+    ok(picks.length === 4 && picks.every((t) => /^Atta /.test(t)) && !/Mono carton: Kesari|Mono carton|Stamp/.test(picks.join('|')), 'the Receive picker lists the four biscuits only (' + picks.join(' | ') + ')');
     click(o.byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back');
     // Set count
-    click(Array.from(rowOf(/Packing tape/).querySelectorAll('button')).find((b) => /^Set count$/.test(text(b))));
-    await until(() => /Count: Packing tape/.test(view()), 3000, 'the count form');
+    click(Array.from(rowOf(/Mono carton: Kesari/).querySelectorAll('button')).find((b) => /^Set count$/.test(text(b))));
+    await until(() => /Count: Mono carton: Kesari/.test(view()), 3000, 'the count form');
     ok(/No count yet/.test(view()), 'the count form says there is no count yet');
     const inp = qa('#viewStock input')[0]; o.set(inp, '40');
     click(o.byText('#viewStock button', /^Save count$/));
-    await until(() => /40/.test(text(rowOf(/Packing tape/) || o.doc.createElement('i'))) && /counted/.test(text(rowOf(/Packing tape/) || o.doc.createElement('i'))), 4000, 'the new count on the row');
-    ok(new RegExp('40.*counted ' + todayWords()).test(text(rowOf(/Packing tape/))), 'the row shows the count and the IST day it was counted: ' + text(rowOf(/Packing tape/)).slice(0, 80));
-    ok(!/no count/.test(text(rowOf(/Packing tape/))) && /no count/.test(text(rowOf(/Mono carton: Original/))), 'only the counted row lost "no count"');
+    await until(() => /40/.test(text(rowOf(/Mono carton: Kesari/) || o.doc.createElement('i'))) && /counted/.test(text(rowOf(/Mono carton: Kesari/) || o.doc.createElement('i'))), 4000, 'the new count on the row');
+    ok(new RegExp('40.*counted ' + todayWords()).test(text(rowOf(/Mono carton: Kesari/))), 'the row shows the count and the IST day it was counted: ' + text(rowOf(/Mono carton: Kesari/)).slice(0, 80));
+    ok(!/no count/.test(text(rowOf(/Mono carton: Kesari/))) && /no count/.test(text(rowOf(/Mono carton: Original/))), 'only the counted row lost "no count"');
     // Remove (confirm first)
     let asked = ''; o.win.confirm = (m) => { asked = m; return true; };
-    click(Array.from(rowOf(/Packing tape/).querySelectorAll('button')).find((b) => /^Remove$/.test(text(b))));
-    await until(() => !rowOf(/Packing tape/), 4000, 'the removed row to go');
-    ok(asked === 'Remove Packing tape from the list? Its history is kept.', 'Remove asks first, in plain words (' + asked + ')');
-    ok(!/Packing tape/.test(view()), 'the removed item is off the screen');
+    click(Array.from(rowOf(/Mono carton: Kesari/).querySelectorAll('button')).find((b) => /^Remove$/.test(text(b))));
+    await until(() => !rowOf(/Mono carton: Kesari/), 4000, 'the removed row to go');
+    ok(asked === 'Remove Mono carton: Kesari from the list? Its history is kept.', 'Remove asks first, in plain words (' + asked + ')');
+    ok(!/Mono carton: Kesari/.test(view()), 'the removed item is off the screen');
     // add it back
-    const answers = ['Packing tape', 'rolls']; o.win.prompt = () => answers.shift();
+    const answers = ['mono carton: kesari', 'cartons']; o.win.prompt = () => answers.shift();
     click(o.byText('#viewStock button', /^Add packaging item$/));
-    await until(() => !!rowOf(/Packing tape/), 4000, 'the item to come back');
-    ok(/40/.test(text(rowOf(/Packing tape/))) && /counted/.test(text(rowOf(/Packing tape/))), 'adding the same name brings the item back with its count (' + text(rowOf(/Packing tape/)).slice(0, 80) + ')');
+    await until(() => !!rowOf(/Mono carton: Kesari/), 4000, 'the item to come back');
+    ok(/40/.test(text(rowOf(/Mono carton: Kesari/))) && /counted/.test(text(rowOf(/Mono carton: Kesari/))), 'adding the same name brings the item back with its count (' + text(rowOf(/Mono carton: Kesari/)).slice(0, 80) + ')');
+    ok(qa('#viewStock .line').filter((l) => /Mono carton: Kesari/i.test(text(l))).length === 1 && !/Mono carton Kesari/.test(view()), 'it came back as the same row, not a second one');
+    // a count of 0 is recorded too
+    click(Array.from(rowOf(/Stamp \/ batch labels/).querySelectorAll('button')).find((b) => /^Set count$/.test(text(b))));
+    await until(() => /Count: Stamp/.test(view()), 3000, 'the count form for labels');
+    o.set(qa('#viewStock input')[0], '0'); click(o.byText('#viewStock button', /^Save count$/));
+    await until(() => /counted/.test(text(rowOf(/Stamp \/ batch labels/) || o.doc.createElement('i'))), 4000, 'the 0 count on the row');
+    ok(new RegExp('0 labels, counted ' + todayWords()).test(text(rowOf(/Stamp \/ batch labels/))) && !/no count/.test(text(rowOf(/Stamp \/ batch labels/))), 'a first count of 0 shows "0 labels, counted today": ' + text(rowOf(/Stamp \/ batch labels/)).slice(0, 80));
+    ok(/^Count saved: 0 labels/.test(text(q('#toast'))), 'the toast gives the saved result (' + text(q('#toast')) + ')');
     ok(o.errors.length === 0, 'no page errors (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
     // staff: Set count yes, owner-only controls no

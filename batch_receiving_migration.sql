@@ -76,6 +76,9 @@ on conflict (key) do nothing;
 -- 4b. The trade case is 24 boxes now. Renames the old default name once; a name set by hand is left alone. Slug and case maths unchanged.
 update stock_items set name = '24-box case carton' where slug = 'case-carton' and name = '20-box case carton';
 
+-- 4c. A typed packaging count is recorded even when it is 0 or equals the number already there: the time it was last typed.
+alter table stock_items add column if not exists counted_at timestamptz;   -- nullable on purpose; only packaging counts set it
+
 -- 5. A private bucket for bill and carton photos (guarded and dynamic, so it also parses where there is no storage schema).
 do $$
 begin

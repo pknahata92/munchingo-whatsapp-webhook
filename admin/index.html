@@ -1048,7 +1048,7 @@ header small{color:var(--ink2);opacity:1}
     var pk = it.kind === 'packaging';
     var c = numIn('what you counted'), note = h('input', { placeholder: pk ? 'Note (optional)' : 'Why it differs (needed if the number changes)' });
     invForm('Count', it, [h('label', {}, 'Counted on the shelf'), c, h('label', {}, 'Note'), note], function (done) {
-      postInv('count', { slug: it.slug, counted: c.value, note: note.value || (pk ? 'Counted by hand' : '') }, done, function (x) { return pk ? (x.diff ? 'Count saved: ' + x.onHand : (it.counted ? 'Matches. Nothing to change.' : 'Nothing saved: there is no count yet, and 0 would not change that.')) : (x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'); });
+      postInv('count', { slug: it.slug, counted: c.value, note: note.value || (pk ? 'Counted by hand' : '') }, done, function (x) { return pk ? 'Count saved: ' + x.onHand + ' ' + it.unit + (x.diff ? '' : ' (same as before)') : (x.diff ? 'Fixed by ' + (x.diff > 0 ? '+' : '') + x.diff + '. On hand: ' + x.onHand : 'Matches. Nothing to fix.'); });
     }, 'Save count');
   }
   // Several flavours in one entry (e.g. everything sold at a fair): one reason, one note, a count per flavour; all or nothing.
