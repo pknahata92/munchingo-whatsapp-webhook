@@ -928,14 +928,14 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     const inp = input({ billNo: 'A000244', rows: rowsOf({ 'atta-ajwain': { counted: 98, diffReason: 'short' } }), invoiceRupees: 39500, confirm: ['invoice_mismatch', 'no_freight', 'cost_jump', 'stop_soon', 'old_bake'] });
     const pv = await dl.save({ ...inp }, { ...A, preview: true });
     eq(sent.length, 0, 'preview sends no email');
-    const r = await dl.save(inp, A);
+    const r = await dl.save(inp, A); await dl.mailSettled();
     eq(sent.length, 1, 'a first save sends one email');
     const e = sent[0][1];
     eq([sent[0][0], e.delivery.billNo, e.lots.length, e.url], ['delivery', 'A000244', 4, 'https://admin.munchingo.com/admin#delivery=' + inp.id], 'delivery email args');
     ok(e.lots.every((l) => l.code && l.name && typeof l.good === 'number' && /^Rs [\d,]+\.\d\d$/.test(l.cost)), 'each lot row has code, name, good and a 2-decimal cost');
     eq(e.lots[0].name, 'Atta Original', 'lot name from the flavour');
     ok(Array.isArray(e.warnings) && Array.isArray(e.toRaise) && e.toRaise.length === 1 && e.toRaise[0].name === 'Atta Ajwain', 'warnings and the to-raise list (with flavour name) are passed');
-    await dl.save(inp, A);
+    await dl.save(inp, A); await dl.mailSettled();
     eq(sent.length, 1, 'a resend sends none');
     // a mail failure is logged and never changes the result
     const bad = { sendDeliveryEmail: async () => { throw new Error('resend down'); }, sendLotReleasedEmail: async () => { throw new Error('resend down'); } };
@@ -944,18 +944,26 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     let fr; try { fr = await f.dl.save(input({ billNo: 'A000245' }), A); ok(true, 'save survives a mail failure'); } catch (x) { ok(false, 'save threw on a mail failure: ' + x.message); }
     ok(fr && fr.lots.length === 4 && (await f.st.lots()).filter((l) => l.delivery_id).length === 4, 'the delivery is still saved when the mail fails');
     let rr; try { rr = await f.dl.release({ code: fr.lots[0].code, tasted: true, weightG: 300 }, A); ok(rr.lot.status === 'released', 'release survives a mail failure'); } catch (x) { ok(false, 'release threw on a mail failure: ' + x.message); }
-    console.error = oe;
+    await f.dl.mailSettled(); console.error = oe;
     ok(logs.filter((l) => /^\[MAIL\]/.test(l)).length === 2, 'both failures are logged with [MAIL] (got ' + JSON.stringify(logs) + ')');
     // release emails: staff sends one, owner none
     sent.length = 0;
-    await dl.release({ code: r.lots[0].code, tasted: true, weightG: 275, note: 'crisp' }, A);
+    await dl.release({ code: r.lots[0].code, tasted: true, weightG: 275, note: 'crisp' }, A); await dl.mailSettled();
     eq(sent.length, 1, 'a staff release sends one email');
     eq([sent[0][0], sent[0][1].code, sent[0][1].name, sent[0][1].by, sent[0][1].weightG, sent[0][1].note, sent[0][1].url],
       ['released', r.lots[0].code, 'Atta Original', 'Staff', 275, 'crisp', 'https://admin.munchingo.com/admin#lot=' + encodeURIComponent(r.lots[0].code) + '&slug=atta-original'], 'release email args');
-    await dl.release({ code: r.lots[1].code, tasted: true, weightG: 275 }, OWN);
+    await dl.release({ code: r.lots[1].code, tasted: true, weightG: 275 }, OWN); await dl.mailSettled();
     eq(sent.length, 1, 'an owner release sends none');
     await rejects(dl.release({ code: r.lots[1].code, tasted: true, weightG: 275 }, A), /already released/, 'a refused release still refused', 400);
-    eq(sent.length, 1, 'a refused release sends none');
+    await dl.mailSettled(); eq(sent.length, 1, 'a refused release sends none');
+    // a mailer that never answers must not hold the request up
+    const hung = { sendDeliveryEmail: () => new Promise(() => {}), sendLotReleasedEmail: () => new Promise(() => {}) };
+    const h = mk({ mailer: hung });
+    const race = (p) => Promise.race([p, new Promise((res) => setTimeout(() => res('TIMEOUT'), 1500))]);
+    const hr = await race(h.dl.save(input({ billNo: 'A000246' }), A));
+    ok(hr !== 'TIMEOUT' && hr.lots && hr.lots.length === 4, 'save returns promptly with its normal result while the mailer never answers');
+    const hrr = await race(h.dl.release({ code: hr.lots[0].code, tasted: true, weightG: 300 }, A));
+    ok(hrr !== 'TIMEOUT' && hrr.lot && hrr.lot.status === 'released', 'release returns promptly while the mailer never answers');
   }
   // digestLines
   {
@@ -967,15 +975,17 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
       { item_slug: 'atta-ajwain', lot_code: 'FAR', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'released' },                          // stop 9 Dec: too far
       { item_slug: 'atta-lite-sugar', lot_code: 'GONE', bake_date: '2026-10-01', best_before: '2026-12-30', status: 'released' },                      // stop passed
       { item_slug: 'atta-kesari', lot_code: 'MNGK-261114-01', bake_date: '2026-11-14', best_before: '2027-02-12', status: 'hold', created_at: '2026-11-14T05:00:00.000Z' },
-      { item_slug: 'atta-original', lot_code: 'MNGO-261115-01', bake_date: '2026-11-15', best_before: '2027-02-13', status: 'hold', created_at: '2026-11-15T05:00:00.000Z' },
+      { item_slug: 'atta-original', lot_code: 'MNGO-261115-01', bake_date: '2026-11-15', best_before: '2027-02-13', status: 'hold', created_at: '2026-11-15T05:00:00.000Z' },        // 21.5 h before the run: not yet
+      { item_slug: 'atta-ajwain', lot_code: 'MNGA-261114-02', bake_date: '2026-11-14', best_before: '2027-02-12', status: 'hold', created_at: '2026-11-14T19:00:00.000Z' },          // 00:30 IST on the 15th, 31.5 h before the run: listed
     ]);
     await inv.receive({ slug: 'atta-kesari', received: 40, lot: '15OCT26', bestBefore: '2027-01-13', actor: A.actor });
     await inv.receive({ slug: 'atta-ajwain', received: 40, lot: 'FAR', bestBefore: '2027-01-30', actor: A.actor });
     await inv.receive({ slug: 'atta-lite-sugar', received: 40, lot: 'GONE', bestBefore: '2026-12-30', actor: A.actor });
     await inv.receive({ slug: 'atta-kesari', received: 100, lot: 'MNGK-261114-01', bestBefore: '2027-02-12', actor: A.actor });
+    await inv.receive({ slug: 'atta-ajwain', received: 90, lot: 'MNGA-261114-02', bestBefore: '2027-02-12', actor: A.actor });
     const d = await dl.digestLines('2026-11-16');
     eq(d.stopSoon, [{ code: '15OCT26', name: 'Atta Kesari', websiteStop: '2026-11-22', onHand: 40 }], 'stop soon lists 15OCT26 only (not empty, far or past lots)');
-    eq(d.onHold, [{ code: 'MNGK-261114-01', name: 'Atta Kesari', since: '2026-11-14', good: 100 }], 'a hold lot saved 14 Nov is on hold; one saved 15 Nov is not yet');
+    eq(d.onHold, [{ code: 'MNGK-261114-01', name: 'Atta Kesari', since: '2026-11-14', good: 100 }, { code: 'MNGA-261114-02', name: 'Atta Ajwain', since: '2026-11-15', good: 90 }], 'now() is 8:00 IST on the 16th: a lot saved 14 Nov and one saved 00:30 IST on the 15th are on hold; one saved 21.5 h earlier is not');
     const e2 = mk();
     eq(await e2.dl.digestLines('2026-11-16'), { onHold: [], stopSoon: [] }, 'nothing to report gives empty lists');
   }

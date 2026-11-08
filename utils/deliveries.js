@@ -54,8 +54,14 @@ const photo = (p) => { if (typeof p !== 'string' || !PHOTO_PATH.test(p)) fail('T
 function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = null } = {}) {
   const getMailer = () => mailer || require('./mailer');
   const ADMIN_URL = 'https://admin.munchingo.com/admin';
-  // An owner email never changes what the user did: a failure is logged and swallowed.
-  const notify = async (fn, args) => { try { await getMailer()[fn](args); } catch (e) { console.error(`[MAIL] ${fn} failed: ${e && e.message}`); } };
+  // An owner email never changes what the user did and never holds the request up: it is sent in the background, a failure is
+  // logged and swallowed, and the in-flight sends are kept so tests can wait for them (mailSettled).
+  const inflight = new Set();
+  const notify = (fn, args) => {
+    const p = (async () => { try { await getMailer()[fn](args); } catch (e) { console.error(`[MAIL] ${fn} failed: ${e && e.message}`); } })();
+    inflight.add(p); p.then(() => inflight.delete(p));
+  };
+  const mailSettled = () => Promise.allSettled([...inflight]);
   const getDb = () => db || require('./database');
   const inventory = () => makeInventory(store, { now });
   const live = (list) => list.filter((d) => d.status !== 'void');   // a corrected (void) delivery frees its bill and part
@@ -217,7 +223,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       }
       throw e;
     }
-    await notify('sendDeliveryEmail', {
+    notify('sendDeliveryEmail', {
       delivery: result.delivery,
       lots: result.lots.map((l) => ({ code: l.code, name: NAMES[l.slug] || l.slug, good: l.good, cost: l.perGoodPaise == null ? '' : 'Rs ' + inr(l.perGoodPaise / 100, true) })),
       warnings: result.warnings, toRaise: result.toRaise.map((x) => ({ ...x, name: NAMES[x.slug] || x.slug })),
@@ -288,7 +294,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     if (!isOwner) {
       let name = NAMES[lot.item_slug] || lot.item_slug;
       try { const items = (await store.items()) || []; const it = items.find((i) => i.slug === lot.item_slug); if (it && it.name) name = it.name; } catch (e) { /* the built-in name stands */ }
-      await notify('sendLotReleasedEmail', { code: lot.lot_code, name, by: (actor && (actor.name || actor.email)) || 'Staff', weightG: w, note: fields.check_note, url: `${ADMIN_URL}#lot=${encodeURIComponent(lot.lot_code)}&slug=${encodeURIComponent(lot.item_slug)}` });
+      notify('sendLotReleasedEmail', { code: lot.lot_code, name, by: (actor && (actor.name || actor.email)) || 'Staff', weightG: w, note: fields.check_note, url: `${ADMIN_URL}#lot=${encodeURIComponent(lot.lot_code)}&slug=${encodeURIComponent(lot.item_slug)}` });
     }
     return { lot: { ...lot, ...fields }, warnings };
   }
@@ -534,11 +540,11 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     return { w, cand: found[0] };
   }
 
-  // The two lines of the 8:00 AM summary (spec 6.11). On hold: a hold lot made more than 24 h before the IST start of `todayIst`.
+  // The two lines of the 8:00 AM summary (spec 6.11). On hold: a hold lot saved more than 24 h before now().
   // Stop soon: a lot the website can still sell whose website stop is today to today + 7 days, with boxes left.
-  async function digestLines(todayIst) {
+  async function digestLines(todayIst) {   // todayIst is the day the stop-soon window starts from
     const w = await world();
-    const cutoff = Date.parse(todayIst + 'T00:00:00+05:30') - REVERSE_FREE_MS;
+    const cutoff = now() - REVERSE_FREE_MS;   // on hold for more than a day: saved more than 24 h before now()
     const lotsList = await listLots();
     const goodOf = (l) => lotsList.find((x) => x.slug === l.item_slug && x.code === l.lot_code);
     const onHold = w.lotRows.filter((l) => l.status === 'hold' && l.created_at && Date.parse(l.created_at) < cutoff)
@@ -713,7 +719,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     return lines.join('\n');
   }
 
-  return { save, lastPrefill, findLot, release, digestLines, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, deliveryPage, fixLot, listLots, lotPage, search, buyersCsv };
+  return { save, lastPrefill, findLot, release, digestLines, mailSettled, reject, hold, brokenWhileCartoning, throwExpired, correctDelivery, deliveryPage, fixLot, listLots, lotPage, search, buyersCsv };
 }
 
 let real = null;
