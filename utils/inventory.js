@@ -54,17 +54,24 @@ const eligibleRow = (ctx, r, purpose) => lotRules.eligible(lotInfo(ctx, r), purp
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const dateWords = (iso) => `${parseInt(iso.slice(8, 10), 10)} ${MONTHS[parseInt(iso.slice(5, 7), 10) - 1]}`;
-// Why a flavour cannot be packed (spec 6.6), in plain words: the oldest held lot that has boxes; else the oldest released or legacy lot
-// that is past its last ship date but still before best before (it can still go to fairs); else the stock has to come in.
-function packHint(ctx, rows) {
+// One line per lot for packing: stock_by_lot splits a lot by best before, but a pack writes one sale per lot (the database allows one
+// per pack, flavour and lot), so a lot is summed whole, with its earliest best before. Rows with no lot are left out: packing never sends
+// a box without a lot (spec 1), so stock with no lot (a count up, say) is not packable.
+function packLots(rows) {
   const byCode = new Map();
   for (const r of rows) {
     if (r.lot_code == null) continue;
-    const info = lotInfo(ctx, r); const e = byCode.get(r.lot_code) || { code: r.lot_code, qty: 0, status: info.status, best_before: info.best_before };
-    e.qty += r.qty; if (info.best_before && (!e.best_before || info.best_before < e.best_before)) e.best_before = info.best_before;
+    const e = byCode.get(r.lot_code) || { item_slug: r.item_slug, lot_code: r.lot_code, best_before: null, qty: 0 };
+    e.qty += r.qty; if (r.best_before && (!e.best_before || r.best_before < e.best_before)) e.best_before = r.best_before;
     byCode.set(r.lot_code, e);
   }
-  const lots = [...byCode.values()].filter((l) => l.qty > 0).sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9')));
+  return [...byCode.values()];
+}
+// Why a flavour cannot be packed (spec 6.6), in plain words: the oldest held lot that has boxes; else the oldest released or legacy lot
+// that is past its last ship date but still before best before (it can still go to fairs); else the stock has to come in.
+function packHint(ctx, rows) {
+  const lots = packLots(rows).filter((l) => l.qty > 0).map((l) => ({ code: l.lot_code, ...lotInfo(ctx, l) }))
+    .sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9')));
   const held = lots.find((l) => l.status === 'hold');
   if (held) return `Lot ${held.code} is on hold (release it), or receive the delivery first.`;
   const late = lots.find((l) => (l.status == null || l.status === 'released') && l.best_before && !lotRules.eligible(l, 'pack', ctx.today, ctx.s) && lotRules.eligible(l, 'other', ctx.today, ctx.s));
@@ -445,10 +452,10 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
 
   // ── Orders ──────────────────────────────────────────────────────────────────
   // Packing (spec 6.6), worked out BEFORE the order is saved as packed: which lots the boxes come from. Only lots that are released or
-  // legacy and on or before their last ship date on the day of the pack (`at`, India date) are used, oldest best before first. What
-  // they cannot cover is `short`, with a plain hint; the caller refuses the Packed step unless the owner overrides. A flavour with no
-  // ledger rows at all has never been counted, so it is not limited (as on the website): it gets a lot-less line, as before lots.
-  // Writes nothing.
+  // legacy and on or before their last ship date on the day of the pack (`at`, India date) are used, oldest best before first, each lot
+  // whole (packLots); stock with no lot is never packed. What they cannot cover is `short`, with a plain hint; the caller refuses the
+  // Packed step unless the owner overrides. A flavour with no ledger rows at all has never been counted, so it is not limited (as on
+  // the website): it gets a lot-less line, as before lots. Writes nothing.
   async function planForOrder({ items, at = new Date().toISOString() }) {
     const from = await store.setting('tracking_from');
     if (!from || Date.parse(at) < Date.parse(from)) return { skipped: 'before tracking started', rows: [], short: [] };
@@ -461,7 +468,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       const item = products.get(slug); if (!item) continue;
       const mine = all.filter((r) => r.item_slug === slug);
       if (!mine.length) { rows.push({ item_slug: slug, qty: -boxes[slug], type: 'SALE', lot_code: null, best_before: null }); continue; }
-      const { pieces, short: left } = allocate(mine.filter((r) => eligibleRow(ctx, r, 'pack')), boxes[slug]);
+      const { pieces, short: left } = allocate(packLots(mine).filter((l) => eligibleRow(ctx, l, 'pack')), boxes[slug]);
       pieces.forEach((p) => rows.push({ item_slug: slug, qty: -p.qty, type: 'SALE', lot_code: p.lot_code, best_before: p.best_before }));
       if (left > 0) short.push({ slug, name: item.name, boxes: left, hint: packHint(ctx, mine) });
     }
@@ -475,12 +482,9 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     if (plan) {
       if (plan.skipped) return { skipped: plan.skipped };
       const ref = `${orderId}@${at}`; const why = cleanText(overrideNote, 250);
-      const lines = (plan.rows || []).map((r) => ({ ...r, ref }));
-      for (const s of plan.short || []) lines.push({ item_slug: s.slug, qty: -s.boxes, type: 'SALE', lot_code: null, best_before: null, ref, note: why ? `Packed without a lot (owner): ${why}` : null });
-      // one row per flavour and lot: the database allows one sale per order, flavour and lot (a lot-less piece plus a short line would clash)
-      const merged = new Map();
-      for (const l of lines) { const k = `${l.item_slug}|${l.lot_code || ''}`; const m = merged.get(k); if (m) { m.qty += l.qty; m.note = m.note || l.note; } else merged.set(k, { ...l }); }
-      const rows = [...merged.values()];
+      // one row per flavour and lot, as the database requires: the plan has one line per lot, no lot-less line for a flavour that is short
+      const rows = (plan.rows || []).map((r) => ({ ...r, ref }));
+      for (const s of plan.short || []) rows.push({ item_slug: s.slug, qty: -s.boxes, type: 'SALE', lot_code: null, best_before: null, ref, note: why ? `Packed without a lot (owner): ${why}` : null });
       if (rows.length) await store.insert(rows);
       return { rows: rows.length };
     }

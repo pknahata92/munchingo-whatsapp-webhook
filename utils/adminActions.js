@@ -392,6 +392,21 @@ function methodFrom(method, carrier) {
   return 'other';
 }
 
+// Why a pack is listed as unplanned (Needs attention). Plain words: the owner reads them.
+const UNPLANNED_PLAN = 'The lots could not be checked, so the boxes came off the oldest lots, which may be on hold or past their last ship date. Check this order\'s lots.';
+const UNPLANNED_WRITE = 'The boxes were not taken off stock. Count these flavours.';
+// Packs raised as unplanned (order event stock_unplanned), for Needs attention: only an order's current pack counts, so an order that
+// was undone, or packed again since, drops off. [{ orderId, at, reason, note }], oldest first.
+async function unplannedPacks() {
+  const packed = (await db.listRecentOrders(600)).filter((o) => o.packed_at);
+  if (!packed.length) return [];
+  const packedAt = Object.fromEntries(packed.map((o) => [o.order_id, Date.parse(o.packed_at)]));
+  const events = await db.listOrderEventsByName('stock_unplanned', packed.map((o) => o.order_id));
+  return events.filter((e) => e.meta && Date.parse(e.meta.at) === packedAt[e.order_id])
+    .map((e) => ({ orderId: e.order_id, at: e.meta.at, reason: e.meta.reason, note: e.meta.note || null }))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
 async function advance({ orderId, to, actor, carrier = '', awb = '', method = '', deliverNow = false, override }) {
   const { order, shaped } = await getOrderDetail(orderId);
   if (order.status !== 'paid') throw new AdminError('Only paid orders can be moved forward.', 409);
@@ -417,10 +432,10 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
   // Stock (spec 6.6): before the order is saved as packed, work out which lots its boxes come from. Boxes only come from lots that can
   // still ship; if they fall short the step is refused in plain words, unless the owner overrides with a note (then the short boxes are
   // written without a lot, for Assign lot later). A technical failure never blocks packing: it is logged and the pack goes on as before lots.
-  let plan = null, overrideNote = null;
+  let plan = null, overrideNote = null, planFailed = false;
   if (to === 'packed') {
     try { plan = await require('./inventory').instance().planForOrder({ items: order.items, at: now }); }
-    catch (e) { plan = null; console.error(`[STOCK] could not plan packing for ${orderId}: ${e.message}`); }
+    catch (e) { plan = null; planFailed = true; console.error(`[STOCK] could not plan packing for ${orderId}: ${e.message}`); }
     if (plan && plan.short && plan.short.length) {
       const note = typeof override === 'string' ? override.trim() : '';
       if (actor && actor.role === 'owner' && note.length >= 3) overrideNote = note;   // staff sending a note is not an override
@@ -429,8 +444,14 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
   }
   if (!(await db.updateOrderIf(orderId, where, fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
   await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb, ...(require('./orderUpdates').deferShipped(methodFrom(method, carrier)) ? { notify: 'deferred' } : {}) } : (overrideNote ? { packedWithoutLot: plan.short.map((s) => ({ slug: s.slug, boxes: s.boxes })), note: overrideNote } : null) });
-  // Stock: boxes leave the shelf when the order is packed, from the plan above. Never blocks packing: a failure is only logged.
-  if (to === 'packed') { try { await require('./inventory').instance().deductForOrder({ orderId, items: order.items, at: now, plan, overrideNote }); } catch (e) { console.error('[STOCK] could not deduct for', orderId, e.message); } }
+  // Stock: boxes leave the shelf when the order is packed, from the plan above. Never blocks packing. A pack whose lots could not be
+  // checked, or whose boxes could not be written off, is raised for Needs attention (spec 6.6) as an order event, stock_unplanned.
+  if (to === 'packed') {
+    let unplanned = planFailed ? UNPLANNED_PLAN : null;
+    try { await require('./inventory').instance().deductForOrder({ orderId, items: order.items, at: now, plan, overrideNote }); }
+    catch (e) { console.error('[STOCK] could not deduct for', orderId, e.message); unplanned = UNPLANNED_WRITE; }
+    if (unplanned) { try { await logEvent(orderId, 'stock_unplanned', actor, { meta: { reason: unplanned, at: now, note: overrideNote } }); } catch (e) { console.error('[STOCK] could not record the unplanned pack of', orderId, e.message); } }
+  }
   if (to === 'packed') { try { require('./channelSync').nudge('packed'); } catch (_) {} }   // Meta/Google follow the shelf (never blocks packing)
   // Customer updates (email + WhatsApp, utils/orderUpdates.js; each one never throws and never blocks the step):
   //   packed: now. delivered: now. shipped: now for Porter / India Post / by hand, but for Delhivery only once Delhivery's tracking says
@@ -651,4 +672,4 @@ async function setPrice({ slug, price, mrp, actor }) {
   return {};
 }
 
-module.exports = { lateInfo, sendWhatsappUpdate, setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };
+module.exports = { lateInfo, sendWhatsappUpdate, setBillingState, withBuyerState, priceList, setPrice, retryZoho, saveAddress, issueMissingInvoice, AdminError, shapeOrder, listOrders, getOrderDetail, startRefund, cancelUnpaid, sendPaymentLink, resendInvoice, advance, unplannedPacks, createDelhiveryShipment, requestDelhiveryPickup, shippingLabels, undoStep, bulkPack, pickList, saveNote, summary, listTeam, saveTeamMember, stockList, setStock };

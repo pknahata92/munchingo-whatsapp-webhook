@@ -494,6 +494,7 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     const AT = '2026-11-08T06:00:00.000Z';   // the pack moment: 8 Nov 2026 in India. The inventory's own clock stays on 31 Oct, so a plan that read it would show.
     const mk6 = () => { const st = memStore('2026-10-16T00:00:00.000Z'); st.setSetting('lots_from', '2026-10-30T00:00:00.000Z'); return { st, inv: makeInventory(st) }; };
     const KES2 = [{ slug: 'atta-kesari', quantity: 2 }];
+    const stockOfLot = async (st, slug, code) => (await st.byLot()).filter((x) => x.item_slug === slug && x.lot_code === code).reduce((n, x) => n + x.qty, 0);
     const held = (st, slug, code, bb, n) => st.insertLots([{ item_slug: slug, lot_code: code, status: 'hold', best_before: bb }]).then(() => st.insert([{ item_slug: slug, qty: n, type: 'RECEIVE', lot_code: code, best_before: bb }]));
     {
       const { st, inv } = mk6();
@@ -606,14 +607,41 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       ok(b.moved === 2 && st.mv.slice(-1)[0].lot_code === 'MNGK-261016-01', 'assignLot: an alias finds the lot it names');
     }
     {
-      // a lot-less piece and a short line of one flavour are one row (the database allows one sale per order, flavour and lot)
+      // P1 (fix round 1): packing never sends a box without a lot (spec 1). Stock with no lot (a count up) is not packable, so a
+      // lot-less sale after lots_from is always an owner override, a fallback shortfall or an untracked flavour, and needsLot is right.
       const { st, inv } = mk6();
       await inv.count({ slug: 'atta-kesari', counted: 3, note: 'found 3 boxes', actor: A });   // a count up is a lot-less line
-      const plan = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 5 }], at: AT });
-      const r = await inv.deductForOrder({ orderId: 'MNG-T6C', items: [], at: AT, plan, overrideNote: 'x y z' });
+      const plan = await inv.planForOrder({ items: KES2, at: AT });
+      ok(plan.rows.length === 0 && plan.short.length === 1 && plan.short[0].boxes === 2 && plan.short[0].hint === 'Receive the delivery first.', 'P1: 3 boxes counted with no lot do not cover a pack of 2 (' + JSON.stringify(plan) + ')');
+      const r = await inv.deductForOrder({ orderId: 'MNG-T6C', items: [], at: AT, plan, overrideNote: 'found in the store' });
       const mine = st.mv.filter((m) => m.ref === 'MNG-T6C@' + AT);
-      ok(r.rows === 1 && mine.length === 1 && mine[0].qty === -5 && mine[0].lot_code === null && /Packed without a lot \(owner\): x y z/.test(mine[0].note), 'override: lot-less piece and short line merge into one SALE (' + JSON.stringify(mine) + ')');
+      ok(r.rows === 1 && mine.length === 1 && mine[0].qty === -2 && mine[0].lot_code === null && mine[0].note === 'Packed without a lot (owner): found in the store', 'P1: with an override it writes one lot-less line with the note (' + JSON.stringify(mine) + ')');
+      const nl = await inv.needsLot();
+      ok(nl.length === 1 && nl[0].orderId === 'MNG-T6C' && nl[0].boxes === 2, 'P1: and needsLot lists it (' + JSON.stringify(nl) + ')');
       ok((await inv.deductForOrder({ orderId: 'MNG-T6D', items: [], at: AT, plan: { skipped: 'before tracking started', rows: [], short: [] } })).skipped, 'deductForOrder with a skipped plan writes nothing');
+    }
+    {
+      // P2 (fix round 1): one lot under two best-before dates is one lot (the database allows one sale per pack, flavour and lot)
+      const { st, inv } = mk6();
+      await inv.receive({ slug: 'atta-kesari', received: 1, lot: 'LX', bestBefore: '2027-01-20', actor: A });
+      await inv.receive({ slug: 'atta-kesari', received: 5, lot: 'LX', bestBefore: '2027-01-25', actor: A });
+      const p1 = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 3 }], at: AT });
+      ok(p1.short.length === 0 && p1.rows.length === 1 && p1.rows[0].lot_code === 'LX' && p1.rows[0].qty === -3 && p1.rows[0].best_before === '2027-01-20', 'P2: a pack of 3 is one sale of 3 from lot LX, at its earliest best before (' + JSON.stringify(p1.rows) + ')');
+      await inv.deductForOrder({ orderId: 'MNG-P2A', items: [], at: AT, plan: p1 });
+      const p2 = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 5 }], at: AT });
+      ok(p2.short.length === 1 && p2.short[0].boxes === 2 && p2.rows.length === 1 && p2.rows[0].qty === -3, 'P2: the next pack of 5 finds only the 3 left in LX, so 2 are short (' + JSON.stringify(p2) + ')');
+      ok((await stockOfLot(st, 'atta-kesari', 'LX')) === 3, 'P2: lot LX holds 3');
+    }
+    {
+      // P4 (fix round 1): Assign lot writes its sale with the lot's own best before; the ledger may carry another one. The lot is still one lot.
+      const { st, inv } = mk6();
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261104-01', status: 'released', best_before: '2027-02-02' }]);
+      await st.insert([{ item_slug: 'atta-kesari', qty: 3, type: 'RECEIVE', lot_code: 'MNGK-261104-01', best_before: '2027-02-05' }]);
+      await st.insert([{ item_slug: 'atta-kesari', qty: -3, type: 'SALE', lot_code: null, best_before: null, ref: 'MNG-P4@' + AT }]);
+      const a = await inv.assignLot({ orderId: 'MNG-P4', slug: 'atta-kesari', lot: 'MNGK-261104-01', isOwner: true });
+      ok(a.moved === 3 && (await stockOfLot(st, 'atta-kesari', 'MNGK-261104-01')) === 0, 'P4: setup: the 3 boxes of the lot are assigned to the order');
+      const p = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 1 }], at: AT });
+      ok(p.rows.length === 0 && p.short.length === 1 && p.short[0].boxes === 1, 'P4: the emptied lot is not packed again through its other best-before line (' + JSON.stringify(p) + ')');
     }
     {
       // needsLot: only after lots_from (compared as times, not text), and not once undone

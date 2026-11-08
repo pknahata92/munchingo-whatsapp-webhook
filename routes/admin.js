@@ -94,8 +94,12 @@ router.get('/admin/api/inventory/flow', sw((req, inv) => inv.flow()));
 // Batch receiving (spec 6.3, 6.6). One Krazy Bakers delivery in one save (lots start on hold): staff and owner. utils/deliveries.js
 // throws the inventory's StockError, so sw() answers its refusals in plain words like every stock call.
 router.post('/admin/api/stock/deliveries', sw((req) => require('../utils/deliveries').instance().save(req.body || {}, { actor: req.admin, isOwner: req.admin.role === 'owner' })));
-// Boxes packed without a lot (owner override), for Needs attention: staff and owner. Assign lot is owner only (below).
-router.get('/admin/api/stock/needs-lot', sw(async (req, inv) => ({ lines: await inv.needsLot() })));
+// For Needs attention: boxes packed without a lot (lines; Assign lot is owner only, below), and packs whose lots could not be checked or
+// whose boxes could not be written off (unplanned; null if those could not be read, so the lines still show). Staff and owner.
+router.get('/admin/api/stock/needs-lot', sw(async (req, inv) => {
+  const [lines, unplanned] = await Promise.all([inv.needsLot(), actions.unplannedPacks().catch((e) => { console.error('[STOCK] could not read the unplanned packs:', e.message); return null; })]);
+  return { lines, unplanned };
+}));
 router.post('/admin/api/inventory/hamper', sw((req, inv) => inv.offlineHamper({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));

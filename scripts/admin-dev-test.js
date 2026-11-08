@@ -354,14 +354,31 @@ async function login(email) {
     const bk = await call('/orders/bulk-pack', s.token, { ids: ['MNG-ISTA-1000', 'MNG-ISTB-1000', 'MNG-BBBB-1010'] });
     const no = (bk.j.results || []).filter((x) => !x.ok);
     ok(bk.j.packed === 2 && no.length === 1 && no[0].id === 'MNG-ISTB-1000' && /is on hold \(release it\)/.test(no[0].error || ''), 'bulk pack of 3 where 1 is short: packed 2, one ok:false with the reason (' + JSON.stringify(bk.j) + ')');
-    // a technical failure never blocks packing: the planner fails, the order still packs and the box still comes off stock, as before lots
+    // a technical failure never blocks packing, and it is raised for Needs attention (spec 6.6): the order gets a stock_unplanned event,
+    // and needs-lot lists it under `unplanned` while that pack stands
     const devStock = (b) => fetch('http://localhost:' + PORT + '/dev/stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+    const I = 'MNG-ISTB-1000';
+    const unplannedOf = async () => { const r = await call('/stock/needs-lot', s.token); return Array.isArray(r.j.unplanned) ? r.j.unplanned.filter((u) => u.orderId === I) : null; };
+    const eventsOf = async () => ((await call(`/orders/${I}`, o.token)).j.order.events || []).filter((e) => e.event === 'stock_unplanned');
+    ok(JSON.stringify(await unplannedOf()) === '[]', 'setup: nothing unplanned for ' + I);
     await devStock({ planFails: true });
     const kb = (await kes()).on_hand;
-    const tf = await call('/orders/MNG-ISTB-1000/advance', s.token, { to: 'packed' });
+    const tf = await call(`/orders/${I}/advance`, s.token, { to: 'packed' });
+    await devStock({ planFails: false });
     ok(tf.j.ok && tf.j.state === 'packed', 'when the packing plan cannot be worked out, the order still packs (' + tf.s + ' ' + JSON.stringify(tf.j) + ')');
     ok((await kes()).on_hand === kb - 1, 'and its Kesari box still comes off stock, as before lots');
-    await devStock({ planFails: false });
+    const e1 = await eventsOf(), u1 = await unplannedOf();
+    ok(e1.length === 1 && /lots could not be checked/i.test((e1[0].meta || {}).reason || ''), 'the order gets a stock_unplanned event saying the lots could not be checked (' + JSON.stringify(e1) + ')');
+    ok(u1 && u1.length === 1 && u1[0].reason === e1[0].meta.reason && !!u1[0].at, 'and needs-lot lists the pack under unplanned (' + JSON.stringify(u1) + ')');
+    // undo drops it from the list; packing again with an override while the stock write fails raises it again, keeping the owner's note
+    ok((await call(`/orders/${I}/undo`, o.token, {})).j.state === 'topack' && JSON.stringify(await unplannedOf()) === '[]', 'once the pack is undone it leaves the unplanned list');
+    await devStock({ deductFails: true });
+    const td = await call(`/orders/${I}/advance`, o.token, { to: 'packed', override: 'stall stock' });
+    await devStock({ deductFails: false });
+    ok(td.j.ok && td.j.state === 'packed', 'an owner override still packs when the stock write fails (' + td.s + ' ' + JSON.stringify(td.j) + ')');
+    const u2 = await unplannedOf();
+    ok(u2 && u2.length === 1 && /not taken off stock/i.test(u2[0].reason || '') && u2[0].note === 'stall stock', 'and it is listed as unplanned with the owner\'s note, since no lot-less line was written (' + JSON.stringify(u2) + ')');
+    ok(!(await call('/stock/needs-lot', s.token)).j.lines.some((l) => l.orderId === I), 'the failed write left no lot-less line behind');
   }
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
