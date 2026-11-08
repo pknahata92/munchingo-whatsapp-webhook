@@ -488,5 +488,160 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       ok(e && e.message === 'db down', 'if the lot table cannot be read, sellable() fails instead of guessing');
     }
   }
+  // ── Batch receiving, Task 6: the Packed step takes boxes only from lots that can still ship ──
+  {
+    const { shortText } = require('../utils/inventory');
+    const AT = '2026-11-08T06:00:00.000Z';   // the pack moment: 8 Nov 2026 in India. The inventory's own clock stays on 31 Oct, so a plan that read it would show.
+    const mk6 = () => { const st = memStore('2026-10-16T00:00:00.000Z'); st.setSetting('lots_from', '2026-10-30T00:00:00.000Z'); return { st, inv: makeInventory(st) }; };
+    const KES2 = [{ slug: 'atta-kesari', quantity: 2 }];
+    const held = (st, slug, code, bb, n) => st.insertLots([{ item_slug: slug, lot_code: code, status: 'hold', best_before: bb }]).then(() => st.insert([{ item_slug: slug, qty: n, type: 'RECEIVE', lot_code: code, best_before: bb }]));
+    {
+      const { st, inv } = mk6();
+      await held(st, 'atta-kesari', 'MNGK-261105-01', '2027-02-03', 50);
+      const p = await inv.planForOrder({ items: KES2, at: AT });
+      ok(!p.skipped && p.rows.length === 0 && p.short.length === 1 && p.short[0].slug === 'atta-kesari' && p.short[0].boxes === 2, 'plan: 2 Kesari with only a held lot are 2 boxes short (' + JSON.stringify(p) + ')');
+      ok(p.short[0].hint === 'Lot MNGK-261105-01 is on hold (release it), or receive the delivery first.', 'plan: the hint names the held lot (' + p.short[0].hint + ')');
+      ok(shortText(p.short) === 'Kesari: 2 boxes short. Lot MNGK-261105-01 is on hold (release it), or receive the delivery first.', 'plan: the refusal reads as in spec 6.6 (' + shortText(p.short) + ')');
+      ok(shortText([{ ...p.short[0], boxes: 1 }]).startsWith('Kesari: 1 box short.'), 'plan: one box is "1 box"');
+      // released with 1 box: it covers 1, the other is short
+      await inv.receive({ slug: 'atta-kesari', received: 1, lot: '01NOV26', bestBefore: '2027-01-30', actor: A });
+      const p2 = await inv.planForOrder({ items: KES2, at: AT });
+      ok(p2.rows.length === 1 && p2.rows[0].lot_code === '01NOV26' && p2.rows[0].qty === -1 && p2.rows[0].type === 'SALE' && p2.short[0].boxes === 1, 'plan: a released (legacy) lot covers what it can; the rest is short (' + JSON.stringify(p2) + ')');
+      ok((await inv.planForOrder({ items: KES2, at: '2026-10-15T05:00:00.000Z' })).skipped, 'plan: an order packed before tracking started is skipped');
+    }
+    {
+      // a released lot whose last ship date was yesterday
+      const { st, inv } = mk6();
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-260928-01', status: 'released', best_before: '2026-12-27' }]);   // last ship 7 Nov
+      await st.insert([{ item_slug: 'atta-kesari', qty: 40, type: 'RECEIVE', lot_code: 'MNGK-260928-01', best_before: '2026-12-27' }]);
+      const p = await inv.planForOrder({ items: KES2, at: AT });
+      ok(p.short.length === 1 && p.short[0].boxes === 2 && p.short[0].hint === 'Lot MNGK-260928-01 is past its last ship date (7 Nov): it can only go to fairs, samples or offline sales.', 'plan: a lot past its last ship date is not packed, and the hint says so (' + JSON.stringify(p.short) + ')');
+      // a held lot is named first when there is one
+      await held(st, 'atta-kesari', 'MNGK-261105-01', '2027-02-03', 10);
+      ok((await inv.planForOrder({ items: KES2, at: AT })).short[0].hint.startsWith('Lot MNGK-261105-01 is on hold'), 'plan: a held lot is named before a lot past its last ship date');
+    }
+    {
+      // legacy 15OCT26 (best before 13 Jan, last ship 24 Nov): "today" is the India date of the pack moment
+      const { inv } = mk6();
+      await inv.receive({ slug: 'atta-kesari', received: 30, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      const late = await inv.planForOrder({ items: KES2, at: '2026-11-24T18:31:00.000Z' });   // 25 Nov, 00:01 in India
+      ok(late.short.length === 1 && late.short[0].hint === 'Lot 15OCT26 is past its last ship date (24 Nov): it can only go to fairs, samples or offline sales.', 'plan: 15OCT26 cannot be packed from 25 Nov, India time (' + JSON.stringify(late.short) + ')');
+      const last = await inv.planForOrder({ items: KES2, at: '2026-11-24T18:29:00.000Z' });   // 24 Nov, 23:59 in India
+      ok(last.short.length === 0 && last.rows.length === 1 && last.rows[0].lot_code === '15OCT26', 'plan: on 24 Nov (India) it still packs (' + JSON.stringify(last) + ')');
+      // past its best before as well: no hint about fairs, the stock has to come in
+      const gone = await inv.planForOrder({ items: KES2, at: '2027-01-14T06:00:00.000Z' });
+      ok(gone.short[0].hint === 'Receive the delivery first.', 'plan: a lot past best before is not offered for fairs either (' + gone.short[0].hint + ')');
+    }
+    {
+      // Review Focus 4: a Trio with only Sugar-Lite held is short on Sugar-Lite alone
+      const { st, inv } = mk6();
+      await held(st, 'atta-lite-sugar', 'MNGL-261105-01', '2027-02-03', 20);
+      await inv.receive({ slug: 'atta-kesari', received: 10, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      const p = await inv.planForOrder({ items: [{ slug: 'trio-gift-set-kesari-lite-sugar-original', quantity: 1 }], at: AT });
+      ok(p.short.length === 1 && p.short[0].slug === 'atta-lite-sugar' && p.short[0].boxes === 1 && shortText(p.short).startsWith('Sugar-Lite: 1 box short. Lot MNGL-261105-01 is on hold'), 'plan: Trio with only Sugar-Lite held gives exactly one short line, for Sugar-Lite (' + JSON.stringify(p.short) + ')');
+      ok(p.rows.some((r) => r.item_slug === 'atta-kesari' && r.lot_code === '15OCT26' && r.qty === -1) && p.rows.some((r) => r.item_slug === 'atta-original' && r.lot_code === null && r.qty === -1), 'plan: Kesari comes from its lot; Original, never counted, gets a lot-less line (' + JSON.stringify(p.rows) + ')');
+    }
+    {
+      // no ledger rows at all: never short (an uncounted item is not limited, as on the website); rows that add to zero: short
+      const { st, inv } = mk6();
+      const p = await inv.planForOrder({ items: [{ slug: 'atta-ajwain', quantity: 3 }], at: AT });
+      ok(p.short.length === 0 && p.rows.length === 1 && p.rows[0].item_slug === 'atta-ajwain' && p.rows[0].qty === -3 && p.rows[0].lot_code === null, 'plan: a flavour with no ledger rows is not short (' + JSON.stringify(p) + ')');
+      await inv.receive({ slug: 'atta-ajwain', received: 2, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      await inv.take({ slug: 'atta-ajwain', qty: 2, type: 'SAMPLE', actor: A });
+      const q = await inv.planForOrder({ items: [{ slug: 'atta-ajwain', quantity: 3 }], at: AT });
+      ok(q.short.length === 1 && q.short[0].boxes === 3 && q.short[0].hint === 'Receive the delivery first.', 'plan: a counted flavour with nothing left is short: receive the delivery first (' + JSON.stringify(q.short) + ')');
+      ok(st.mv.every((r) => r.type !== 'SALE'), 'plan: planning writes nothing');
+    }
+    {
+      // owner override: the short boxes are written lot-less with the note; Needs attention lists them; Assign lot fixes them
+      const { st, inv } = mk6(); const OWNER = { email: 'owner@x.com', name: 'Owner' };
+      await held(st, 'atta-kesari', 'MNGK-261105-01', '2027-02-03', 50);
+      await inv.receive({ slug: 'atta-original', received: 10, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      const items = [{ slug: 'atta-kesari', quantity: 2 }, { slug: 'atta-original', quantity: 1 }];
+      const plan = await inv.planForOrder({ items, at: AT });
+      const r = await inv.deductForOrder({ orderId: 'MNG-T6A', items, at: AT, plan, overrideNote: 'fair stock' });
+      const mine = st.mv.filter((m) => m.ref === 'MNG-T6A@' + AT);
+      const ll = mine.find((m) => m.item_slug === 'atta-kesari');
+      ok(r.rows === 2 && mine.length === 2 && ll && ll.type === 'SALE' && ll.lot_code === null && ll.qty === -2 && ll.note === 'Packed without a lot (owner): fair stock', 'override: the short Kesari is one lot-less SALE with the note (' + JSON.stringify(mine) + ')');
+      ok(mine.some((m) => m.item_slug === 'atta-original' && m.lot_code === '15OCT26' && m.qty === -1), 'override: the rest of the plan is written as planned');
+      let nl = await inv.needsLot();
+      ok(nl.length === 1 && nl[0].orderId === 'MNG-T6A' && nl[0].slug === 'atta-kesari' && nl[0].boxes === 2 && nl[0].packedAt === AT, 'needsLot lists the lot-less boxes (' + JSON.stringify(nl) + ')');
+      // assign: owner only, a lot that can ship, with enough boxes
+      await rejects(inv.assignLot({ orderId: 'MNG-T6A', slug: 'atta-kesari', lot: 'MNGK-261105-01', isOwner: false, actor: A }), /^Only the owner can assign a lot\.$/, 'assignLot: staff are refused');
+      let e403 = null; try { await inv.assignLot({ orderId: 'MNG-T6A', slug: 'atta-kesari', lot: 'MNGK-261105-01', actor: A }); } catch (x) { e403 = x; } ok(e403 && e403.status === 403, 'assignLot: the refusal is a 403');
+      await rejects(inv.assignLot({ orderId: 'MNG-T6A', slug: 'atta-kesari', lot: 'MNGK-261105-01', isOwner: true, actor: OWNER }), /on hold/, 'assignLot: a held lot is refused');
+      await rejects(inv.assignLot({ orderId: 'MNG-T6A', slug: 'atta-kesari', lot: 'NOPE-1', isOwner: true, actor: OWNER }), /not a lot of Atta Kesari/, 'assignLot: an unknown lot is refused');
+      await inv.receive({ slug: 'atta-kesari', received: 1, lot: '02NOV26', bestBefore: '2027-01-31', actor: A });
+      await rejects(inv.assignLot({ orderId: 'MNG-T6A', slug: 'atta-kesari', lot: '02NOV26', isOwner: true, actor: OWNER }), /only 1 box.*needs 2/, 'assignLot: a lot with fewer boxes than needed is refused');
+      await st.updateLot('atta-kesari', 'MNGK-261105-01', { status: 'released' });
+      const lotQty = async (code) => (await st.byLot()).filter((x) => x.item_slug === 'atta-kesari' && x.lot_code === code).reduce((n, x) => n + x.qty, 0);
+      const before = await lotQty('MNGK-261105-01'), total0 = await onHand(inv, 'atta-kesari'), n0 = st.mv.length;
+      const a = await inv.assignLot({ orderId: 'MNG-T6A', slug: 'atta-kesari', lot: 'mngk-261105-01', isOwner: true, actor: OWNER });   // typed in small letters
+      const added = st.mv.slice(n0);
+      ok(a.moved === 2 && added.length === 2 && added[0].type === 'SALE_UNDO' && added[0].lot_code === null && added[0].qty === 2 && added[1].type === 'SALE' && added[1].lot_code === 'MNGK-261105-01' && added[1].best_before === '2027-02-03' && added[1].qty === -2 && added.every((m) => m.ref === 'MNG-T6A@' + AT && m.actor_email === 'owner@x.com'), 'assignLot: a SALE_UNDO for the lot-less line and a SALE on the lot, same ref, by the owner (' + JSON.stringify(added) + ')');
+      ok(await lotQty('MNGK-261105-01') === before - 2 && await onHand(inv, 'atta-kesari') === total0, 'assignLot: the lot drops by 2 and the total on hand does not change');
+      nl = await inv.needsLot(); ok(nl.length === 0, 'assignLot: needsLot is empty afterwards (' + JSON.stringify(nl) + ')');
+      await rejects(inv.assignLot({ orderId: 'MNG-T6A', slug: 'atta-kesari', lot: 'MNGK-261105-01', isOwner: true, actor: OWNER }), /waiting for a lot/, 'assignLot: nothing left to assign is refused');
+      // Undo on the order puts the boxes back on the assigned lot (the lot-less line is not put back twice)
+      await inv.restoreForOrder({ orderId: 'MNG-T6A' });
+      ok(await lotQty('MNGK-261105-01') === before && await onHand(inv, 'atta-kesari') === total0 + 2 && (await st.byLot()).filter((x) => x.item_slug === 'atta-kesari' && x.lot_code === null).reduce((n, x) => n + x.qty, 0) === 0, 'restoreForOrder after assignLot puts the 2 boxes back on the assigned lot');
+    }
+    {
+      // R4: the same pack already took boxes from the chosen lot
+      const { st, inv } = mk6();
+      await inv.receive({ slug: 'atta-kesari', received: 1, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+      const plan = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 3 }], at: AT });
+      await inv.deductForOrder({ orderId: 'MNG-T6B', items: [], at: AT, plan, overrideNote: 'event stock' });
+      await inv.receive({ slug: 'atta-kesari', received: 10, lot: '15OCT26', bestBefore: '2027-01-13', confirmDuplicate: true, actor: A });
+      await rejects(inv.assignLot({ orderId: 'MNG-T6B', slug: 'atta-kesari', lot: '15OCT26', isOwner: true }), /^This pack already took boxes from lot 15OCT26\. Choose another lot, or undo the pack and pack again\.$/, 'assignLot: R4 refusal when the pack already has a sale on that lot');
+      // a lot past its last ship date cannot be assigned to a website order
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-260928-01', status: 'released', best_before: '2026-12-27' }]);
+      await st.insert([{ item_slug: 'atta-kesari', qty: 40, type: 'RECEIVE', lot_code: 'MNGK-260928-01', best_before: '2026-12-27' }]);
+      const later = makeInv(st, { now: () => Date.parse(AT) });
+      await rejects(later.assignLot({ orderId: 'MNG-T6B', slug: 'atta-kesari', lot: 'MNGK-260928-01', isOwner: true }), /past its last ship date \(7 Nov\)/, 'assignLot: a lot past its last ship date is refused');
+      // an alias finds its lot (the code printed on older stickers)
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261016-01', status: 'released', best_before: '2027-01-14', aliases: ['16OCT26'] }]);
+      await st.insert([{ item_slug: 'atta-kesari', qty: 5, type: 'RECEIVE', lot_code: 'MNGK-261016-01', best_before: '2027-01-14' }]);
+      const b = await inv.assignLot({ orderId: 'MNG-T6B', slug: 'atta-kesari', lot: '16OCT26', isOwner: true });
+      ok(b.moved === 2 && st.mv.slice(-1)[0].lot_code === 'MNGK-261016-01', 'assignLot: an alias finds the lot it names');
+    }
+    {
+      // a lot-less piece and a short line of one flavour are one row (the database allows one sale per order, flavour and lot)
+      const { st, inv } = mk6();
+      await inv.count({ slug: 'atta-kesari', counted: 3, note: 'found 3 boxes', actor: A });   // a count up is a lot-less line
+      const plan = await inv.planForOrder({ items: [{ slug: 'atta-kesari', quantity: 5 }], at: AT });
+      const r = await inv.deductForOrder({ orderId: 'MNG-T6C', items: [], at: AT, plan, overrideNote: 'x y z' });
+      const mine = st.mv.filter((m) => m.ref === 'MNG-T6C@' + AT);
+      ok(r.rows === 1 && mine.length === 1 && mine[0].qty === -5 && mine[0].lot_code === null && /Packed without a lot \(owner\): x y z/.test(mine[0].note), 'override: lot-less piece and short line merge into one SALE (' + JSON.stringify(mine) + ')');
+      ok((await inv.deductForOrder({ orderId: 'MNG-T6D', items: [], at: AT, plan: { skipped: 'before tracking started', rows: [], short: [] } })).skipped, 'deductForOrder with a skipped plan writes nothing');
+    }
+    {
+      // needsLot: only after lots_from (compared as times, not text), and not once undone
+      const { st, inv } = mk6();
+      st.setSetting('lots_from', '2026-10-30 10:00:00+05:30');   // the database stores now()::text: 04:30 UTC
+      await st.insert([
+        { item_slug: 'atta-kesari', qty: -1, type: 'SALE', lot_code: null, best_before: null, ref: 'MNG-EARLY@2026-10-30T04:00:00.000Z' },
+        { item_slug: 'atta-kesari', qty: -1, type: 'SALE', lot_code: null, best_before: null, ref: 'MNG-LATE@2026-10-30T05:00:00.000Z' },
+        { item_slug: 'atta-original', qty: -2, type: 'SALE', lot_code: null, best_before: null, ref: 'MNG-UNDONE@2026-10-31T05:00:00.000Z' },
+        { item_slug: 'atta-original', qty: 2, type: 'SALE_UNDO', lot_code: null, best_before: null, ref: 'MNG-UNDONE@2026-10-31T05:00:00.000Z' },
+      ]);
+      const times = ['2026-10-30T04:00:00.000Z', '2026-10-30T05:00:00.000Z', '2026-10-31T05:00:00.000Z', '2026-10-31T06:00:00.000Z']; st.mv.slice(-4).forEach((m, i) => { m.created_at = times[i]; });
+      st.lotlessSales = async () => st.mv.filter((m) => (m.type === 'SALE' || m.type === 'SALE_UNDO') && m.lot_code == null);   // a store that returns too much: needsLot must still decide by time itself
+      const nl = await inv.needsLot();
+      ok(nl.length === 1 && nl[0].orderId === 'MNG-LATE' && nl[0].boxes === 1, 'needsLot: a row before lots_from (by time) and an undone row are left out (' + JSON.stringify(nl) + ')');
+    }
+    {
+      // the real store reads the lot-less sales from stock_movements
+      const dbPath = require.resolve('../utils/database'); const seen = []; const saved = require.cache[dbPath];
+      const q = (t) => { const o = { t, ops: [] }; const chain = new Proxy(o, { get: (target, k) => (k === 'then' ? (res) => { seen.push(target); res({ data: [{ id: 1 }], error: null }); } : (...a) => { target.ops.push([k, ...a]); return chain; }) }); return chain; };
+      require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { client: () => ({ from: (t) => q(t) }) } };
+      const real = require('../utils/inventory').supabaseStore();
+      const got = typeof real.lotlessSales === 'function' ? await real.lotlessSales('2026-10-30T04:30:00.000Z') : null;
+      const c0 = seen[0] || { ops: [] }; const has = (...want) => c0.ops.some((o) => JSON.stringify(o) === JSON.stringify(want));
+      ok(got && got.length === 1 && c0.t === 'stock_movements' && has('in', 'type', ['SALE', 'SALE_UNDO']) && has('is', 'lot_code', null) && has('gte', 'created_at', '2026-10-30T04:30:00.000Z'), 'the real store reads lot-less sales and their undos since lots_from (' + JSON.stringify(c0) + ')');
+      require.cache[dbPath] = saved;
+    }
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

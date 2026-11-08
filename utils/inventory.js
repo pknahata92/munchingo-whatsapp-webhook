@@ -52,6 +52,28 @@ function lotInfo(ctx, r) {
 }
 const eligibleRow = (ctx, r, purpose) => lotRules.eligible(lotInfo(ctx, r), purpose, ctx.today, ctx.s);
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const dateWords = (iso) => `${parseInt(iso.slice(8, 10), 10)} ${MONTHS[parseInt(iso.slice(5, 7), 10) - 1]}`;
+// Why a flavour cannot be packed (spec 6.6), in plain words: the oldest held lot that has boxes; else the oldest released or legacy lot
+// that is past its last ship date but still before best before (it can still go to fairs); else the stock has to come in.
+function packHint(ctx, rows) {
+  const byCode = new Map();
+  for (const r of rows) {
+    if (r.lot_code == null) continue;
+    const info = lotInfo(ctx, r); const e = byCode.get(r.lot_code) || { code: r.lot_code, qty: 0, status: info.status, best_before: info.best_before };
+    e.qty += r.qty; if (info.best_before && (!e.best_before || info.best_before < e.best_before)) e.best_before = info.best_before;
+    byCode.set(r.lot_code, e);
+  }
+  const lots = [...byCode.values()].filter((l) => l.qty > 0).sort((a, b) => String(a.best_before || '9').localeCompare(String(b.best_before || '9')));
+  const held = lots.find((l) => l.status === 'hold');
+  if (held) return `Lot ${held.code} is on hold (release it), or receive the delivery first.`;
+  const late = lots.find((l) => (l.status == null || l.status === 'released') && l.best_before && !lotRules.eligible(l, 'pack', ctx.today, ctx.s) && lotRules.eligible(l, 'other', ctx.today, ctx.s));
+  if (late) return `Lot ${late.code} is past its last ship date (${dateWords(lotRules.cutoffs(late.best_before, ctx.s).lastShip)}): it can only go to fairs, samples or offline sales.`;
+  return 'Receive the delivery first.';
+}
+// The Packed refusal: one sentence per short flavour, e.g. "Kesari: 2 boxes short. Lot MNGK-261105-01 is on hold (release it), or receive the delivery first."
+const shortText = (short) => (short || []).map((s) => `${String(s.name || s.slug).replace(/^Atta /, '')}: ${s.boxes} ${s.boxes === 1 ? 'box' : 'boxes'} short. ${s.hint}`).join(' ');
+
 // Boxes of each flavour inside an order (gift sets opened up): { 'atta-kesari': 2, ... }
 function boxesBySlug(items) {
   const out = {};
@@ -422,9 +444,46 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   }
 
   // ── Orders ──────────────────────────────────────────────────────────────────
-  // Called after an order is marked Packed. Deducts only from tracking_from onward; oldest lot first; a shortfall becomes a
-  // lot-less line so stock shows below zero (a clear signal) instead of the pack failing.
-  async function deductForOrder({ orderId, items, at = new Date().toISOString() }) {
+  // Packing (spec 6.6), worked out BEFORE the order is saved as packed: which lots the boxes come from. Only lots that are released or
+  // legacy and on or before their last ship date on the day of the pack (`at`, India date) are used, oldest best before first. What
+  // they cannot cover is `short`, with a plain hint; the caller refuses the Packed step unless the owner overrides. A flavour with no
+  // ledger rows at all has never been counted, so it is not limited (as on the website): it gets a lot-less line, as before lots.
+  // Writes nothing.
+  async function planForOrder({ items, at = new Date().toISOString() }) {
+    const from = await store.setting('tracking_from');
+    if (!from || Date.parse(at) < Date.parse(from)) return { skipped: 'before tracking started', rows: [], short: [] };
+    const boxes = boxesBySlug(items); const slugs = Object.keys(boxes);
+    if (!slugs.length) return { skipped: 'no tracked items', rows: [], short: [] };
+    const [list, all, ctx] = await Promise.all([store.items(), store.byLot(), lotContext(store, Date.parse(at))]);
+    const products = new Map(list.filter((i) => i.kind === 'product').map((i) => [i.slug, i]));
+    const rows = [], short = [];
+    for (const slug of slugs) {
+      const item = products.get(slug); if (!item) continue;
+      const mine = all.filter((r) => r.item_slug === slug);
+      if (!mine.length) { rows.push({ item_slug: slug, qty: -boxes[slug], type: 'SALE', lot_code: null, best_before: null }); continue; }
+      const { pieces, short: left } = allocate(mine.filter((r) => eligibleRow(ctx, r, 'pack')), boxes[slug]);
+      pieces.forEach((p) => rows.push({ item_slug: slug, qty: -p.qty, type: 'SALE', lot_code: p.lot_code, best_before: p.best_before }));
+      if (left > 0) short.push({ slug, name: item.name, boxes: left, hint: packHint(ctx, mine) });
+    }
+    return { rows, short };
+  }
+  // Called after an order is marked Packed. With `plan` (from planForOrder) it writes the plan, and the short boxes as one lot-less
+  // line per flavour, noted when the owner overrode ("needs lot" until Assign lot). Without a plan (planning failed) it works as before
+  // lots: deducts only from tracking_from onward; oldest lot first; a shortfall becomes a lot-less line so stock shows below zero
+  // (a clear signal) instead of the pack failing.
+  async function deductForOrder({ orderId, items, at = new Date().toISOString(), plan = null, overrideNote = null }) {
+    if (plan) {
+      if (plan.skipped) return { skipped: plan.skipped };
+      const ref = `${orderId}@${at}`; const why = cleanText(overrideNote, 250);
+      const lines = (plan.rows || []).map((r) => ({ ...r, ref }));
+      for (const s of plan.short || []) lines.push({ item_slug: s.slug, qty: -s.boxes, type: 'SALE', lot_code: null, best_before: null, ref, note: why ? `Packed without a lot (owner): ${why}` : null });
+      // one row per flavour and lot: the database allows one sale per order, flavour and lot (a lot-less piece plus a short line would clash)
+      const merged = new Map();
+      for (const l of lines) { const k = `${l.item_slug}|${l.lot_code || ''}`; const m = merged.get(k); if (m) { m.qty += l.qty; m.note = m.note || l.note; } else merged.set(k, { ...l }); }
+      const rows = [...merged.values()];
+      if (rows.length) await store.insert(rows);
+      return { rows: rows.length };
+    }
     const from = await store.setting('tracking_from');
     if (!from || Date.parse(at) < Date.parse(from)) return { skipped: 'before tracking started' };
     const boxes = boxesBySlug(items); const slugs = Object.keys(boxes);
@@ -450,11 +509,71 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     return { rows: rows.length };
   }
 
+  // Boxes packed without a lot since lots began (an owner override, or a pack whose plan failed), not yet undone or assigned:
+  // what Needs attention lists. lots_from and created_at are compared as times (the database keeps lots_from as now()::text).
+  async function needsLot() {
+    const from = Date.parse(await store.setting('lots_from'));
+    if (!Number.isFinite(from)) return [];
+    const rows = (await store.lotlessSales(new Date(from).toISOString())) || [];
+    const undone = new Set(rows.filter((r) => r.type === 'SALE_UNDO').map((r) => `${r.ref}|${r.item_slug}`));
+    return rows.filter((r) => r.type === 'SALE' && r.lot_code == null && Date.parse(r.created_at) > from && !undone.has(`${r.ref}|${r.item_slug}`))
+      .map((r) => { const ref = String(r.ref || ''); const i = ref.indexOf('@'); return { orderId: i >= 0 ? ref.slice(0, i) : ref, slug: r.item_slug, boxes: -r.qty, packedAt: i >= 0 ? ref.slice(i + 1) : r.created_at }; })
+      .sort((a, b) => Date.parse(a.packedAt) - Date.parse(b.packedAt));
+  }
+
+  // The lot a code (or alias) names for one flavour (R5): its status (null = legacy), best before and boxes on hand; null if none.
+  async function lotOf(slug, code) {
+    const ledger = (await store.byLot()).filter((r) => r.item_slug === slug);
+    for (const c of [code, code.toUpperCase()]) {
+      const rows = ((await store.lotsByCode(c)) || []).filter((l) => l.item_slug === slug);
+      const row = rows.find((l) => l.lot_code === c) || rows[0] || null;
+      const lotCode = row ? row.lot_code : c;
+      const groups = ledger.filter((r) => r.lot_code === lotCode);
+      if (!row && !groups.length) continue;
+      const bbs = groups.map((g) => g.best_before).filter(Boolean).sort();
+      return { lot_code: lotCode, status: row ? row.status : null, best_before: (row && row.best_before) || bbs[0] || null, onHand: groups.reduce((n, g) => n + g.qty, 0) };
+    }
+    return null;
+  }
+
+  // Owner: give a lot to the boxes of an order that were packed without one (spec 6.6). Each lot-less sale of that order and flavour
+  // that is not undone gets a SALE_UNDO (lot-less) and a SALE on the chosen lot under the same ref, so Undo on the order still puts
+  // back exactly what the pack took, now to the right lot.
+  async function assignLot({ orderId, slug, lot, isOwner = false, actor } = {}) {
+    if (!isOwner) throw new StockError('Only the owner can assign a lot.', 403);
+    const item = await need(slug);
+    if (item.kind !== 'product') throw new StockError('Only biscuit boxes have lots.');
+    const code = cleanText(lot, 60); if (!code) throw new StockError('Choose the lot.');
+    const sales = await store.salesOf(cleanText(orderId, 80));
+    const key = (r) => `${r.ref}|${r.item_slug}|${r.lot_code || ''}`;
+    const undone = new Set(sales.filter((r) => r.type === 'SALE_UNDO').map(key));
+    const open = sales.filter((r) => r.type === 'SALE' && r.item_slug === slug && r.lot_code == null && !undone.has(key(r)));
+    if (!open.length) throw new StockError(`No ${item.name} boxes of this order are waiting for a lot.`, 409);
+    const target = await lotOf(slug, code);
+    if (!target) throw new StockError(`${code} is not a lot of ${item.name}.`, 404);
+    const ctx = await lotContext(store, now());
+    if (!lotRules.eligible(target, 'pack', ctx.today, ctx.s)) {
+      if (target.status === 'hold') throw new StockError(`Lot ${target.lot_code} is on hold. Release it first, or choose another lot.`, 409);
+      if (target.status != null && target.status !== 'released') throw new StockError(`Lot ${target.lot_code} was rejected or corrected, so it cannot be used.`, 409);
+      throw new StockError(`Lot ${target.lot_code} is past its last ship date (${dateWords(lotRules.cutoffs(target.best_before, ctx.s).lastShip)}), so it cannot go to a website order. Choose another lot.`, 409);
+    }
+    // R4: the database allows one sale per order pack, flavour and lot
+    if (open.some((r) => sales.some((x) => x.type === 'SALE' && x.ref === r.ref && x.item_slug === slug && x.lot_code === target.lot_code))) throw new StockError(`This pack already took boxes from lot ${target.lot_code}. Choose another lot, or undo the pack and pack again.`, 409);
+    const needed = open.reduce((n, r) => n - r.qty, 0);
+    if (target.onHand < needed) { const n = Math.max(0, target.onHand); throw new StockError(`Lot ${target.lot_code} has only ${n} ${n === 1 ? 'box' : 'boxes'} on hand; this order needs ${needed}.`, 409); }
+    const rows = [];
+    for (const r of open) rows.push(
+      { item_slug: slug, qty: -r.qty, type: 'SALE_UNDO', lot_code: null, best_before: r.best_before || null, ref: r.ref, note: `Lot assigned: ${target.lot_code}`, ...who(actor) },
+      { item_slug: slug, qty: r.qty, type: 'SALE', lot_code: target.lot_code, best_before: target.best_before, ref: r.ref, note: 'Lot assigned by the owner (packed without a lot)', ...who(actor) });
+    await store.insert(rows);
+    return { moved: needed, lot: target.lot_code };
+  }
+
   // { slug: boxes still sellable } for the flavours that have stock recorded (used by utils/stock.js for the automatic sold-out).
   // Only boxes the website may sell count (released or legacy lots, before their website stop date).
   async function sellable() { const [items, rows, committed, ctx] = await Promise.all([store.items(), store.byLot(), store.committed(), lotContext(store, now())]); return computeSellable(items, rows, committed, ctx); }
 
-  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, deductForOrder, restoreForOrder };
+  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, setLevel, reverse, history, planForOrder, deductForOrder, restoreForOrder, needsLot, assignLot };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────
@@ -495,6 +614,7 @@ function supabaseStore() {
     events: async () => ok(await c().from('stock_events').select('*')) || [],
     eventRows: async (ref, slug) => ok(await c().from('stock_movements').select('*').eq('ref', ref).eq('item_slug', slug).in('type', ['EXHIBITION', 'EXHIBITION_RETURN'])) || [],
     salesOf: async (orderId) => ok(await c().from('stock_movements').select('*').like('ref', `${orderId}@%`).in('type', ['SALE', 'SALE_UNDO'])) || [],
+    lotlessSales: async (since) => { let q = c().from('stock_movements').select('*').in('type', ['SALE', 'SALE_UNDO']).is('lot_code', null); if (since) q = q.gte('created_at', since); return ok(await q) || []; },
     // batch receiving (see batch_receiving_migration.sql)
     settingsAll: async () => Object.fromEntries((ok(await c().from('stock_settings').select('key, value')) || []).map((r) => [r.key, r.value])),
     lots: async () => ok(await c().from('stock_lots').select('*')) || [],
@@ -518,4 +638,4 @@ function supabaseStore() {
 let real = null;
 const instance = () => real || (real = makeInventory(supabaseStore()));
 
-module.exports = { MAX_QTY, makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, lotContext, committedBoxes, firstShortage, instance };
+module.exports = { MAX_QTY, makeInventory, supabaseStore, StockError, allocate, boxesBySlug, computeSellable, lotContext, committedBoxes, firstShortage, shortText, instance };

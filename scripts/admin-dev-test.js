@@ -309,5 +309,59 @@ async function login(email) {
   ok((await chans(o.token)).meta.mode === 'test', 'and Meta is still on test, as the line shows');
   ok((await setMode(o.token, { channel: 'meta', mode: 'off' })).j.channels?.meta?.mode === 'off', 'trying again once the database is back switches it off');
   await devCh({ reset: true });
+
+  // ── Batch receiving, Task 6: Packed takes boxes only from lots that can still ship (spec 6.6). Kept last: earlier checks pack Kesari. ──
+  // Kesari is made short the real way: the shippable Kesari is taken out, then a Kesari delivery is saved and NOT released (its lot is on hold).
+  // Dates come from the real clock (bake today, best before 80 days ahead), so this works on any day.
+  {
+    const istToday = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    const bbIn80 = new Date(Date.now() + 330 * 60000 + 80 * 86400000).toISOString().slice(0, 10);
+    const kes = async () => (await call('/inventory', o.token)).j.items.find((i) => i.slug === 'atta-kesari');
+    const k0 = await kes();
+    if (k0.usable > 0) ok((await call('/inventory/take', o.token, { slug: 'atta-kesari', qty: k0.usable, type: 'SAMPLE', note: 'practice: no shippable Kesari left' })).j.ok, 'setup: the shippable Kesari is taken out (' + k0.usable + ')');
+    ok((await kes()).usable === 0, 'setup: no usable Kesari left');
+    const stamp = Date.now();
+    const dn = await call('/stock/deliveries', s.token, { id: 'practice-t6-nobill-' + stamp, rows: [] });
+    ok(dn.s === 400 && dn.j.error === 'Enter the bill number.', 'a refused delivery answers in plain words, not a server error (' + dn.s + ' ' + dn.j.error + ')');
+    const dv = await call('/stock/deliveries', s.token, { id: 'practice-t6-' + stamp, billNo: 'T6-' + stamp, bakeDate: istToday, cartons: 1, invoiceRupees: 1000, freight: { porter: 100 }, rows: [{ slug: 'atta-kesari', invoiceBoxes: 10, counted: 10, rateRupees: 100 }] });
+    const code = dv.j.lots && dv.j.lots[0] && dv.j.lots[0].code;
+    ok(dv.s === 200 && dv.j.ok && /^MNGK-\d{6}-\d{2}$/.test(code || ''), 'staff save a Kesari delivery through the API (' + dv.s + ' ' + JSON.stringify(dv.j).slice(0, 200) + ')');
+    const hk = ((await kes()).lots || []).find((l) => l.lot_code === code);
+    ok(hk && hk.status === 'hold' && hk.qty === 10, 'packing reads the same stock as the delivery: 10 boxes on hold in ' + code + ' (' + JSON.stringify(hk) + ')');
+    // staff packing a Kesari order is refused in plain words, even when they send an override; the order stays To pack
+    const G = 'MNG-GGGG-1010';   // a Trio: Kesari, Sugar-Lite, Original
+    const want = `Kesari: 1 box short. Lot ${code} is on hold (release it), or receive the delivery first.`;
+    const r1 = await call(`/orders/${G}/advance`, s.token, { to: 'packed', override: 'staff cannot override' });
+    ok(r1.s === 409 && /is on hold \(release it\)/.test(r1.j.error || '') && r1.j.error === want && Array.isArray(r1.j.stockShort) && r1.j.stockShort.length === 1 && r1.j.stockShort[0].slug === 'atta-kesari', 'staff packing a short Kesari order gets 409 with the reason: ' + r1.s + ' ' + r1.j.error);
+    ok((await call(`/orders/${G}`, s.token)).j.order.state === 'topack', 'the refused order stays To pack');
+    const r2 = await call(`/orders/${G}/advance`, o.token, { to: 'packed', override: ' ab ' });
+    ok(r2.s === 409 && r2.j.error === want, 'the owner needs a note of at least 3 characters to override (' + r2.s + ')');
+    const r3 = await call(`/orders/${G}/advance`, o.token, { to: 'packed', override: 'fair stock' });
+    ok(r3.j.ok && r3.j.state === 'packed' && (await call(`/orders/${G}`, s.token)).j.order.state === 'packed', 'an owner override with the note "fair stock" packs it (' + JSON.stringify(r3.j) + ')');
+    const nl = await call('/stock/needs-lot', s.token);
+    ok(nl.s === 200 && Array.isArray(nl.j.lines) && nl.j.lines.some((l) => l.orderId === G && l.slug === 'atta-kesari' && l.boxes === 1), 'staff see the box packed without a lot (' + JSON.stringify(nl.j) + ')');
+    const hist = (await call('/inventory/history?slug=atta-kesari&types=SALE&limit=5', o.token)).j.movements || [];
+    ok(hist.some((m) => String(m.ref).startsWith(G + '@') && m.lot_code === null && m.note === 'Packed without a lot (owner): fair stock'), 'the lot-less sale carries the owner\'s note');
+    // Assign lot (owner only)
+    ok((await call(`/orders/${G}/assign-lot`, s.token, { slug: 'atta-kesari', lot: code })).s === 403, 'staff cannot assign a lot');
+    const ah = await call(`/orders/${G}/assign-lot`, o.token, { slug: 'atta-kesari', lot: code });
+    ok(ah.s === 409 && /on hold/.test(ah.j.error || ''), 'a held lot cannot be assigned: ' + ah.s + ' ' + ah.j.error);
+    ok((await call('/inventory/receive', o.token, { slug: 'atta-kesari', received: 2, lot: 'PRACTICE-T6', bestBefore: bbIn80 })).j.ok, 'setup: 2 Kesari arrive the old way (a legacy lot, counts as released)');
+    const ag = await call(`/orders/${G}/assign-lot`, o.token, { slug: 'atta-kesari', lot: 'PRACTICE-T6' });
+    ok(ag.j.ok && ag.j.moved === 1 && !(await call('/stock/needs-lot', s.token)).j.lines.some((l) => l.orderId === G && l.slug === 'atta-kesari'), 'the owner assigns a lot and the box leaves the list (' + JSON.stringify(ag.j) + ')');
+    // bulk pack of 3 with 1 Kesari box left: the first Trio and the Original order pack, the second Trio is refused with the reason
+    ok((await call('/orders/MNG-BBBB-1010/undo', o.token, {})).j.state === 'topack', 'setup: an Original order goes back to To pack');
+    const bk = await call('/orders/bulk-pack', s.token, { ids: ['MNG-ISTA-1000', 'MNG-ISTB-1000', 'MNG-BBBB-1010'] });
+    const no = (bk.j.results || []).filter((x) => !x.ok);
+    ok(bk.j.packed === 2 && no.length === 1 && no[0].id === 'MNG-ISTB-1000' && /is on hold \(release it\)/.test(no[0].error || ''), 'bulk pack of 3 where 1 is short: packed 2, one ok:false with the reason (' + JSON.stringify(bk.j) + ')');
+    // a technical failure never blocks packing: the planner fails, the order still packs and the box still comes off stock, as before lots
+    const devStock = (b) => fetch('http://localhost:' + PORT + '/dev/stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+    await devStock({ planFails: true });
+    const kb = (await kes()).on_hand;
+    const tf = await call('/orders/MNG-ISTB-1000/advance', s.token, { to: 'packed' });
+    ok(tf.j.ok && tf.j.state === 'packed', 'when the packing plan cannot be worked out, the order still packs (' + tf.s + ' ' + JSON.stringify(tf.j) + ')');
+    ok((await kes()).on_hand === kb - 1, 'and its Kesari box still comes off stock, as before lots');
+    await devStock({ planFails: false });
+  }
   console.log(`${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

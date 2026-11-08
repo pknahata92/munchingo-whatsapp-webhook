@@ -54,6 +54,7 @@ function memStore(trackingFrom) {
     movement: async (i) => mv.find((r) => r.id === i) || null, reversalOf: async (i) => mv.some((r) => r.reverses_id === i), reversedAmong: async (ids) => mv.filter((r) => r.reverses_id && ids.includes(r.reverses_id)).map((r) => r.reverses_id),
     updateItem: async (s, f) => Object.assign(items.find((i) => i.slug === s), f), insertItem: async (row) => items.push({ manual_low: false, active: true, ...row }),
     setting: async (k) => settings[k] || null, settingsAll: async () => ({ ...settings }),
+    setSetting: (k, v) => { settings[k] = v; },   // tests only (e.g. lots_from); the real store has no such call
     // batch receiving
     lots: async () => lots.slice(), lotsByCode: async (code) => lots.filter((l) => l.lot_code === code || (l.aliases || []).includes(code)),
     updateLot: async (slug, code, fields) => { const l = lots.find((x) => x.item_slug === slug && x.lot_code === code); if (l) Object.assign(l, fields); },
@@ -89,6 +90,7 @@ function memStore(trackingFrom) {
     events: async () => { const m = {}; mv.filter((r) => r.type === 'EXHIBITION' || r.type === 'EXHIBITION_RETURN').forEach((r) => { const k = r.ref + '|' + r.item_slug; const e = m[k] || (m[k] = { ref: r.ref, item_slug: r.item_slug, taken: 0, returned: 0 }); if (r.type === 'EXHIBITION') e.taken += -r.qty; else e.returned += r.qty; }); return Object.values(m); },
     eventRows: async (ref, slug) => mv.filter((r) => r.ref === ref && r.item_slug === slug && (r.type === 'EXHIBITION' || r.type === 'EXHIBITION_RETURN')),
     salesOf: async (o) => mv.filter((r) => (r.type === 'SALE' || r.type === 'SALE_UNDO') && String(r.ref).startsWith(o + '@')),
+    lotlessSales: async (since) => mv.filter((r) => (r.type === 'SALE' || r.type === 'SALE_UNDO') && r.lot_code == null && (!since || Date.parse(r.created_at) >= Date.parse(since))),
   };
 }
 

@@ -233,6 +233,16 @@ process.env.DELHIVERY_API_TOKEN = 'tok_dev';
   const bb = new Date(Date.now() + 330 * 60000 + 80 * 86400_000).toISOString().slice(0, 10);
   real.receive({ slug: 'atta-kesari', received: 160, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
   real.receive({ slug: 'atta-lite-sugar', received: 33, damaged: 3, lot: '15OCT26', bestBefore: bb, note: '3 crushed', actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
+  // Original and Ajwain too, like the live shop (all four flavours came in lot 15OCT26): packing now takes boxes only from lots, and a
+  // flavour with no stock at all would be packable once (lot-less) and then refused, which the practice orders would trip over.
+  for (const slug of ['atta-original', 'atta-ajwain']) real.receive({ slug, received: 120, lot: '15OCT26', bestBefore: bb, actor: { email: 'staff@example.com', name: 'Staff' } }).catch(() => {});
   inv.instance = () => real;
+  // POST /dev/stock { planFails: true }: the packing planner throws (as if the lot table could not be read), to check that packing still goes on.
+  let planFails = false; const plan0 = real.planForOrder;
+  real.planForOrder = async (...a) => { if (planFails) throw new Error('practice: the lot table could not be read'); return plan0(...a); };
+  app.post('/dev/stock', (req, res) => { planFails = !!(req.body && req.body.planFails); res.json({ ok: true }); });
+  // Deliveries share the same store, so a delivery saved through the API is what packing and the Stock screen see.
+  const dl = require(path.join(root, 'utils/deliveries.js')); const deliveries = dl.makeDeliveries(store);
+  dl.instance = () => deliveries;
 }
 app.listen(PORT, () => console.log('Admin practice copy: http://localhost:' + PORT + '/admin'));

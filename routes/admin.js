@@ -66,7 +66,8 @@ router.get('/admin/api/orders', wrap(async () => { const orders = await actions.
 router.get('/admin/api/orders/:id', wrap(async (req) => ({ order: (await actions.getOrderDetail(req.params.id)).shaped })));
 
 // Staff and owner: move an order forward, add notes, print.
-router.post('/admin/api/orders/:id/advance', wrap(async (req) => actions.advance({ ...enc(req), to: (req.body || {}).to, carrier: (req.body || {}).carrier, awb: (req.body || {}).awb, method: (req.body || {}).method, deliverNow: !!(req.body || {}).deliverNow })));
+// `override` is the owner's note for packing when no lot that can ship covers the order; advance() honours it only for the owner.
+router.post('/admin/api/orders/:id/advance', wrap(async (req) => actions.advance({ ...enc(req), to: (req.body || {}).to, carrier: (req.body || {}).carrier, awb: (req.body || {}).awb, method: (req.body || {}).method, deliverNow: !!(req.body || {}).deliverNow, override: (req.body || {}).override })));
 router.post('/admin/api/orders/:id/delhivery-shipment', wrap(async (req) => actions.createDelhiveryShipment({ ...enc(req), weightGrams: (req.body || {}).weightGrams })));
 router.post('/admin/api/pickup', wrap(async (req) => actions.requestDelhiveryPickup({ ids: (req.body || {}).ids, actor: req.admin })));
 router.post('/admin/api/labels', wrap(async (req) => actions.shippingLabels((req.body || {}).ids)));
@@ -90,6 +91,11 @@ router.post('/admin/api/inventory/pause', sw(async (req) => {
   return { ok: true };
 }));
 router.get('/admin/api/inventory/flow', sw((req, inv) => inv.flow()));
+// Batch receiving (spec 6.3, 6.6). One Krazy Bakers delivery in one save (lots start on hold): staff and owner. utils/deliveries.js
+// throws the inventory's StockError, so sw() answers its refusals in plain words like every stock call.
+router.post('/admin/api/stock/deliveries', sw((req) => require('../utils/deliveries').instance().save(req.body || {}, { actor: req.admin, isOwner: req.admin.role === 'owner' })));
+// Boxes packed without a lot (owner override), for Needs attention: staff and owner. Assign lot is owner only (below).
+router.get('/admin/api/stock/needs-lot', sw(async (req, inv) => ({ lines: await inv.needsLot() })));
 router.post('/admin/api/inventory/hamper', sw((req, inv) => inv.offlineHamper({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
@@ -141,6 +147,7 @@ router.post('/admin/api/orders/:id/known', owner, rw((req) => rv().setKnown(req.
 router.post('/admin/api/inventory/item', owner, sw((req, inv) => inv.addItem(req.body || {})));
 router.post('/admin/api/inventory/rename-lot', owner, sw((req, inv) => inv.renameLot({ ...(req.body || {}), actor: req.admin, isOwner: true })));
 router.post('/admin/api/inventory/level', owner, sw((req, inv) => inv.setLevel({ slug: (req.body || {}).slug, lowLevel: (req.body || {}).lowLevel })));
+router.post('/admin/api/orders/:id/assign-lot', owner, sw((req, inv) => inv.assignLot({ ...(req.body || {}), orderId: req.params.id, actor: req.admin, isOwner: req.admin.role === 'owner' })));   // { slug, lot }; isOwner after the spread
 router.post('/admin/api/orders/bulk-pack', wrap(async (req) => actions.bulkPack({ ids: (req.body || {}).ids, actor: req.admin })));
 router.post('/admin/api/picklist', wrap(async (req) => actions.pickList((req.body || {}).ids)));
 router.post('/admin/api/orders/:id/address', wrap(async (req) => actions.saveAddress({ orderId: req.params.id, address: (req.body || {}).address, actor: req.admin })));

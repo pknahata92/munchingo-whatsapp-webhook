@@ -392,7 +392,7 @@ function methodFrom(method, carrier) {
   return 'other';
 }
 
-async function advance({ orderId, to, actor, carrier = '', awb = '', method = '', deliverNow = false }) {
+async function advance({ orderId, to, actor, carrier = '', awb = '', method = '', deliverNow = false, override }) {
   const { order, shaped } = await getOrderDetail(orderId);
   if (order.status !== 'paid') throw new AdminError('Only paid orders can be moved forward.', 409);
   if (shaped.state === 'refunded') throw new AdminError('This order has been refunded.', 409);
@@ -414,10 +414,23 @@ async function advance({ orderId, to, actor, carrier = '', awb = '', method = ''
     fields = { shipped_at: now, carrier: carrierLabel, awb: String(awb || '').trim().slice(0, 300) };
     where = { status: 'paid', shipped_at: null, delivered_at: null };
   } else { fields = { delivered_at: now, delivered_by: by }; where = { status: 'paid', delivered_at: null }; }
+  // Stock (spec 6.6): before the order is saved as packed, work out which lots its boxes come from. Boxes only come from lots that can
+  // still ship; if they fall short the step is refused in plain words, unless the owner overrides with a note (then the short boxes are
+  // written without a lot, for Assign lot later). A technical failure never blocks packing: it is logged and the pack goes on as before lots.
+  let plan = null, overrideNote = null;
+  if (to === 'packed') {
+    try { plan = await require('./inventory').instance().planForOrder({ items: order.items, at: now }); }
+    catch (e) { plan = null; console.error(`[STOCK] could not plan packing for ${orderId}: ${e.message}`); }
+    if (plan && plan.short && plan.short.length) {
+      const note = typeof override === 'string' ? override.trim() : '';
+      if (actor && actor.role === 'owner' && note.length >= 3) overrideNote = note;   // staff sending a note is not an override
+      else throw new AdminError(require('./inventory').shortText(plan.short), 409, { stockShort: plan.short });
+    }
+  }
   if (!(await db.updateOrderIf(orderId, where, fields))) throw new AdminError('Someone else just changed this order. Refresh and look again.', 409);
-  await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb, ...(require('./orderUpdates').deferShipped(methodFrom(method, carrier)) ? { notify: 'deferred' } : {}) } : null });
-  // Stock: boxes leave the shelf when the order is packed (oldest lot first). Never blocks packing: a failure is only logged.
-  if (to === 'packed') { try { await require('./inventory').instance().deductForOrder({ orderId, items: order.items, at: now }); } catch (e) { console.error('[STOCK] could not deduct for', orderId, e.message); } }
+  await logEvent(orderId, to, actor, { from, to, meta: to === 'shipped' ? { carrier: fields.carrier, awb: fields.awb, ...(require('./orderUpdates').deferShipped(methodFrom(method, carrier)) ? { notify: 'deferred' } : {}) } : (overrideNote ? { packedWithoutLot: plan.short.map((s) => ({ slug: s.slug, boxes: s.boxes })), note: overrideNote } : null) });
+  // Stock: boxes leave the shelf when the order is packed, from the plan above. Never blocks packing: a failure is only logged.
+  if (to === 'packed') { try { await require('./inventory').instance().deductForOrder({ orderId, items: order.items, at: now, plan, overrideNote }); } catch (e) { console.error('[STOCK] could not deduct for', orderId, e.message); } }
   if (to === 'packed') { try { require('./channelSync').nudge('packed'); } catch (_) {} }   // Meta/Google follow the shelf (never blocks packing)
   // Customer updates (email + WhatsApp, utils/orderUpdates.js; each one never throws and never blocks the step):
   //   packed: now. delivered: now. shipped: now for Porter / India Post / by hand, but for Delhivery only once Delhivery's tracking says
