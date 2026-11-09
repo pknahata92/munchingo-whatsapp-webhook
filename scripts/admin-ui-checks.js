@@ -1419,6 +1419,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     let drawn = null; await until(() => (page(o) === 'Stock' && o.qa('#viewStock .line').length >= 4 ? (drawn = Date.now()) : null), 5000, 'the stock page while needs-lot is slow').catch(() => {});
     ok(drawn != null && drawn - t0 < 1500, 'the Stock screen is drawn without waiting for a slow needs-lot (' + (drawn == null ? 'not drawn' : (drawn - t0) + ' ms') + ')');
     const nlAt = () => seen.filter((x) => /needs-lot$/.test(x.u) && x.t >= t0).length;
+    await until(() => nlAt() >= 1, 4000, 'the needs-lot request').catch(() => {});
     ok(nlAt() >= 1 && page(o) === 'Stock', 'needs-lot was asked for, and the page did not wait for it');
     await new Promise((r) => setTimeout(r, 3000));
     ok(page(o) === 'Stock' && !!o.q('#stockNeeds') && o.errors.length === 0, 'when it answers, the strip is filled in place and the page stays (' + o.errors.join(' | ').slice(0, 200) + ')');
