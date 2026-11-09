@@ -1021,7 +1021,7 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
 
   // ---- Fix B (9 Nov 2026): boxes with no lot never count toward the website number ----
   {
-    const mkB = () => { const st = memStore('2026-10-16T00:00:00.000Z'); return { st, inv: makeInventory(st) }; };
+    const mkB = () => { const st = memStore('2026-10-16T00:00:00.000Z'); return { st, inv: makeInventory(st, { now: () => NOW }) }; };
     const FLB = ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'];
     const lotted = async (st, slug, code, qty, bb) => { await st.insertLots([{ item_slug: slug, lot_code: code, status: 'released', best_before: bb || '2027-02-03' }]); await st.insert([{ item_slug: slug, qty, type: 'RECEIVE', lot_code: code, best_before: bb || '2027-02-03' }]); };
     const noLot = (st, slug, qty) => st.insert([{ item_slug: slug, qty, type: qty > 0 ? 'COUNT_FIX' : 'SALE', lot_code: null, best_before: null }]);
