@@ -1609,21 +1609,25 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       var qIn = h('input', { id: 'lotQ', type: 'search', autocomplete: 'off', autocapitalize: 'characters', placeholder: 'Code, sticker code, Krazy Bakers batch or order ID', 'aria-label': 'Search lots' });
       var found = h('div', { id: 'lotFound', 'aria-live': 'polite' });
       lotClear(found);
-      var find = h('button', { class: 'btn small', type: 'button', onclick: function () { lotSearch(qIn.value, found, all); } }, 'Find');
+      var full = h('div', { id: 'lotFull' });   // Throw away expired and the whole list: hidden while the box has text (only the matches show), back when it is emptied
+      var narrow = function () { full.hidden = !!dlTrim(qIn.value); };
+      var find = h('button', { class: 'btn small', type: 'button', onclick: function () { narrow(); lotSearch(qIn.value, found, all); } }, 'Find');
       qIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') find.click(); });
       qIn.addEventListener('input', function () {
-        clearTimeout(lotTimer);
+        clearTimeout(lotTimer); narrow();
         if (!dlTrim(qIn.value)) return lotClear(found);
         lotTimer = setTimeout(function () { lotSearch(qIn.value, found, all); }, 250);
       });
+      qIn.addEventListener('search', function () { if (!dlTrim(qIn.value)) { narrow(); lotClear(found); } });   // the native clear "x" of a search box
       var cards = all.map(function (l) {
         if (l.code == null) return h('div', { class: 'card lotcard dim' }, h('div', { class: 'top' }, h('span', {}, l.name)), h('div', { class: 'meta' }, l.onHand + ' on hand · older lines with no lot, shown together, never guessed'));
         return lotCard(l);
       });
+      [own ? h('div', { class: 'acts', style: 'margin:0 0 10px' }, h('button', { class: 'btn ghost red small', type: 'button', onclick: function (e) { throwExpired(all, e.currentTarget); } }, 'Throw away expired')) : null,
+        cards.length ? h('div', {}, cards) : h('p', { class: 'muted' }, 'No lots yet.')].forEach(function (x) { if (x) full.appendChild(x); });
       invShow('Lots', [note ? h('div', { class: 'hint', role: 'status' }, note) : null,
         h('div', { class: 'srch' }, qIn, find), found,
-        own ? h('div', { class: 'acts', style: 'margin:0 0 10px' }, h('button', { class: 'btn ghost red small', type: 'button', onclick: function (e) { throwExpired(all, e.currentTarget); } }, 'Throw away expired')) : null,
-        cards.length ? h('div', {}, cards) : h('p', { class: 'muted' }, 'No lots yet.'),
+        full,
         h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
     }, function () { toast('No signal. Try again.', 6000); });
   }

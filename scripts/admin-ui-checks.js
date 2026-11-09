@@ -1114,6 +1114,14 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     // ── staff: Release (staff may release) shows the server's under-250 g warning; no owner buttons anywhere ──
     await toLots(s);
     ok(!btn(s, /^Throw away expired$/), 'staff have no Throw away expired');
+    {
+      const full = () => s.q('#lotFull'), foundS = () => s.qa('#lotFound .lotcard');
+      ok(!!full() && !full().hidden, 'staff: the full list shows before typing');
+      s.set(s.q('#lotQ'), 'm'); await until(() => foundS().length > 1, 4000, 'staff m list');
+      ok(full().hidden && foundS().length > 1, 'staff: typing m narrows to the result cards (the full list is hidden)');
+      s.set(s.q('#lotQ'), ''); await sleep(40);
+      ok(!full().hidden && foundS().length === 0, 'staff: clearing the box brings the full list back');
+    }
     await openLotCard(s, KO);
     ok(!!btn(s, /^Release$/) && !!btn(s, /^Print stickers$/) && !btn(s, /^Reject$/) && !btn(s, /^Hold this lot$/) && !btn(s, /^Fix lot$/) && !btn(s, /^Broken while cartoning$/), 'staff on a held lot: Release and Print stickers; no Reject, Hold or Fix lot, and no Broken while cartoning (held boxes are not cartoned; the server refuses it)');
     s.click(btn(s, /^Release$/)); await until(() => !!s.q('#rel-go'), 4000, 'the release form');
@@ -1568,6 +1576,34 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     stub = null;
     o.set(o.q('#lotQ'), 'zzqq'); await until(() => /Nothing found for zzqq/.test(foundText()), 3000, 'the empty answer');
     ok(/Nothing found for zzqq/.test(foundText()), 'a search with no hit says "Nothing found"');
+    // The list narrows while typing (9 Nov 2026): matches only; the full list and Throw away expired come back when the box is emptied
+    {
+      const full = () => o.q('#lotFull'), shown = (el) => !!el && !el.hidden && !el.closest('[hidden]');
+      const fullCards = () => o.qa('#viewStock .lotcard').filter((c) => !c.closest('#lotFound'));
+      const throwBtn = () => btn(o, /^Throw away expired$/);
+      await toLots(o);
+      ok(shown(full()) && fullCards().length > 3 && shown(throwBtn()) && o.q('#lotQ').value === '', 'a fresh Lots page: empty box, the full list and Throw away expired are visible');
+      o.set(o.q('#lotQ'), 'm'); await until(() => found().length > 1, 4000, 'the m list');
+      ok(!shown(full()) && !shown(throwBtn()) && found().length > 1, 'typing m: the full list and Throw away expired are hidden, only the result cards show');
+      ok(shown(btn(o, /^Back to Stock$/)) && shown(o.q('#lotQ')), 'Back to Stock and the box stay visible while narrowed');
+      o.set(o.q('#lotQ'), 'mn'); await sleep(40);
+      ok(!shown(full()), 'typing more: the full list stays hidden at once, before the answer');
+      await until(() => found().length > 1, 4000, 'the mn list'); ok(!shown(full()) && !shown(throwBtn()), 'still hidden when the answer arrives');
+      o.set(o.q('#lotQ'), ''); await sleep(40);
+      ok(shown(full()) && shown(throwBtn()) && found().length === 0, 'clearing the box brings the full list and Throw away expired back');
+      o.set(o.q('#lotQ'), 'm'); await until(() => found().length > 1, 4000, 'the m list again');
+      o.set(o.q('#lotQ'), ''); o.q('#lotQ').dispatchEvent(new o.win.Event('search', { bubbles: true })); await sleep(40);
+      ok(shown(full()), 'the native clear (a search event) brings the list back');
+      o.set(o.q('#lotQ'), 'zz'); await until(() => /Type more to narrow|Nothing found/.test(foundText()), 4000, 'the zz answer');
+      ok(!shown(full()) && !shown(throwBtn()) && found().length === 0 && /Type more to narrow|Nothing found/.test(foundText()), 'zz: only the type-more line shows, no full list');
+      o.set(o.q('#lotQ'), 'zzqq'); await until(() => /Nothing found for zzqq/.test(foundText()), 3000, 'the empty answer');
+      ok(!shown(full()) && /Nothing found for zzqq/.test(o.text(o.q('#viewStock'))), 'an answer of nothing found keeps the full list hidden');
+      o.set(o.q('#lotQ'), 'mngl'); o.click(btn(o, /^Find$/)); await sleep(20);
+      ok(!shown(full()), 'Find with text hides the full list at once');
+      await until(() => found().length > 0, 4000, 'the Find list');
+      await toLots(o);
+      ok(shown(full()) && o.q('#lotQ').value === '' && shown(throwBtn()), 'reopening Lots starts with the full list and an empty box');
+    }
     ok(/\.lotcode\{white-space:nowrap/.test(await (await fetch(BASE + '/admin')).text()), 'long codes do not break at their hyphens (the lotcode rule)');
     ok(o.errors.length === 0, 'no page errors in the Lots search (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
