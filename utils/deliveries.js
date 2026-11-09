@@ -535,8 +535,8 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     return { onHold, stopSoon };
   }
 
-  async function listLots() {
-    const w = await world();
+  async function listLots(w0) {
+    const w = w0 || await world();
     const today = lots.todayIst(now());
     const onHand = new Map();
     for (const r of w.ledger) if (r.lot_code != null) onHand.set(`${r.item_slug}|${r.lot_code}`, (onHand.get(`${r.item_slug}|${r.lot_code}`) || 0) + r.qty);
@@ -668,9 +668,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
 
   // Part of a code (owner, 9 Nov 2026). Matches a lot's own code, any alias, its supplier batch, or an order ID, as plain upper-case text
   // and again with - / and spaces taken out of both sides. Every status and empty lots are included. Only reads.
-  async function partial(w, c, n) {
-    const has = (v) => v != null && v !== '' && (up(v).includes(c) || bare(v).includes(n));
-    const list = await listLots();   // one card's numbers per lot (status, on hand, bake date, website stop), legacy lots included
+  // The cards of every lot, built from one snapshot w (listLots(w) does not read the store again).
+  async function lotCards(w) {
+    const list = await listLots(w);   // one card's numbers per lot (status, on hand, bake date, website stop), legacy lots included
     const cards = new Map(list.filter((l) => l.code).map((l) => [`${l.slug}|${l.code}`, l]));
     const rowOf = (slug, code) => w.lotRows.find((l) => l.item_slug === slug && l.lot_code === code) || null;
     const card = (l, extra) => {
@@ -678,6 +678,12 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       return { code: l.code, slug: l.slug, name: l.name, status: l.status, onHand: l.onHand, bakeDate: l.bakeDate, websiteStop: l.websiteStop, daysToStop: l.daysToStop,
         aliases: r ? (r.aliases || []) : [], supplierBatch: r ? r.supplier_batch || null : null, ...(extra || {}) };
     };
+    return { cards, rowOf, card };
+  }
+
+  async function partial(w, c, n) {
+    const has = (v) => v != null && v !== '' && (up(v).includes(c) || bare(v).includes(n));
+    const { cards, rowOf, card } = await lotCards(w);
     const out = [], direct = new Set();
     for (const l of cards.values()) {
       const r = rowOf(l.slug, l.code);
@@ -685,7 +691,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     }
     // Orders: the id is the part of the ref before "@". Their lots are the SALE rows not undone (the restoreForOrder rule: ref + flavour + lot);
     // lot-less sales are skipped. A lot already listed by its own code is not listed again for an order.
-    const rows = (await store.saleRows()) || [];
+    const rows = (await store.saleRowsMatching(n)) || [];   // only the sale rows whose order ID can match, read in the database
     const byOrder = new Map();
     for (const r of rows) {
       const id = orderOfRef(r.ref).orderId;
@@ -720,9 +726,11 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     found = w.lotRows.filter((l) => l.supplier_batch && up(l.supplier_batch) === c).map((l) => ({ slug: l.item_slug, code: l.lot_code }));
     if (found.length === 1) return answer(found);
     if (found.length > 1) {   // one supplier batch on several flavours: a list of lots, not a choice
-      const cards = await partial(w, c, bare(c));
-      const mine = new Set(found.map((f) => `${f.slug}|${f.code}`));
-      return { lots: (cards.lots || []).filter((x) => mine.has(`${x.slug}|${x.code}`) && !x.orderId), more: false };
+      const { cards, card } = await lotCards(w);
+      const rank = (slug) => { const i = FORM_ORDER.indexOf(slug); return i < 0 ? FORM_ORDER.length : i; };
+      const lotsOut = found.map((f) => cards.get(`${f.slug}|${f.code}`)).filter(Boolean).map((l) => card(l))
+        .sort((a, b) => rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+      return { lots: lotsOut, more: false };
     }
     if (ORDER_ID.test(c)) {
       const sales = (await store.salesOf(c)) || [];

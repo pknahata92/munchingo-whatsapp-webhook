@@ -741,11 +741,15 @@ function supabaseStore() {
       }
       return out;
     },
-    // Every website pack and undo (only the columns search needs), paged by id so the 1000-row cap never hides an order. Read-only.
-    saleRows: async () => {
+    // The website packs and undos whose order ID matches `bare` (the query with - / and spaces taken out), found in the database by a
+    // case-insensitive regex that allows separators between letters (a[-/ ]*a ...) and looks only before the "@". Paged, capped at 2000 rows.
+    saleRowsMatching: async (bare) => {
+      const chars = String(bare || '').replace(/[^A-Za-z0-9]/g, '');
+      if (!chars) return [];
+      const pattern = '^[^@]*' + chars.split('').join('[-/ ]*');
       const out = [];
-      for (let from = 0; ; from += 1000) {
-        const page = ok(await c().from('stock_movements').select('ref,item_slug,lot_code,qty,type').in('type', ['SALE', 'SALE_UNDO']).order('id', { ascending: true }).range(from, from + 999)) || [];
+      for (let from = 0; from < 2000; from += 1000) {
+        const page = ok(await c().from('stock_movements').select('ref,item_slug,lot_code,qty,type').in('type', ['SALE', 'SALE_UNDO']).filter('ref', 'imatch', pattern).order('id', { ascending: true }).range(from, from + 999)) || [];
         out.push(...page);
         if (page.length < 1000) break;
       }

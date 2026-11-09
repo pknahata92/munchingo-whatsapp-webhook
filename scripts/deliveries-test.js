@@ -1285,6 +1285,36 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(await L.search('CAP-007'), { lot: { code: 'CAP-007', slug: 'atta-original' } }, 'a whole code stays exact even though it is also a substring');
   }
 
+  // Cost: one world read per search, and only the matching sale rows come back from the store
+  {
+    const { st } = fresh();
+    await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261105-01', bake_date: '2026-11-05', best_before: '2027-02-03', status: 'released', supplier_batch: 'KB-1' },
+      { item_slug: 'atta-original', lot_code: 'MNGO-261105-01', bake_date: '2026-11-05', best_before: '2027-02-03', status: 'released', supplier_batch: 'KB-1' }]);
+    const T = '2026-11-06T08:00:00.000Z';
+    await st.insert([{ item_slug: 'atta-kesari', qty: 10, type: 'RECEIVE', lot_code: 'MNGK-261105-01', best_before: '2027-02-03' },
+      { item_slug: 'atta-kesari', qty: -2, type: 'SALE', lot_code: 'MNGK-261105-01', best_before: '2027-02-03', ref: 'MNG-AAAA-1010@' + T },
+      { item_slug: 'atta-kesari', qty: -1, type: 'SALE', lot_code: 'MNGK-261105-01', best_before: '2027-02-03', ref: 'MNG-QQQQ-2020@2026-11-06T09:00:00.000Z' },
+      { item_slug: 'atta-kesari', qty: 1, type: 'SALE_UNDO', lot_code: 'MNGK-261105-01', best_before: '2027-02-03', ref: 'MNG-QQQQ-2020@2026-11-06T09:00:00.000Z' }]);
+    const counts = {};
+    const wrapped = new Proxy(st, { get: (t, k) => (typeof t[k] === 'function' && k !== 'saleRowsMatching' ? (...a) => { counts[k] = (counts[k] || 0) + 1; return t[k](...a); } : t[k]) });
+    const L = makeDeliveries(wrapped, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    const reset = () => { for (const k of Object.keys(counts)) delete counts[k]; st.saleCalls.length = 0; };
+    const reads = () => [counts.lots || 0, counts.byLot || 0, counts.items || 0, counts.settingsAll || 0];
+    reset(); await L.search('mngk');
+    eq(reads(), [1, 1, 1, 1], 'a partial search reads lots, ledger, items and settings once each');
+    reset(); await L.search('kb-1');
+    eq([reads(), st.saleCalls.length], [[1, 1, 1, 1], 0], 'an exact supplier batch on two flavours: one world read and no sale read');
+    reset(); await L.search('zzzz');
+    eq([st.saleCalls.length, st.saleCalls[0] && st.saleCalls[0].n], [1, 0], 'a query that matches no order brings back zero sale rows');
+    reset(); await L.search('aaaa');
+    eq(st.saleCalls, [{ q: 'AAAA', n: 1 }], 'only the matching order\'s rows come back (the other order is not read)');
+    reset(); await L.search('QQ');
+    eq(st.saleCalls, [{ q: 'QQ', n: 2 }], 'a pack and its undo share a ref and both come back, so the undo rule still works');
+    eq(await L.search('qqqq'), { none: true }, 'the undone order gives no lot');
+    eq((await st.saleRowsMatching('MNGAAAA')).length, 1, 'separators in the stored ref are allowed between the typed letters');
+    eq((await st.saleRowsMatching('2026')).length, 0, 'the time after the @ is never matched');
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

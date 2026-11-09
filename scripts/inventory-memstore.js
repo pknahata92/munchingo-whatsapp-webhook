@@ -67,7 +67,14 @@ function memStore(trackingFrom) {
     // Packaging counts: for each slug that has at least one ledger row on or after `ts` (compared as times), the sum of those rows and the time of the newest.
     totalsSince: async (ts, slugs) => { const t0 = Date.parse(ts); const m = {}; mv.forEach((r) => { if (!slugs.includes(r.item_slug) || !(Date.parse(r.created_at) >= t0)) return; const e = m[r.item_slug] || (m[r.item_slug] = { item_slug: r.item_slug, qty: 0, last: r.created_at }); e.qty += r.qty; if (Date.parse(r.created_at) > Date.parse(e.last)) e.last = r.created_at; }); return Object.values(m); },
     movementsByLots: async (codes) => mv.filter((r) => r.lot_code && codes.includes(r.lot_code)),
-    saleRows: async () => mv.filter((r) => r.type === 'SALE' || r.type === 'SALE_UNDO').map((r) => ({ ref: r.ref, item_slug: r.item_slug, lot_code: r.lot_code, qty: r.qty, type: r.type })),
+    // Mirrors supabaseStore.saleRowsMatching: the regex, applied to the ref only, in JS. saleCalls records what each call asked and returned.
+    saleCalls: [],
+    saleRowsMatching: async function (bare) {
+      const chars = String(bare || '').replace(/[^A-Za-z0-9]/g, '');
+      const out = chars ? mv.filter((r) => (r.type === 'SALE' || r.type === 'SALE_UNDO') && new RegExp('^[^@]*' + chars.split('').join('[-/ ]*'), 'i').test(String(r.ref))).slice(0, 2000).map((r) => ({ ref: r.ref, item_slug: r.item_slug, lot_code: r.lot_code, qty: r.qty, type: r.type })) : [];
+      this.saleCalls.push({ q: bare, n: out.length });
+      return out;
+    },
     movementsByDelivery: async (i) => mv.filter((r) => r.delivery_id === i),
     // Mirrors stock_save_delivery: everything is checked first, so a throw writes nothing. The same receipt id again returns the first
     // result with again:true. Returns d, like the database function.
