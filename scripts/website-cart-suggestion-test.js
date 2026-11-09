@@ -124,6 +124,8 @@ const slugs = (w) => JSON.parse(w.localStorage.getItem('munchingo_cart')).map((c
   ok(/\.aov-actions \.aov-upgrade-btn,\.aov-actions \.aov-keep-btn\{[^}]*min-height:44px[^}]*border-radius:999px[^}]*font:600 14px/.test(css) && /\.aov-actions\{display:flex;gap:8px/.test(css), 'R1: matched pill buttons, 44px, 8px gap');
   ok(/@media \(max-width:480px\)\{\.aov-actions\{flex-direction:column/.test(css), 'R1: stacked full width at 480px');
   ok(/\.gb-fl\.gb-out \.gb-plus\{display:none!important\}/.test(css) && !/\.gb-fl\.gb-out\{padding-bottom/.test(css), 'R2: sold-out badge hidden on phones, no extra tile padding');
+  // A hidden summary row stays hidden: .cart-summary .total-row{display:flex} beat the [hidden] attribute, so a set-only bag showed "You save vs MRP ₹0"
+  ok(/\.cart-summary \.total-row\[hidden\]\{display:none\}/.test(css), 'a hidden cart summary row (e.g. "You save vs MRP") is not displayed');
 
   // F9: sticky bar tip (setHint is private to cart-bar.js, so the wording is pinned in the source)
   const bar = fs.readFileSync(path.join(SITE, 'js/cart-bar.js'), 'utf8');
