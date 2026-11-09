@@ -231,4 +231,4 @@ async function syncCreditNote({ creditNote, zohoInvoiceId }) {
   return { creditNoteId };
 }
 
-module.exports = { configured, syncPaidOrder, syncCreditNote };
+module.exports = { configured, syncPaidOrder, syncCreditNote, itemIdFor };   // itemIdFor is exported for tests only

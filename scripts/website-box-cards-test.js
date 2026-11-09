@@ -34,9 +34,9 @@ for (const f of pages.concat(jsFiles)) {
   ok(!/data-was-for|data-promo-for|data-promo-sets/.test(s), f + ': no data-was-for / data-promo-for / data-promo-sets');
 }
 // Subscribe & Save and terms
-ok(read('checkout.html').includes('Subscribe &amp; Save 5% on single boxes (not gift boxes)'), 'checkout: Subscribe & Save 5% wording');
+ok(read('checkout.html').includes('Subscribe &amp; Save 5% on single boxes (not sets)'), 'checkout: Subscribe & Save 5% wording');
 ok(!/Subscribe &amp; Save 8%/.test(read('checkout.html')), 'checkout: no 8%');
-ok(norm(read('terms.html')).includes('Shipping is free on orders of ₹777 or more and on any order with a gift box, and ₹49 on smaller orders.'), 'terms: shipping clause');
+ok(norm(read('terms.html')).includes('Shipping is free on orders of ₹777 or more and on any order with a Trio or Full Range Set, and ₹49 on smaller orders.'), 'terms: shipping clause');
 // Top bar still says Free shipping from ₹777
 for (const f of ['index.html', 'shop.html', 'corporate-gifting.html', 'terms.html']) ok(read(f).includes('Free shipping from ₹777'), f + ': top bar Free shipping from ₹777');
 // Stale copy
@@ -73,6 +73,16 @@ for (const f of pages.concat(jsFiles, ['data/products.js'])) {
   ok(!/Trio Gift Set|Full Range Gift Set/i.test(s.replace(/\/\^?Trio Gift Set[^/]*\/|\/\^?Full Range Gift Set[^/]*\//g, '')), f + ': no "Trio Gift Set" / "Full Range Gift Set"');
   ok(!/Gift boxes ship free/i.test(s), f + ': no "Gift boxes ship free"');
 }
+// "gift" dropped from the last set mentions (9 Nov 2026)
+for (const f of ['404.html', 'shop.html', 'build-a-box.html', 'terms.html']) {
+  const s = noComments(f, read(f));
+  ok(!/gift box|gift set|Gift box/i.test(s), f + ': no "gift box" / "gift set" / "Gift box"');
+}
+ok(read('404.html').includes('or build a box.') && read('build-a-box.html').includes('Build a Munchingo box: ') && read('build-a-box.html').includes('with a note."'), 'meta wording: build a box / with a note');
+ok(read('shop.html').includes('and two sets.') && (read('shop.html').match(/<span class="v2-tag">Set<\/span>/g) || []).length === 2, 'shop: two sets, tag "Set" x2');
+ok((read('corporate-gifting.html').match(/the Trio and Full Range Sets on our /g) || []).length === 2, 'corporate: FAQ (JSON-LD and visible) names the Trio and Full Range Sets');
+ok(read('checkout.html').includes('/Trio or Full Range Sets/i.test(data.error'), 'checkout: coupon-error matcher uses the new wording');
+for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html']) ok(!read(f).includes('🪔') && /<span>Gifting\? \w+(-\w+)? is in every <b>Full Range Set<\/b>/.test(read(f)), f + ': no diya on the gifting link');
 {
   const d = doc('index.html');
   ok(text(d.querySelector('#gifts .eyebrow')) === 'Trio and Full Range', 'home eyebrow: Trio and Full Range');

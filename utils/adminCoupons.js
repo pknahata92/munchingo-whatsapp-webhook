@@ -19,8 +19,8 @@ const { AdminError } = require('./adminActions');
 
 const SCOPES = [
   { slug: '', label: 'Any order' },
-  { slug: 'trio-gift-set', label: 'Orders that include a Trio Gift Set' },
-  { slug: 'full-range-set', label: 'Orders that include the Full Range Gift Set' },
+  { slug: 'trio-gift-set', label: 'Orders that include a Trio Set' },
+  { slug: 'full-range-set', label: 'Orders that include the Full Range Set' },
   { slug: 'singles-only', label: 'Single boxes only (not gift sets)' },
 ];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no 0/O/1/I so a code can be read out over the phone

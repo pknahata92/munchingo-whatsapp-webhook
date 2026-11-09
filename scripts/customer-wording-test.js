@@ -26,7 +26,7 @@ for (const founders of [false, true]) {
 ok(E.reviewRequestHtml({ order, url: 'u' }).includes('How were the cookies? Rate each Flavor in about 20 seconds.'), 'review email preheader: Rate each Flavor in about 20 seconds.');
 
 // the order confirmation (which carries the set block): no "gift set" in the email's own words, no lowercase flavours.
-// The item rows print the stored order name (catalog NAMES, "Trio Gift Set" until the catalog is renamed; Zoho Books keys on it).
+// The item rows print the stored order name (catalog NAMES: "Trio Set" / "Full Range Set"; Zoho Books maps them to the old item keys).
 const conf = plain(E.customerConfirmationHtml({ order: { ...order, items: [{ ...order.items[0], productName: 'Trio' }] }, invoice: null }));
 ok(!/gift set/i.test(conf), 'confirmation email: no "gift set" wording: ' + (conf.match(/.{0,30}gift set.{0,20}/i) || [''])[0]);
 ok(!lowerFlavor(conf), 'confirmation email: no lowercase flavor(s): ' + (lowerFlavor(conf) || []).join(' | '));
@@ -46,5 +46,18 @@ ok(!/Trio Gift Set holds|different flavours/.test(src('routes/checkout.js')), 'c
 const mh = src('handlers/messageHandler.js');
 ok(mh.includes('`Full ingredient list per Flavor:\\n`'), 'WhatsApp ingredients: Full ingredient list per Flavor:');
 ok(mh.includes('`❌ Artificial colours or flavours\\n\\n`'), 'WhatsApp ingredients: generic "Artificial colours or flavours" (flavourings) stays');
+
+// "gift" dropped from the last backend wording (9 Nov 2026): set names, coupon errors, invoice footer, email note heading, admin labels
+const cat2 = require('../utils/catalog');
+ok(cat2.nameForSlug('full-range-set') === 'Full Range Set' && cat2.nameForSlug('trio-gift-set-ajwain-kesari-original') === 'Trio Set', 'catalog names: Full Range Set / Trio Set');
+const cp = src('utils/coupons.js');
+ok(cp.includes("'This code does not apply to Trio or Full Range Sets or hampers.'") && cp.includes("'Offers do not apply to Trio or Full Range Sets or hampers. Add single boxes to use this code.'") && cp.includes('(Trio and Full Range Sets and hampers are not included).'), 'coupons: error wording says Trio or Full Range Sets');
+ok(!/gift boxes/.test(cp.replace(/^\s*\/\/.*$/gm, '')), 'coupons: no "gift boxes" outside comments');
+const inv = src('utils/invoice.js');
+ok(inv.includes(`'Loved it? A Munchingo Trio or Full Range Set makes the best "just because". Visit ' + inv.seller.site + '/build-a-box'`) && !/gift set makes|\/#gifts/.test(inv), 'invoice footer: Trio or Full Range Set, links to /build-a-box');
+const ac = src('utils/adminCoupons.js');
+ok(ac.includes("'Orders that include a Trio Set'") && ac.includes("'Orders that include the Full Range Set'") && !/Gift Set'/.test(ac), 'admin coupon scope labels: Trio Set / Full Range Set');
+const withNote = plain(E.customerConfirmationHtml({ order: { ...order, gift_note: 'Happy birthday' }, invoice: null }));
+ok(withNote.includes('Your note') && !/Your gift note/.test(withNote), 'confirmation email: heading is "Your note"');
 
 console.log(`customer-wording-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

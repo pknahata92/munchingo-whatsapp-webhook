@@ -68,13 +68,13 @@ async function validateCoupon(code, { cartSlugs, realTotal, singlesTotal, custom
   const singlesOnly = true;
   const base = Math.max(0, Number(singlesTotal) || 0);
   if (/^(trio-gift-set|full-range-set)/.test(String(coupon.scope_slug || ''))) {
-    return { ok: false, error: 'This code does not apply to gift boxes or hampers.' };
+    return { ok: false, error: 'This code does not apply to Trio or Full Range Sets or hampers.' };
   }
   if (base <= 0) {
-    return { ok: false, error: 'Offers do not apply to gift boxes or hampers. Add single boxes to use this code.' };
+    return { ok: false, error: 'Offers do not apply to Trio or Full Range Sets or hampers. Add single boxes to use this code.' };
   }
   if (base < (coupon.min_order_value || 0)) {
-    return { ok: false, error: `This code needs at least ₹${coupon.min_order_value} of single boxes (gift boxes and hampers are not included).` };
+    return { ok: false, error: `This code needs at least ₹${coupon.min_order_value} of single boxes (Trio and Full Range Sets and hampers are not included).` };
   }
   if (coupon.scope_slug && coupon.scope_slug !== 'singles-only') {
     // Exact match, OR prefix match for dynamic slugs like the Trio set

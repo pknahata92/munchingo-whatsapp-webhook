@@ -14,10 +14,10 @@ const C = { navy: '#0B2D50', gold: '#CEAD5E', terra: '#A35A34', terraDeep: '#864
 const FONT = "'Poppins','Helvetica Neue',Helvetica,Arial,sans-serif";
 
 const FLAVOURS = [
-  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', price: 259, img: 'email-original.jpg' },
-  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', price: 299, img: 'email-kesari.jpg' },
-  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', price: 259, img: 'email-ajwain.jpg' },
-  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 329, img: 'email-lite.jpg' },
+  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', img: 'email-original.jpg' },
+  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', img: 'email-kesari.jpg' },
+  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', img: 'email-ajwain.jpg' },
+  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', img: 'email-lite.jpg' },
 ];
 
 function esc(str) {
@@ -60,6 +60,7 @@ function giftBlock() {
 // ── Browse block: flavours they haven't tried yet come first ──────────────────
 function browseBlock(boughtSlugs = [], heading = 'Which one is next?') {
   const bought = new Set(boughtSlugs);
+  const { priceForSlug } = require('./catalog');   // read at render time, so an admin price change reaches the email
   const ordered = [...FLAVOURS.filter((f) => !bought.has(f.slug)), ...FLAVOURS.filter((f) => bought.has(f.slug))];
   const tiles = ordered.slice(0, 4).map((f) => `
         <td width="50%" valign="top" style="padding:7px;">
@@ -68,7 +69,7 @@ function browseBlock(boughtSlugs = [], heading = 'Which one is next?') {
             <div style="padding:12px 14px 14px;font-family:${FONT};text-align:left;">
               <div style="font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:${C.terra};">${esc(f.tag)}</div>
               <div style="font-size:15px;font-weight:600;color:${C.ink};margin:3px 0 2px;">${esc(f.name)}</div>
-              <div style="font-size:13px;color:${C.ink2};">${inr(f.price)} &middot; 250g &nbsp;<span style="color:${C.terra};font-weight:600;">Shop &#8599;</span></div>
+              <div style="font-size:13px;color:${C.ink2};">${inr(priceForSlug(f.slug))} &middot; 250g &nbsp;<span style="color:${C.terra};font-weight:600;">Shop &#8599;</span></div>
             </div>
           </a>
         </td>`);
@@ -167,7 +168,7 @@ function customerConfirmationHtml({ order, invoice }) {
       </tr></table>
       <div style="height:10px;"></div>
       ${summaryTable({ items, totalRupees: order.total, discountRupees: discount, couponCode: order.coupon_code, gstAmount })}`),
-    order.gift_note ? `<tr><td style="padding:16px 28px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBEFE8;border:1px dashed ${C.terra};border-radius:12px;"><tr><td style="padding:14px 18px;font-family:${FONT};font-size:13px;color:${C.ink};"><b style="color:${C.terra};">&#127873; Your gift note</b><br>${esc(order.gift_note)}</td></tr></table></td></tr>` : '',
+    order.gift_note ? `<tr><td style="padding:16px 28px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBEFE8;border:1px dashed ${C.terra};border-radius:12px;"><tr><td style="padding:14px 18px;font-family:${FONT};font-size:13px;color:${C.ink};"><b style="color:${C.terra};">&#127873; Your note</b><br>${esc(order.gift_note)}</td></tr></table></td></tr>` : '',
     invoice ? `<tr><td style="padding:16px 28px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EAF1EC;border-radius:12px;"><tr><td style="padding:14px 18px;font-family:${FONT};font-size:13px;line-height:1.55;color:${C.ink};"><b>&#128196; Your GST tax invoice is attached</b><br><span style="color:${C.ink2};">Invoice ${esc(invoice.invoiceNo)} &middot; PDF attached to this email. Keep it handy for your records.</span></td></tr></table></td></tr>` : '',
     steps(),
   ].join('');

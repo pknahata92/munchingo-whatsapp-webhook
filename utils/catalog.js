@@ -63,9 +63,9 @@ const NAMES = {
   'atta-kesari':      'Atta Kesari',
   'atta-lite-sugar':  'Atta Sugar-Lite',
   'atta-ajwain':      'Atta Ajwain',
-  'full-range-set':   'Full Range Gift Set',
+  'full-range-set':   'Full Range Set',
 };
-const TRIO_NAME = 'Trio Gift Set';
+const TRIO_NAME = 'Trio Set';
 
 /**
  * How many physical boxes one unit of this slug is: singles 1, Trio gift set 3,
