@@ -2,9 +2,13 @@
 // The stall tally page (munchingo-website/stall.html, served at munchingo.com/stall). One entry per CUSTOMER: tap the packs
 // into a basket, then Paid UPI / Paid Cash, so each entry matches one UPI payment. Tiles in the flavor colors; both
 // hampers ask for their flavor mix. Saved on the device per IST day (basket too), CSV export, older single-tap data kept.
+// 1 Nov 2026: a tiered discount box on loose boxes only (hampers never count), no margin or fee shown. 9 Nov 2026: single boxes at the
+// website's live prices (offline fallback 259/259/299/329), hampers 899/1,149, tiers kept.
+// 6 Nov 2026: customers can see the iPad, so every dashboard card starts hidden; the gear ticks each one on for this iPad. Contribution
+// uses box costs typed on the iPad, so no cost is ever in the public script.
 //   npm install --no-save jsdom@24   then   node scripts/stall-page-test.js
-let JSDOM, ResourceLoader;
-try { ({ JSDOM, ResourceLoader } = require('jsdom')); } catch (e) { console.log('jsdom is not installed: run  npm install --no-save jsdom@24'); process.exit(1); }
+let JSDOM, ResourceLoader, VirtualConsole;
+try { ({ JSDOM, ResourceLoader, VirtualConsole } = require('jsdom')); } catch (e) { console.log('jsdom is not installed: run  npm install --no-save jsdom@24'); process.exit(1); }
 const fs = require('fs'), path = require('path');
 const SITE = process.env.SITE_DIR || path.resolve(__dirname, '../../../munchingo-website');
 let pass = 0, fail = 0;
@@ -14,7 +18,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 class Local extends ResourceLoader {
   fetch(url) {
     const u = new URL(url);
-    if (u.hostname !== 'localhost') return Promise.resolve(Buffer.from(''));
+    if (u.hostname !== 'localhost' && !/(^|\.)munchingo\.com$/.test(u.hostname)) return Promise.resolve(Buffer.from(''));
     const f = path.join(SITE, decodeURIComponent(u.pathname));
     return Promise.resolve(fs.existsSync(f) ? fs.readFileSync(f) : Buffer.from(''));
   }
@@ -56,9 +60,13 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
     ok(!!v, 'the script is loaded with a version (?v=N) so the 4-hour browser cache cannot serve an old copy: ' + src);
     ok(v && String(w.StallTally.version) === v, `page and script versions match (page v=${v}, script ${w.StallTally.version})`);
     const sw = fs.readFileSync(path.join(SITE, 'stall-sw.js'), 'utf8');
-    ok(sw.includes('/js/stall.js?v=' + v) && new RegExp("CACHE = 'munchingo-stall-v" + v + "'").test(sw), 'the offline copy caches this version under its own name'); }
+    ok(sw.includes('/js/stall.js?v=' + v) && new RegExp("CACHE = 'munchingo-stall-v" + v + "'").test(sw), 'the offline copy caches this version under its own name');
+    ok(v === '6' && /CACHE = 'munchingo-stall-v6'/.test(sw) && sw.includes("'/js/prices.js?v=9'") && /u\.pathname !== '\/js\/prices\.js'/.test(sw), 'stall-sw.js caches /js/prices.js?v=9 under munchingo-stall-v6 and serves it');
+    const html = fs.readFileSync(path.join(SITE, 'stall.html'), 'utf8');
+    const pi = html.indexOf('<script src="js/prices.js?v=9" data-no-reload></script>');
+    ok(pi >= 0 && pi < html.indexOf('js/stall.js?v=6'), 'prices.js?v=9 (with data-no-reload) loads before stall.js?v=6'); }
   ok(/25 Oct/.test(text(q(d, '#st-day'))), 'shows today (IST)');
-  for (const [id, label, price] of [['original', 'Original', 200], ['ajwain', 'Ajwain', 200], ['kesari', 'Kesari', 250], ['lite', 'Sugar-Lite', 250], ['h3', 'Hamper of 3', 799], ['h4', 'Hamper of 4', 999]]) {
+  for (const [id, label, price] of [['original', 'Original', '259'], ['ajwain', 'Ajwain', '259'], ['kesari', 'Kesari', '299'], ['lite', 'Sugar-Lite', '329'], ['h3', 'Hamper of 3', '899'], ['h4', 'Hamper of 4', '1,149']]) {
     const b = q(d, `button[data-item="${id}"]`);
     ok(b && new RegExp(label).test(text(b)) && new RegExp('₹' + price).test(text(b)), `button ${label} ₹${price}`);
   }
@@ -71,20 +79,20 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   // ── a customer: basket first, nothing recorded until paid ──
   ok(q(d, '#st-paid-upi').disabled && q(d, '#st-paid-cash').disabled, 'Paid buttons are off while the basket is empty');
   tap('kesari'); tap('original');
-  ok(d.querySelectorAll('#st-basket li').length === 2 && num(d, 'st-basket-total') === 450, 'basket shows 2 packs, ₹450');
-  ok(/450/.test(text(q(d, '#st-paid-upi'))) && !q(d, '#st-paid-upi').disabled, 'Paid UPI shows the basket total');
+  ok(d.querySelectorAll('#st-basket li').length === 2 && num(d, 'st-basket-total') === 558, 'basket shows 2 packs, ₹558');
+  ok(/558/.test(text(q(d, '#st-paid-upi'))) && !q(d, '#st-paid-upi').disabled, 'Paid UPI shows the basket total');
   ok(num(d, 'st-total') === 0 && num(d, 'st-sales') === 0, 'nothing counted before payment');
   click(w, q(d, '#st-paid-upi'));
-  ok(num(d, 'st-total') === 450 && num(d, 'st-upi') === 450 && num(d, 'st-sales') === 1 && d.querySelectorAll('#st-basket li').length === 0, 'Paid UPI records ONE customer for ₹450 and empties the basket');
+  ok(num(d, 'st-total') === 558 && num(d, 'st-upi') === 558 && num(d, 'st-sales') === 1 && d.querySelectorAll('#st-basket li').length === 0, 'Paid UPI records ONE customer for ₹558 (no discount unless tapped) and empties the basket');
 
   // basket edits: remove a line, clear
   tap('ajwain'); tap('lite');
   click(w, q(d, '#st-basket li button[data-remove]'));   // remove the Ajwain
-  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 250, 'a pack can be taken out of the basket');
+  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 329, 'a pack can be taken out of the basket');
   click(w, q(d, '#st-paid-cash'));
-  ok(num(d, 'st-cash') === 250 && num(d, 'st-sales') === 2, 'Paid Cash: second customer ₹250');
+  ok(num(d, 'st-cash') === 329 && num(d, 'st-sales') === 2, 'Paid Cash: second customer ₹329');
   tap('original'); click(w, q(d, '#st-clear'));
-  ok(d.querySelectorAll('#st-basket li').length === 0 && num(d, 'st-total') === 700, 'Clear empties the basket without recording');
+  ok(d.querySelectorAll('#st-basket li').length === 0 && num(d, 'st-total') === 887, 'Clear empties the basket without recording');
 
   // ── hamper of 3: choose 3 ──
   tap('h3');
@@ -95,7 +103,7 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   ok(text(q(d, '#st-mix-count')) === '3 / 3' && !q(d, '#st-mix-ok').disabled, 'a 4th pack is ignored for a hamper of 3');
   click(w, q(d, '#st-mix-ok'));
   tap('kesari');
-  ok(num(d, 'st-basket-total') === 1049, 'basket: hamper of 3 + a Kesari = ₹1,049');
+  ok(num(d, 'st-basket-total') === 1198, 'basket: hamper of 3 + a Kesari = ₹1,198');
   click(w, q(d, '#st-paid-cash'));
 
   // ── hamper of 4: also asks; "One of each" shortcut; any mix of 4 ──
@@ -110,19 +118,19 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   ok(/2× Original, 2× Kesari/.test(text(q(d, '#st-basket'))), 'a 2+2 hamper of 4 is listed by its mix: ' + text(q(d, '#st-basket')));
   click(w, q(d, '#st-paid-upi'));
 
-  ok(num(d, 'st-total') === 3747 && num(d, 'st-upi') === 2448 && num(d, 'st-cash') === 1299, `money: 3747 / UPI 2448 / cash 1299 (got ${num(d, 'st-total')}/${num(d, 'st-upi')}/${num(d, 'st-cash')})`);
+  ok(num(d, 'st-total') === 4383 && num(d, 'st-upi') === 2856 && num(d, 'st-cash') === 1527, `money: 4383 / UPI 2856 / cash 1527 (got ${num(d, 'st-total')}/${num(d, 'st-upi')}/${num(d, 'st-cash')})`);
   ok(num(d, 'st-sales') === 5, '5 customers');
   ok(num(d, 'st-n-original') === 4 && num(d, 'st-n-ajwain') === 2 && num(d, 'st-n-kesari') === 7 && num(d, 'st-n-lite') === 2, `packs by flavor 4/2/7/2 (got ${num(d, 'st-n-original')}/${num(d, 'st-n-ajwain')}/${num(d, 'st-n-kesari')}/${num(d, 'st-n-lite')})`);
-  ok(num(d, 'st-contrib') === 1312, 'contribution ≈ ₹1,312 (got ' + num(d, 'st-contrib') + ')');
-  ok(num(d, 'st-avg') === 749, 'average per customer ₹749 (got ' + num(d, 'st-avg') + ')');
+  ok(!q(d, '#st-fee') && !/stall fee|margin/i.test(text(d.body)), 'no margin or stall fee anywhere on the page (customers can see the iPad)');
+  ok(num(d, 'st-avg') === 877, 'average per customer ₹877 (got ' + num(d, 'st-avg') + ')');
 
   // undo + delete whole customers
   click(w, q(d, '#st-undo'));
-  ok(num(d, 'st-total') === 2748 && num(d, 'st-n-kesari') === 5 && num(d, 'st-sales') === 4, 'Undo removes the last customer');
+  ok(num(d, 'st-total') === 3234 && num(d, 'st-n-kesari') === 5 && num(d, 'st-sales') === 4, 'Undo removes the last customer');
   const rows = d.querySelectorAll('#st-log li');
   ok(rows.length === 4 && /#4/.test(text(rows[0])) && /#1/.test(text(rows[3])), 'recent customers, newest first, numbered');
   click(w, rows[3].querySelector('button[data-del]'));
-  ok(num(d, 'st-total') === 2298 && num(d, 'st-n-original') === 1 && num(d, 'st-sales') === 3, 'a customer can be deleted');
+  ok(num(d, 'st-total') === 2676 && num(d, 'st-n-original') === 1 && num(d, 'st-sales') === 3, 'a customer can be deleted');
 
   // opening stock -> left
   const inp = q(d, '#st-open-kesari'); inp.value = '20'; inp.dispatchEvent(new w.Event('change', { bubbles: true }));
@@ -130,16 +138,53 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
 
   // CSV: one row per pack line, with the customer number so a basket matches one UPI payment
   const lines = w.StallTally.csv().trim().split('\n');
-  ok(lines[0] === 'date,time,customer,item,original,ajwain,kesari,sugar_lite,price,payment,customer_total,buyer_name,buyer_phone,marketing_ok', 'CSV header: ' + lines[0]);
-  ok(lines.length === 5 && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Hamper of 3,0,1,2,0,799,cash,1049,,,$/.test(l)) && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Kesari,0,0,1,0,250,cash,1049,,,$/.test(l)), 'CSV rows: ' + lines.slice(1).join(' / '));
+  ok(lines[0] === 'date,time,customer,item,original,ajwain,kesari,sugar_lite,price,payment,customer_total,buyer_name,buyer_phone,marketing_ok,list_price,offer_off', 'CSV header: ' + lines[0]);
+  ok(lines.length === 5 && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Hamper of 3,0,1,2,0,899,cash,1198,,,,899,0$/.test(l)) && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Kesari,0,0,1,0,299,cash,1198,,,,299,0$/.test(l)), 'CSV rows: ' + lines.slice(1).join(' / '));
 
   // a basket in progress survives a reload
   tap('ajwain');
   p.close();
   p = await open(store, '2026-10-25T09:00:00Z'); ({ w, d } = p);
-  ok(num(d, 'st-total') === 2298 && q(d, '#st-open-kesari').value === '20', 'reload keeps the day and opening stock');
-  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 200, 'reload keeps the basket in progress');
+  ok(num(d, 'st-total') === 2676 && q(d, '#st-open-kesari').value === '20', 'reload keeps the day and opening stock');
+  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 259, 'reload keeps the basket in progress');
   p.close();
+
+  // ── discount box: tiers on loose boxes only, tapped by the seller ──
+  {
+    const st = memStorage();
+    p = await open(st, '2026-11-01T06:00:00Z'); ({ w, d } = p);
+    const tap2 = (item) => click(w, q(d, `button[data-item="${item}"]`));
+    const tier = (off) => q(d, `#st-disc-opts button[data-off="${off}"]`);
+    ok(d.querySelectorAll('#st-disc-opts button').length === 3 && /₹50 off/.test(text(tier(50))) && /₹500\+/.test(text(tier(50))) && /₹100 off/.test(text(tier(100))) && /₹1,000\+/.test(text(tier(100))) && /₹250 off/.test(text(tier(250))) && /₹2,000\+/.test(text(tier(250))),
+      'three tiers: ₹50 off at ₹500+, ₹100 off at ₹1,000+, ₹250 off at ₹2,000+');
+    tap2('original');
+    ok(tier(50).disabled && tier(100).disabled && tier(250).disabled && /₹241 more unlocks ₹50 off/.test(text(q(d, '#st-disc-note'))), 'below ₹500 nothing unlocks; the note says how much more: ' + text(q(d, '#st-disc-note')));
+    tap2('kesari');
+    ok(!tier(50).disabled && tier(100).disabled, '₹558 of loose boxes unlocks ₹50 only');
+    ok(num(d, 'st-basket-total') === 558, 'no discount until the seller taps one');
+    click(w, tier(50));
+    ok(tier(50).classList.contains('on') && num(d, 'st-basket-total') === 508 && /508/.test(text(q(d, '#st-paid-upi'))), 'tapping ₹50 off: basket and Paid show ₹508');
+    tap2('h4'); click(w, q(d, '#st-mix-each')); click(w, q(d, '#st-mix-ok'));
+    ok(tier(100).disabled && num(d, 'st-basket-total') === 1657, 'a hamper does not count toward a tier and is not discounted (558 + 1,149 − 50 = 1,657)');
+    click(w, q(d, '#st-basket li button[data-remove="1"]'));   // take out the Kesari: loose falls to ₹259
+    ok(num(d, 'st-basket-total') === 1408 && !d.querySelector('#st-disc-opts button.on'), 'dropping below the tier removes the discount (259 + 1,149)');
+    click(w, q(d, '#st-clear'));
+    tap2('original'); tap2('ajwain'); tap2('kesari'); tap2('lite');
+    click(w, tier(100));
+    ok(num(d, 'st-basket-total') === 1046, 'one of each loose (₹1,146) with ₹100 off = ₹1,046');
+    click(w, tier(100));
+    ok(num(d, 'st-basket-total') === 1146, 'tapping the chosen tier again takes it off');
+    click(w, tier(100));
+    click(w, q(d, '#st-paid-upi'));
+    ok(num(d, 'st-total') === 1046 && num(d, 'st-upi') === 1046, 'the day records ₹1,046 received');
+    ok(!d.querySelector('#st-disc-opts button.on') && num(d, 'st-basket-total') === 0, 'the discount resets for the next customer');
+    ok(/₹100 off/.test(text(q(d, '#st-log li'))), 'recent customers show the discount: ' + text(q(d, '#st-log li')));
+    const day = JSON.parse(st.getItem('munchingo-stall-v1')).days['2026-11-01'], o = day.orders[0];
+    ok(o.offer === 100 && o.lines.reduce((a, l) => a + l.price, 0) === 1046 && o.lines.every((l) => l.list && l.price < l.list), 'saved lines carry what was charged (sum ₹1,046, the server total) and their list prices: ' + JSON.stringify(o.lines.map((l) => [l.list, l.price])));
+    const rows2 = w.StallTally.csv().trim().split('\n').slice(1);
+    ok(rows2.length === 4 && rows2.every((r) => /,upi,1046,,,,\d+,100$/.test(r)) && rows2.some((r) => /,Kesari,0,0,1,0,\d+,upi,1046,,,,299,100$/.test(r)), 'CSV: charged price, list price and ₹100 off on each line: ' + rows2.join(' / '));
+    p.close();
+  }
 
   // older single-tap data (before this change) still counts
   const old = memStorage({ 'munchingo-stall-v1': JSON.stringify({ days: { '2026-10-24': { sales: [{ id: 'a', t: Date.parse('2026-10-24T07:00:00Z'), item: 'kesari', name: 'Kesari', price: 250, hamper: false, mix: { kesari: 1 }, pay: 'upi' }], opening: {} } } }) });
@@ -154,6 +199,54 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   ok(!q(d, '#st-warn').hidden && /not being saved/i.test(text(q(d, '#st-warn'))), 'warns when the device cannot save');
   p.close();
 
+
+  // ── private dashboard: nothing about the day's money shows until the owner ticks it (6 Nov 2026) ──
+  {
+    const src = fs.readFileSync(path.join(SITE, 'js/stall.js'), 'utf8');
+    ok(!/cost:\s*\d/.test(src) && !/\b(119|133|156|137|154|183)\b/.test(src), 'no box cost is written in the public script');
+    const st = memStorage();
+    let v = await open(st, '2026-11-06T12:00:00Z');
+    let { w: w3, d: d3 } = v;
+    const shown = (name) => { const el = q(d3, `[data-card="${name}"]`); return !!el && !el.hidden && !el.closest('[hidden]'); };
+    const cards = ['today', 'contrib', 'packs', 'log', 'days'];
+    const setView = (name, on) => { const c = q(d3, `input[data-view="${name}"]`); c.checked = on; c.dispatchEvent(new w3.Event('change', { bubbles: true })); };
+    const setCost = (id, val) => { const c = q(d3, '#st-cost-' + id); c.value = val; c.dispatchEvent(new w3.Event('change', { bubbles: true })); };
+    ok(cards.every((c) => !shown(c)), 'a fresh iPad shows no sales, packs, customers or earlier days');
+    ok(q(d3, 'main').classList.contains('solo'), 'with nothing ticked the selling area takes the whole width');
+    ok(q(d3, '#st-view').hidden, 'the customise panel starts closed');
+    click(w3, q(d3, 'button[data-item="kesari"]'));
+    ok(/₹299/.test(text(q(d3, '#st-basket-total'))), 'the customer still sees their own basket total');
+    click(w3, q(d3, '#st-paid-upi'));
+    ok(cards.every((c) => !shown(c)), 'a sale does not bring anything back');
+    click(w3, q(d3, '#st-view-open'));
+    ok(!q(d3, '#st-view').hidden, 'the gear opens the panel');
+    ok(cards.every((c) => q(d3, `input[data-view="${c}"]`)), 'every card has its own tick box');
+    setView('today', true);
+    ok(shown('today') && !shown('packs') && !q(d3, 'main').classList.contains('solo'), 'ticking Total sales shows only that card');
+    ok(num(d3, 'st-total') === 299, 'and it is correct');
+    click(w3, q(d3, '#st-view-close'));
+    ok(q(d3, '#st-view').hidden, 'Done closes the panel');
+    setView('contrib', true);
+    ok(shown('contrib') && /box costs/i.test(text(q(d3, '[data-card="contrib"]'))) && !/₹/.test(text(q(d3, '#st-contrib'))), 'contribution without costs asks for them, never guesses');
+    [['original', 137], ['ajwain', 137], ['kesari', 154], ['lite', 183], ['h3', 45], ['h4', 55]].forEach(([k, c]) => setCost(k, c));
+    ok(text(q(d3, '#st-contrib')) === '₹131', 'contribution: ₹299 less 5% GST less ₹154 box = ₹131 (got ' + text(q(d3, '#st-contrib')) + ')');
+    click(w3, q(d3, 'button[data-item="h3"]'));
+    ['original', 'ajwain', 'kesari'].forEach((f) => click(w3, q(d3, `button[data-plus="${f}"]`)));
+    click(w3, q(d3, '#st-mix-ok')); click(w3, q(d3, '#st-paid-cash'));
+    ok(text(q(d3, '#st-contrib')) === '₹514', 'a hamper counts its boxes and outer box: 130.76 + 856.19 - 428 - 45 = ₹514 (got ' + text(q(d3, '#st-contrib')) + ')');
+    ok(!st.getItem('munchingo-stall-v1').includes('"h3":45'), 'costs are not in the day data that goes to the server');
+    v.close();
+    v = await open(st, '2026-11-06T13:00:00Z'); ({ w: w3, d: d3 } = v);
+    ok(shown('today') && shown('contrib') && !shown('packs'), 'the choice survives a reload');
+    ok(text(q(d3, '#st-contrib')) === '₹514', 'and so do the costs');
+    click(w3, q(d3, '#st-view-open')); click(w3, q(d3, '#st-view-hide'));
+    ok(cards.every((c) => !shown(c)) && q(d3, '#st-view').hidden && !q(d3, `input[data-view="today"]`).checked, 'Hide all puts everything away in one tap');
+    v.close();
+    const blocked = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }, removeItem() {} };
+    v = await open(blocked, '2026-11-06T13:00:00Z'); ({ w: w3, d: d3 } = v);
+    ok(cards.every((c) => !shown(c)), 'storage blocked: everything stays hidden');
+    v.close();
+  }
 
   // ── buyer details (only with the marketing tick) and saving to the server ──
   {
@@ -197,7 +290,7 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
     ok(!lastBody().orders[3].buyer, 'ticked but a bad number: not kept');
     // CSV carries the buyer only when kept
     const csv2 = w2.StallTally.csv().trim().split('\n');
-    ok(csv2.some((l) => /,Ravi Kumar|"Ravi Kumar",9811122233,yes$/.test(l)) && csv2.filter((l) => /,yes$/.test(l)).length === 1, 'CSV: only the ticked buyer, with the marketing_ok flag');
+    ok(csv2.some((l) => /"Ravi Kumar",9811122233,yes,\d+,0$/.test(l)) && csv2.filter((l) => /,yes,\d+,\d+$/.test(l)).length === 1, 'CSV: only the ticked buyer, with the marketing_ok flag');
     ok(/Saved to server/.test(text(q(d2, '#st-sync'))), 'status shows saved once the server accepts');
     dom.window.close();
 
@@ -230,6 +323,79 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
     await wait(500);
     ok(/OFF/.test(text(dom3.window.document.querySelector('#st-sync'))), 'no key entered yet: the page says server backup is off');
     dom3.window.close();
+  }
+
+  // ── live prices (9 Nov 2026): single boxes follow the website's price book; a price change never reloads the stall ──
+  {
+    const file = path.join(SITE, 'stall.html');
+    const API = '/api/prices';
+    const book = (o) => { const b = {}; Object.keys(o).forEach((k) => { b[k] = { price: o[k], mrp: null }; }); return b; };
+    const SLUGS = { original: 'atta-original', ajwain: 'atta-ajwain', kesari: 'atta-kesari', lite: 'atta-lite-sugar' };
+    // Opens the stall on a munchingo.com address (so prices.js asks the API) with fetch stubbed: the live API is never called.
+    async function openLive(st, apiAnswer, html) {
+      const jsdomErrors = [], events = [], gate = {};
+      const vc = new VirtualConsole(); vc.on('jsdomError', (e) => jsdomErrors.push(String(e && e.message))); vc.on('error', () => {});
+      const dom = new JSDOM(html || fs.readFileSync(file, 'utf8'), {
+        url: 'https://www.munchingo.com/stall.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true, virtualConsole: vc,
+        beforeParse(w) {
+          Object.defineProperty(w, 'localStorage', { value: st, configurable: true });
+          const RealDate = w.Date; const fixed = RealDate.parse('2026-11-09T06:00:00Z');
+          w.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(fixed); } static now() { return fixed; } };
+          w.confirm = () => true; w.navigator.serviceWorker = undefined;
+          w.addEventListener('munchingo:prices', () => events.push(1));
+          w.fetch = (url) => {
+            if (String(url).indexOf(API) < 0) return Promise.reject(new Error('offline'));
+            if (apiAnswer === 'down') return Promise.reject(new Error('offline'));
+            if (apiAnswer === 'gated') return new Promise((res) => { gate.send = (prices) => res({ ok: true, status: 200, json: async () => ({ prices }) }); });
+            return Promise.resolve({ ok: true, status: 200, json: async () => ({ prices: apiAnswer }) });
+          };
+        },
+      });
+      await wait(500);
+      return { w: dom.window, d: dom.window.document, close: () => dom.window.close(), jsdomErrors, events, gate };
+    }
+    const labels = (d) => ['original', 'ajwain', 'kesari', 'lite', 'h3', 'h4'].map((i) => text(q(d, `button[data-item="${i}"] span`))).join(' ');
+
+    // offline with nothing stored: the built-in fallback prices
+    let L = await openLive(memStorage(), 'down');
+    ok(labels(L.d) === '₹259 ₹259 ₹299 ₹329 ₹899 ₹1,149', 'offline and nothing stored: labels fall back to 259 / 259 / 299 / 329 and the hampers 899 / 1,149 (got ' + labels(L.d) + ')');
+    click(L.w, q(L.d, 'button[data-item="lite"]'));
+    ok(num(L.d, 'st-basket-total') === 329, 'offline fallback: a Sugar-Lite tap is ₹329');
+    L.close();
+
+    // a stored price book is used at load
+    L = await openLive(memStorage({ munchingo_prices: JSON.stringify(book({ 'atta-original': 249, 'atta-ajwain': 259, 'atta-kesari': 299, 'atta-lite-sugar': 329 })) }), 'down');
+    ok(/^₹249 /.test(labels(L.d)), 'a stored book with Original 249 shows ₹249 on the button (got ' + labels(L.d) + ')');
+    L.close();
+
+    // the API answers with a new price while a sale is open: no reload, labels refresh, the open line keeps its price
+    const st = memStorage();
+    L = await openLive(st, 'gated');
+    const { w: lw, d: ld } = L;
+    click(lw, q(ld, 'button[data-item="original"]'));
+    click(lw, q(ld, 'button[data-item="h3"]'));   // the mix modal is open too
+    ok(num(ld, 'st-basket-total') === 259 && !q(ld, '#st-mix').hidden, 'a line at ₹259 is in the basket and the hamper modal is open');
+    L.gate.send(book({ 'atta-original': 249, 'atta-ajwain': 259, 'atta-kesari': 299, 'atta-lite-sugar': 329 }));
+    await wait(300);
+    ok(lw.sessionStorage.getItem('munchingo_prices_reload') === null && !L.jsdomErrors.some((m) => /navigation|reload/i.test(m)), 'the stall does NOT reload when the API returns different prices (data-no-reload)');
+    ok(L.events.length === 1, 'prices.js tells the page with a munchingo:prices event (got ' + L.events.length + ')');
+    ok(JSON.parse(st.getItem('munchingo_prices'))['atta-original'].price === 249, 'the fresh book is stored as usual');
+    ok(!q(ld, '#st-mix').hidden && num(ld, 'st-basket-total') === 259 && /259/.test(text(q(ld, '#st-basket'))), 'the open modal and the basket survive the update; the line already in the basket keeps ₹259');
+    ok(/^₹249 /.test(labels(ld)) && /₹899/.test(labels(ld)), 'after the event the button labels show the new price (got ' + labels(ld) + ')');
+    click(lw, q(ld, '#st-mix-cancel'));
+    click(lw, q(ld, 'button[data-item="original"]'));
+    ok(num(ld, 'st-basket-total') === 508, 'a new tap after the event uses ₹249 (259 + 249 = 508, got ' + num(ld, 'st-basket-total') + ')');
+    click(lw, q(ld, '#st-paid-upi'));
+    const o = JSON.parse(st.getItem('munchingo-stall-v1')).days['2026-11-09'].orders[0];
+    ok(o.lines.map((l) => l.price).join() === '259,249', 'the saved lines keep each tap\'s own price: ' + o.lines.map((l) => l.price).join());
+    L.close();
+
+    // every other page keeps the reload: prices.js without data-no-reload still reloads once when prices change
+    const plain = '<!doctype html><html><head><script src="/js/prices.js?v=9"></script></head><body></body></html>';
+    L = await openLive(memStorage(), book({ 'atta-original': 249, 'atta-ajwain': 259, 'atta-kesari': 299, 'atta-lite-sugar': 329 }), plain);
+    ok(L.w.sessionStorage.getItem('munchingo_prices_reload') !== null && L.jsdomErrors.some((m) => /navigation|reload/i.test(m)), 'a normal page (no data-no-reload) still reloads when the API returns different prices: ' + L.jsdomErrors.join(' | '));
+    ok(L.events.length === 0, 'and does not fire the stall event');
+    L.close();
   }
   ok(!/stall/.test(fs.readFileSync(path.join(SITE, 'sitemap.xml'), 'utf8')), 'stall page is not in the sitemap');
   console.log(`stall-page-test: ${pass} passed, ${fail} failed`);
