@@ -306,6 +306,10 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     await real.lots(); await real.lotsByCode('X'); await real.deliveriesByBill('Krazy Bakers', 'A_1%'); await real.lastDelivery(); await real.movementsByLots(['X']); await real.movementsByDelivery('D1'); await real.settingsAll();
     ok(['stock_lots', 'stock_lots', 'stock_lots', 'stock_deliveries', 'stock_deliveries', 'stock_movements', 'stock_movements', 'stock_settings'].join() === calls.slice(-8).map((c) => c.t).join(), 'the real store reads the new tables');
     const bill = calls.slice(-8)[3]; ok(bill.ops.some((o) => o[0] === 'ilike' && o[1] === 'bill_no' && o[2] === 'A\\_1\\%'), 'bill number match is exact (wildcards escaped)');
+    reply = { data: [], error: null };
+    await real.saleRowsMatching('MNG-9WZ6');
+    const sm = calls[calls.length - 1];
+    ok(sm.t === 'stock_movements' && sm.ops.some((o) => o[0] === 'filter' && o[1] === 'ref' && o[2] === 'imatch' && o[3] === '^[^@]*MNG-9WZ6') && sm.ops.some((o) => o[0] === 'in' && o[1] === 'type' && JSON.stringify(o[2]) === '["SALE","SALE_UNDO"]'), 'the real saleRowsMatching filters ref with imatch ^[^@]*MNG-9WZ6 on SALE and SALE_UNDO rows');
     for (const [msg, code] of [['relation "public.stock_lots" does not exist', '42P01'], ["Could not find the function public.stock_save_delivery(d, lots, moves) in the schema cache", 'PGRST202'], ['column stock_movements.delivery_id does not exist', '42703']]) {
       reply = { data: null, error: { code, message: msg } };
       let e = null; try { await real.lots(); } catch (x) { e = x; }

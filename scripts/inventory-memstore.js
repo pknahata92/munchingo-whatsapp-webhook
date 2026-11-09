@@ -69,13 +69,13 @@ function memStore(trackingFrom) {
     movementsByLots: async (codes) => mv.filter((r) => r.lot_code && codes.includes(r.lot_code)),
     // Mirrors supabaseStore.saleRowsMatching ({ rows, capped }): the hyphen-kept order-ID regex, applied to the ref only, in JS. saleCalls records each call.
     saleCalls: [],
-    saleRowsMatching: async function (bare, cap = 2000) {
-      const text = String(bare || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');   // letters, digits and hyphens only; hyphens kept
+    saleRowsMatching: async function (orderPart, cap = 2000) {   // orderPart: the hyphen-kept order string (letters, digits, hyphens)
+      const text = String(orderPart || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');   // letters, digits and hyphens only; hyphens kept
       const chars = text.replace(/-/g, '') ? text : '';
       const pattern = '^[^@]*' + chars;
       const hit = chars ? mv.filter((r) => (r.type === 'SALE' || r.type === 'SALE_UNDO') && new RegExp(pattern, 'i').test(String(r.ref))) : [];
       const rows = hit.slice(0, cap).map((r) => ({ ref: r.ref, item_slug: r.item_slug, lot_code: r.lot_code, qty: r.qty, type: r.type }));
-      this.saleCalls.push({ q: bare, n: rows.length, pattern: chars ? pattern : null });
+      this.saleCalls.push({ q: orderPart, n: rows.length, pattern: chars ? pattern : null });
       return { rows, capped: hit.length > cap };
     },
     movementsByDelivery: async (i) => mv.filter((r) => r.delivery_id === i),

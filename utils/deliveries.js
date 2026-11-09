@@ -691,9 +691,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       for (let i = 0; i < t.length; i++) { if (i && !/[-/\s]/.test(t[i - 1])) continue; const rest = t.slice(i); if (rest.startsWith(c) || bare(rest).startsWith(n)) return true; }
       return false;
     };
-    // The order-ID form of the query: upper case, letters and digits only, every run of - / and spaces one "-", no leading or trailing "-".
+    // The order-ID form of the query: upper case, letters and digits only; any run of other characters (- / space . _ en dash ...) becomes one "-", no leading or trailing "-".
     // Only these characters ever reach the database pattern.
-    const o = c.replace(/[^A-Z0-9\-/\s]/g, '').replace(/[-/\s]+/g, '-').replace(/^-+|-+$/g, '');
+    const o = c.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const hasOrder = (v) => v != null && v !== '' && up(v).includes(o);
     // "starts" for an order: at the start of the ID or right after a hyphen in it (raw text, never stripped)
     const startsOrder = (v) => { const t = up(v); for (let i = 0; i < t.length; i++) { if (i && t[i - 1] !== '-') continue; if (t.startsWith(o, i)) return true; } return false; };
@@ -736,7 +736,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       for (const [k, boxes] of g) if (!direct.has(k) && cards.has(k)) { const oc = card(cards.get(k), { orderId, boxes }); out.push(oc); if (startsOrder(orderId)) first.add(oc); }
     }
     const rank = (slug) => { const i = FORM_ORDER.indexOf(slug); return i < 0 ? FORM_ORDER.length : i; };
-    out.sort((a, b) => (first.has(a) ? 0 : 1) - (first.has(b) ? 0 : 1) || rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0)
+    out.sort((a, b) => (first.has(a) ? 0 : 1) - (first.has(b) ? 0 : 1) || (a.orderId ? 1 : 0) - (b.orderId ? 1 : 0) || rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0)
       || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) || (String(a.orderId || '') < String(b.orderId || '') ? -1 : String(a.orderId || '') > String(b.orderId || '') ? 1 : 0));
     // capped: more sale rows matched than the store reads, so the order hits may be missing; never look complete (same as the 50 cap)
     return out.length || capped || short ? { lots: out.slice(0, PARTIAL_CAP), more: out.length > PARTIAL_CAP || capped || short } : { none: true };
