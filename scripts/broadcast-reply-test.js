@@ -4,6 +4,8 @@
 // stays quiet. STOP still opts them out. The text is passed on, never stored.
 //   node scripts/broadcast-reply-test.js
 process.env.SUPABASE_URL = 'x'; process.env.SUPABASE_SERVICE_ROLE_KEY = 'x';
+// utils/mailer.js builds its Resend client on require; a fake key, never a real one (nothing is sent here).
+process.env.RESEND_API_KEY = 'x';
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
 
