@@ -4,6 +4,12 @@
 // And every morning it lists what is still to do: paid but not packed, and packed but not sent out.   node scripts/daily-summary-test.js
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
+const path = require('path');
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://x'; process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'x';
+let DB_ERROR = null;
+const sb = require.resolve('@supabase/supabase-js', { paths: [path.join(__dirname, '..')] });
+const chain = () => { const q = { select: () => q, in: async () => (DB_ERROR ? { data: null, error: { message: DB_ERROR } } : { data: [], error: null }) }; return q; };
+require.cache[sb] = { id: sb, filename: sb, loaded: true, exports: { createClient: () => ({ from: chain }) } };
 const p = require.resolve('../utils/prices');
 require.cache[p] = { id: p, filename: p, loaded: true, exports: { current: () => null, ensureFresh: async () => {}, isOn: () => false } };
 const ds = require('../utils/dailySummary');
@@ -27,6 +33,8 @@ const t = require('../utils/emailTemplates');
   ok((day.find((o) => o.order_id === 'MNG-NOIN-0811') || {}).paid_at === noInv.updated_at, 'an order with no invoice falls back to its last update');
   ok(ids.join() === 'MNG-NOIN-0811,MNG-NEW1-0811', 'oldest payment first: ' + ids.join());
   ok(!('paid_at' in ayush) && !('paid_at' in fresh), 'the orders passed in are not changed');
+  const preLaunch = { order_id: 'MNG-AUG1-0808', status: 'paid', created_at: '2026-08-08T10:00:00.000Z', updated_at: '2026-11-08T06:00:00.000Z', total: 500 };
+  ok(ds.paidInDay([preLaunch], {}, SINCE, UNTIL).length === 0, 'a pre-launch order with no invoice, edited on 8 Nov, is not one of 8 Nov\'s orders (review finding 1)');
 
   // ── still to do ──
   const NOW = Date.parse('2026-11-09T02:30:00.000Z');   // 8:00 AM IST, 9 Nov
@@ -65,7 +73,7 @@ const t = require('../utils/emailTemplates');
   ok(/Original 1 &middot; Kesari 3 &middot; Ajwain 1/.test(html), 'boxes to pull per Flavor shown');
   ok(/no courier booked &middot; 2 days/.test(html) && /courier booked, not collected &middot; 1 day\b/.test(html), 'not sent out orders say why and for how long');
   ok(html.indexOf('Still to do') < html.indexOf('No paid orders yesterday'), 'the to-do list comes first');
-  ok(html.indexOf('>Yesterday<') > html.indexOf('Still to do') && html.indexOf('>Yesterday<') < html.indexOf('No paid orders yesterday'), 'yesterday\'s part has its own heading after the to-do list');
+  ok(html.indexOf('>Paid on Sun, 8 Nov 2026<') > html.indexOf('Still to do') && html.indexOf('>Paid on Sun, 8 Nov 2026<') < html.indexOf('No paid orders yesterday'), 'the day\'s part has its own heading (right on re-sends too) after the to-do list');
   ok(/No paid orders yesterday/.test(html), 'a day with no new orders still says so');
   const empty = t.dailySummaryHtml({ dayLabel: 'x', orders: [], todo: { toPack: [], notSent: [], flavours: [], toPackBoxes: 0 } });
   ok(/Nothing waiting/.test(empty), 'nothing open: the email says nothing is waiting');
@@ -84,13 +92,30 @@ const t = require('../utils/emailTemplates');
     listOrders: async () => shaped,
   };
   const g = await ds.gatherDay({ since: SINCE, until: UNTIL, todayIst: '2026-11-09', now: NOW, from: FROM, deps });
-  ok(calls.since === SINCE, 'reads every paid order touched since the day began (a later edit only moves updated_at forward)');
+  ok(calls.since === '2026-11-06T18:30:00.000Z', 'reads paid orders touched since the day BEFORE began (an invoice can land seconds after midnight; review finding 4)');
   ok(g.orders.map((o) => o.order_id).join() === 'MNG-NOIN-0811,MNG-NEW1-0811', 'the day\'s orders exclude the Sirsa order');
   ok(Object.keys(g.invoicesByOrder).join() === 'MNG-NEW1-0811', 'only the day\'s invoices are passed on (GST totals stay right)');
   ok(g.suggestions.length === 1 && g.suggestions[0].name === 'Om', 'the day\'s suggestions are passed on');
   ok(g.todo && g.todo.toPack.length === 2 && g.todo.notSent.length === 2, 'the to-do list is built from the admin\'s order list');
+  const midnight = { order_id: 'MNG-MID1-0711', status: 'paid', created_at: '2026-11-07T18:20:00.000Z', updated_at: '2026-11-07T18:29:59.000Z', total: 518 };
+  const pool = [midnight, ayush, fresh];
+  const gm = await ds.gatherDay({ since: SINCE, until: UNTIL, todayIst: '2026-11-09', now: NOW, from: FROM, deps: { ...deps,
+    getPaidOrdersUpdatedSince: async (s) => pool.filter((o) => o.updated_at >= s),
+    getInvoicesByOrderIds: async () => ({ ...invoices, 'MNG-MID1-0711': { invoice_no: 'MUN/26-27/0029', issued_at: '2026-11-07T18:30:01.000Z' } }) } });
+  ok(gm.orders.map((o) => o.order_id).includes('MNG-MID1-0711'), 'paid at 23:59:59 on 7 Nov, invoiced at 00:00:01 on 8 Nov: listed on 8 Nov, not lost');
   const g2 = await ds.gatherDay({ since: SINCE, until: UNTIL, todayIst: '2026-11-09', now: NOW, from: FROM, deps: { ...deps, listOrders: async () => { throw new Error('razorpay down'); } } });
   ok(g2.todo === null && g2.orders.length === 2, 'if the open orders cannot be read, the summary still goes with todo = null');
+
+  // ── a failed invoice read must not be mistaken for "no invoices" (review finding 2) ──
+  const database = require('../utils/database');
+  DB_ERROR = 'timeout';
+  let threw = false; try { await database.getInvoicesForSummary(['MNG-NEW1-0811']); } catch (e) { threw = /timeout/.test(e.message); }
+  ok(threw, 'the summary\'s invoice read throws on a database error (the route then releases the day and retries)');
+  ok(JSON.stringify(await database.getInvoicesByOrderIds(['MNG-NEW1-0811'])) === '{}', 'the admin\'s invoice read keeps its old forgiving behaviour');
+  DB_ERROR = null;
+  ok(JSON.stringify(await database.getInvoicesForSummary([])) === '{}', 'no orders: no read, empty map');
+  const srvSrc = require('fs').readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  ok(/getInvoicesByOrderIds: database\.getInvoicesForSummary/.test(srvSrc), 'the 8:00 job uses the strict invoice read');
 
   // ── the email that goes out: subject, body, CSV paid time ──
   const mails = [];

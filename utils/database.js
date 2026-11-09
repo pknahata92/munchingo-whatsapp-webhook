@@ -380,6 +380,14 @@ async function getInvoicesByOrderIds(orderIds) {
   return Object.fromEntries((data || []).map((r) => [r.order_id, r]));
 }
 
+/** Same read for the daily summary, but a database error throws: an empty map there would date every order by its last edit. */
+async function getInvoicesForSummary(orderIds) {
+  if (!orderIds.length) return {};
+  const { data, error } = await db().from('invoices').select('*').in('order_id', orderIds);
+  if (error) throw new Error(`Supabase invoices read failed: ${error.message}`);
+  return Object.fromEntries((data || []).map((r) => [r.order_id, r]));
+}
+
 // ── Admin page helpers ──────────────────────────────────────────────────────
 async function listRecentOrders(limit = 300) {
   const { data, error } = await db().from('orders').select('*').order('created_at', { ascending: false }).limit(limit);
@@ -748,6 +756,7 @@ module.exports = {
   markOrderRefunded,
   getOrdersPaidSince,
   getPaidOrdersUpdatedSince,
+  getInvoicesForSummary,
 };
 
 // Stall tally (utils/stall.js, stall_migration.sql). The page sends its whole day; rows are upserted by the id the iPad made.

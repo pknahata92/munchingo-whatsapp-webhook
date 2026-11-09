@@ -11,14 +11,17 @@ const { FLAVOURS } = require('./orderText');
 const OPEN_FROM = '2026-10-10T00:00:00+05:30';
 const DAY = 86400000, IST = 5.5 * 3600 * 1000;
 
-const paidAtOf = (o, inv) => (inv && inv.issued_at) || o.updated_at;
+// The invoice time; with no invoice, the last update, but only for orders from the launch on (invoices began then). An older order
+// with no invoice has no known paid time and is never "a new sale" (the August pre-launch orders).
+// Known limit: an invoice issued late from the admin ("Issue missing invoice") dates the sale to that day.
+const paidAtOf = (o, inv, from) => (inv && inv.issued_at) || (Date.parse(o.created_at) >= Date.parse(from) ? o.updated_at : null);
 
-/** Orders paid in [sinceISO, untilISO), oldest payment first, each a copy with paid_at set. No invoice: the last update stands in. */
-function paidInDay(orders, invoicesByOrder, sinceISO, untilISO) {
+/** Orders paid in [sinceISO, untilISO), oldest payment first, each a copy with paid_at set. */
+function paidInDay(orders, invoicesByOrder, sinceISO, untilISO, from = OPEN_FROM) {
   const a = Date.parse(sinceISO), b = Date.parse(untilISO);
   return (orders || [])
-    .map((o) => ({ ...o, paid_at: paidAtOf(o, (invoicesByOrder || {})[o.order_id]) }))
-    .filter((o) => { const t = Date.parse(o.paid_at); return t >= a && t < b; })
+    .map((o) => ({ ...o, paid_at: paidAtOf(o, (invoicesByOrder || {})[o.order_id], from) }))
+    .filter((o) => { const t = Date.parse(o.paid_at); return o.paid_at && t >= a && t < b; })
     .sort((x, y) => Date.parse(x.paid_at) - Date.parse(y.paid_at));
 }
 
@@ -65,9 +68,11 @@ function subjectTail(todo) {
 
 /** Everything the summary email needs for the IST day [since, until). todo is null when the open orders could not be read. */
 async function gatherDay({ since, until, todayIst, now = Date.now(), from = OPEN_FROM, deps }) {
-  const touched = await deps.getPaidOrdersUpdatedSince(since);   // a later edit only moves updated_at forward, so nothing paid that day is missed
-  const allInvoices = await deps.getInvoicesByOrderIds(touched.map((o) => o.order_id));
-  const orders = paidInDay(touched, allInvoices, since, until);
+  // updated_at only moves forward, so every order paid that day is in here. Read from a day earlier: the payment can land just
+  // before midnight and its invoice just after, and that order belongs to this day.
+  const touched = await deps.getPaidOrdersUpdatedSince(new Date(Date.parse(since) - DAY).toISOString());
+  const allInvoices = await deps.getInvoicesByOrderIds(touched.map((o) => o.order_id));   // must throw on a read error, never return {}
+  const orders = paidInDay(touched, allInvoices, since, until, from);
   const invoicesByOrder = {};
   orders.forEach((o) => { if (allInvoices[o.order_id]) invoicesByOrder[o.order_id] = allInvoices[o.order_id]; });
   const creditNotes = await deps.getCreditNotesBetween(since, until);

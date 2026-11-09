@@ -411,7 +411,7 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
   <table role="presentation" width="600" style="width:100%;max-width:600px;background:${C.cream};border-radius:14px;overflow:hidden;">
     <tr><td style="background:${C.navy};padding:22px 26px;font-family:${FONT};color:#fff;"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:${C.gold};">Munchingo &middot; daily summary</div><div style="font-size:22px;font-weight:700;margin-top:4px;">${esc(dayLabel)}</div></td></tr>
     ${stillToDoBlock(todo)}
-    ${todo === undefined ? '' : `<tr><td style="padding:14px 26px 0;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;color:${C.ink};">Yesterday</div></td></tr>`}
+    ${todo === undefined ? '' : `<tr><td style="padding:14px 26px 0;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;color:${C.ink};">Paid on ${esc(dayLabel)}</div></td></tr>`}
     ${orders.length ? `
     <tr><td style="padding:16px 22px 0;"><table role="presentation" width="100%"><tr>${tile('Orders', orders.length)}${tile('Boxes', boxes)}${tile('Collected', money(revenue))}</tr><tr>${tile('GST included', money(gst))}${tile('Discounts', money(discount))}${tile('Gift notes', gifts)}</tr></table></td></tr>
     <tr><td style="padding:16px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:4px;">Pack list (gift sets opened up)</div><table role="presentation" width="100%">${pack}</table></td></tr>

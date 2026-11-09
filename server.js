@@ -369,7 +369,7 @@ app.get('/internal/daily-digest', async (req, res) => {
       const day = await require('./utils/dailySummary').gatherDay({
         since: since.toISOString(), until: until.toISOString(), todayIst,
         deps: {
-          getPaidOrdersUpdatedSince: database.getPaidOrdersUpdatedSince, getInvoicesByOrderIds: database.getInvoicesByOrderIds,
+          getPaidOrdersUpdatedSince: database.getPaidOrdersUpdatedSince, getInvoicesByOrderIds: database.getInvoicesForSummary,
           getCreditNotesBetween: database.getCreditNotesBetween, listSuggestionsBetween: database.listSuggestionsBetween,
           stockLines: (d) => require('./utils/deliveries').instance().digestLines(d), listOrders: () => require('./utils/adminActions').listOrders(),
         },
