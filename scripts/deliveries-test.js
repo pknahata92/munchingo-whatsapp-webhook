@@ -1360,6 +1360,31 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(small.more, false, 'under the cap and under 50 lots: not more');
   }
 
+  // Final review fixes (9 Nov 2026): a failed order read, no no-lot read on search, a clamped query
+  {
+    const { st } = fresh();
+    await st.insertLots([{ item_slug: 'atta-lite-sugar', lot_code: 'MNGL-261105-01', bake_date: '2026-11-05', best_before: '2027-02-03', status: 'released' }]);
+    await st.insert([{ item_slug: 'atta-lite-sugar', qty: 10, type: 'RECEIVE', lot_code: 'MNGL-261105-01', best_before: '2027-02-03' },
+      { item_slug: 'atta-lite-sugar', qty: 2, type: 'COUNT_FIX', lot_code: null, best_before: null }]);   // a lot-less row, as on the live ledger
+    const counts = {};
+    const wrapped = new Proxy(st, { get: (t, k) => (k === 'saleRowsMatching' && t.failSales ? async () => { throw new Error('canceling statement due to statement timeout'); } : typeof t[k] === 'function' ? (...a) => { counts[k] = (counts[k] || 0) + 1; return t[k](...a); } : t[k]) });
+    const L = makeDeliveries(wrapped, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    await L.search('mngl'); ok(!counts.lotlessSales, 'a search does not read the lot-less sales (it never shows that group) (' + counts.lotlessSales + ' reads)');
+    ok((await L.listLots()).some((x) => x.code === null || x.noLot || x.code == null), 'the Lots list screen still builds the no-lot group');
+    ok(counts.lotlessSales >= 1, 'the Lots list still reads the lot-less sales');
+    st.failSales = true;
+    const warns = []; const ow = console.warn; console.warn = (...a) => warns.push(a.join(' '));
+    const r = await tryIt(() => L.search('mngl'));
+    console.warn = ow;
+    ok(r.r && Array.isArray(r.r.lots) && r.r.lots.some((x) => x.code === 'MNGL-261105-01') && r.r.more === true, 'a failed order read does not fail the search: the lot card still comes back, more: true (' + (r.e ? r.e.message : JSON.stringify(r.r)) + ')');
+    ok(warns.length === 1 && /^\[STOCK\] order search read failed: canceling statement due to statement timeout$/.test(warns[0]) && !/mngl/i.test(warns[0]), 'one warning line, the message only (' + JSON.stringify(warns) + ')');
+    st.failSales = false;
+    const long = await tryIt(() => L.search('mngl' + 'x'.repeat(5000)));
+    ok(long.r && (long.r.none === true || Array.isArray(long.r.lots)) && !long.e, 'a 5,000-character query returns a normal answer (' + (long.e ? long.e.message : 'ok') + ')');
+    const seen = []; const sp = st.saleRowsMatching; st.saleRowsMatching = async function (b, c) { seen.push(String(b).length); return sp.call(this, b, c); };
+    await L.search('y'.repeat(5000)); ok(seen.every((n) => n <= 64), 'the query is cut to 64 characters before anything else (' + JSON.stringify(seen) + ')');
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

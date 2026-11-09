@@ -535,7 +535,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     return { onHold, stopSoon };
   }
 
-  async function listLots(w0) {
+  async function listLots(w0, { skipNoLot = false } = {}) {   // skipNoLot: the search never shows the no-lot group, so it skips the extra store read
     const w = w0 || await world();
     const today = lots.todayIst(now());
     const onHand = new Map();
@@ -570,7 +570,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     out.sort((a, b) => (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) || (a.slug < b.slug ? -1 : 1));
     // Rows with no lot from before lots began (lots_from), as one group. Lot-less sales after lots_from belong to Needs attention, not here.
     const lotless = w.ledger.filter((r) => r.lot_code == null);
-    if (lotless.length) {
+    if (lotless.length && !skipNoLot) {
       const from = Date.parse(w.s.lots_from);
       let qty = lotless.reduce((a, r) => a + r.qty, 0);
       if (Number.isFinite(from)) {
@@ -670,7 +670,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
   // and again with - / and spaces taken out of both sides. Every status and empty lots are included. Only reads.
   // The cards of every lot, built from one snapshot w (listLots(w) does not read the store again).
   async function lotCards(w) {
-    const list = await listLots(w);   // one card's numbers per lot (status, on hand, bake date, website stop), legacy lots included
+    const list = await listLots(w, { skipNoLot: true });   // one card's numbers per lot (status, on hand, bake date, website stop), legacy lots included
     const cards = new Map(list.filter((l) => l.code).map((l) => [`${l.slug}|${l.code}`, l]));
     const rowOf = (slug, code) => w.lotRows.find((l) => l.item_slug === slug && l.lot_code === code) || null;
     const card = (l, extra) => {
@@ -705,7 +705,11 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     // lot-less sales are skipped. A lot already listed by its own code is not listed again for an order.
     // Under 3 letters or digits the order read is skipped (a short query would read thousands of sale rows per keystroke), and the answer says more: true.
     const short = c.replace(/[^A-Z0-9]/g, '').length < 3;
-    const { rows, capped } = short ? { rows: [], capped: false } : ((await store.saleRowsMatching(n)) || { rows: [], capped: false });   // only the sale rows whose order ID can match, read in the database
+    let rows = [], capped = false;
+    if (!short) {
+      // a failed order read (database timeout) must not fail the whole search: the lots still answer, and the answer says there is more
+      try { ({ rows, capped } = (await store.saleRowsMatching(n)) || { rows: [], capped: false }); } catch (e) { rows = []; capped = true; console.warn('[STOCK] order search read failed: ' + (e && e.message || e)); }
+    }   // only the sale rows whose order ID can match, read in the database
     const byOrder = new Map();
     for (const r of rows) {
       const id = orderOfRef(r.ref).orderId;
@@ -730,6 +734,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
   }
 
   async function search(q) {
+    q = String(q == null ? '' : q).slice(0, 64);   // a typed search is never longer than this
     const c = up(q);
     if (!c) return { none: true };
     const w = await world();
