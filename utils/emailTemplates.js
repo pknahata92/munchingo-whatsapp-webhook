@@ -43,7 +43,7 @@ function giftBlock() {
       <tr><td style="padding:28px 26px;text-align:center;">
         <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:${C.gold};">Love it? Pass it on</div>
         <div style="font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.2;color:#FFF9EC;margin:10px 0 8px;">Somebody you love deserves a box too.</div>
-        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a set, fill it with their favourite Flavors and add a note in your own words. We bake it in Bikaner and deliver it straight to their doorstep, anywhere in India.</div>
+        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a set, fill it with their favourite Flavors and add a note in your own words. We bake it in Bikaner and deliver it straight to their doorstep, anywhere in ${require('./deliveryArea').nationwide() ? 'India' : 'Delhi NCR'}.</div>
         <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;">
           <tr>
             <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">from ${inr(trioFrom)}</b><br>Trio Set &middot; any 3 Flavors</td>
@@ -141,7 +141,7 @@ function steps() {
   const pre = require('./launch').isPreorder();
   const s = [
     ['1', pre ? `Packed for ${require('./launch').dispatchLabel()}` : 'Packed fresh', 'Baked in Bikaner, boxed by hand with care.'],
-    ['2', 'On its way', 'Shipped across India. We&rsquo;ll update you on WhatsApp.'],
+    ['2', 'On its way', `${require('./deliveryArea').nationwide() ? 'Shipped across India.' : 'On its way to you in Delhi NCR.'} We&rsquo;ll update you on WhatsApp.`],   // follows DELIVERY_NATIONWIDE (Prashant 9 Nov)
     ['3', 'Snack time', 'Open, share, and save the last bite for yourself.'],
   ];
   return `<tr><td style="padding:22px 28px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>${s.map(([n, h, t]) => `
@@ -352,7 +352,34 @@ function ownerRefundHtml({ order, refund, creditNote }) {
 }
 
 // ── Owner: 8:00 AM summary of the previous day ───────────────────────────────
-function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes = [], suggestions = [], stockLines = null }) {
+// "Still to do" (Prashant 9 Nov 2026): every open order, every morning. todo = null means it could not be read today (say so, never
+// look empty); todo undefined = an older caller with no list (no section).
+function stillToDoBlock(todo) {
+  if (todo === undefined) return '';
+  const head = (txt) => `<div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin:0 0 6px;">${txt}</div>`;
+  const row = (html) => `<div style="font-family:${FONT};font-size:13px;color:${C.ink};padding:4px 0;border-bottom:1px solid #EEE3D0;">${html}</div>`;
+  const note = (txt) => `<div style="font-family:${FONT};font-size:14px;color:${C.ink};">${txt}</div>`;
+  const waited = (d) => (d === 0 ? 'today' : `waiting ${d} day${d === 1 ? '' : 's'}`);
+  const box = (n) => `${n} box${n === 1 ? '' : 'es'}`;
+  let inner;
+  if (todo === null) inner = note('Could not read the open orders this morning. Check To pack and Packed in the admin.');
+  else if (!todo.toPack.length && !todo.notSent.length) inner = note('Nothing waiting: every paid order is packed and sent.');
+  else {
+    inner = '';
+    if (todo.toPack.length) {
+      inner += head(`To pack &middot; ${todo.toPack.length} order${todo.toPack.length === 1 ? '' : 's'}, ${box(todo.toPackBoxes)}`)
+        + (todo.flavours.length ? `<div style="font-family:${FONT};font-size:13px;color:${C.ink2};margin-bottom:6px;">${todo.flavours.map(([f, q]) => `${esc(f)} ${q}`).join(' &middot; ')}</div>` : '')
+        + todo.toPack.map((o) => row(`<b>${esc(o.id)}</b> &middot; ${esc(o.name)} &middot; ${box(o.boxes)} &middot; ${waited(o.waitingDays)}`)).join('');
+    }
+    if (todo.notSent.length) {
+      inner += `<div style="height:${todo.toPack.length ? 14 : 0}px;"></div>` + head(`Packed, not sent out &middot; ${todo.notSent.length}`)
+        + todo.notSent.map((o) => row(`<b>${esc(o.id)}</b> &middot; ${esc(o.name)} &middot; ${box(o.boxes)} &middot; ${esc(o.why)} &middot; ${o.waitingDays === 0 ? 'today' : `${o.waitingDays} day${o.waitingDays === 1 ? '' : 's'}`}`)).join('');
+    }
+  }
+  return `<tr><td style="padding:18px 26px 4px;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;color:${C.ink};margin-bottom:10px;">Still to do</div>${inner}</td></tr>`;
+}
+
+function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes = [], suggestions = [], stockLines = null, todo }) {
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const dw = (iso) => `${parseInt(iso.slice(8, 10), 10)} ${MON[parseInt(iso.slice(5, 7), 10) - 1]}`;
   const stockList = (title, items) => items.length ? `<tr><td style="padding:0 26px 18px;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:6px;">${title}</div>${items.map((x) => `<div style="font-family:${FONT};font-size:13px;color:${C.ink};padding:4px 0;border-bottom:1px solid #EEE3D0;">${x}</div>`).join('')}</td></tr>` : '';
@@ -383,6 +410,8 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
   return `<!doctype html><html><body style="margin:0;background:${C.band};"><table role="presentation" width="100%"><tr><td align="center" style="padding:20px 10px;">
   <table role="presentation" width="600" style="width:100%;max-width:600px;background:${C.cream};border-radius:14px;overflow:hidden;">
     <tr><td style="background:${C.navy};padding:22px 26px;font-family:${FONT};color:#fff;"><div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:${C.gold};">Munchingo &middot; daily summary</div><div style="font-size:22px;font-weight:700;margin-top:4px;">${esc(dayLabel)}</div></td></tr>
+    ${stillToDoBlock(todo)}
+    ${todo === undefined ? '' : `<tr><td style="padding:14px 26px 0;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;color:${C.ink};">Yesterday</div></td></tr>`}
     ${orders.length ? `
     <tr><td style="padding:16px 22px 0;"><table role="presentation" width="100%"><tr>${tile('Orders', orders.length)}${tile('Boxes', boxes)}${tile('Collected', money(revenue))}</tr><tr>${tile('GST included', money(gst))}${tile('Discounts', money(discount))}${tile('Gift notes', gifts)}</tr></table></td></tr>
     <tr><td style="padding:16px 26px 0;"><div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:4px;">Pack list (gift sets opened up)</div><table role="presentation" width="100%">${pack}</table></td></tr>

@@ -244,6 +244,14 @@ async function getOrdersPaidSince(sinceISO, untilISO) {
   return data || [];
 }
 
+/** Every paid order changed since a time. The daily summary then keeps the ones whose payment (invoice time) fell in its day:
+ *  updated_at only ever moves forward, so an order paid that day is always in here even if it was packed the next morning. */
+async function getPaidOrdersUpdatedSince(sinceISO) {
+  const { data, error } = await db().from('orders').select('*').eq('status', 'paid').gte('updated_at', sinceISO).order('updated_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 /** Orders created since a time (the owner's unpaid-order alert looks at the last day or so). */
 async function listOrdersSince(sinceIso, limit = 500) {
   const { data, error } = await db().from('orders').select('order_id, customer_name, customer_phone, total, status, created_at').gte('created_at', sinceIso).order('created_at', { ascending: true }).limit(limit);
@@ -739,6 +747,7 @@ module.exports = {
   getOrderByPaymentId,
   markOrderRefunded,
   getOrdersPaidSince,
+  getPaidOrdersUpdatedSince,
 };
 
 // Stall tally (utils/stall.js, stall_migration.sql). The page sends its whole day; rows are upserted by the id the iPad made.
