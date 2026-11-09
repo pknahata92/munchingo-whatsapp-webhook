@@ -1407,7 +1407,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const devStock = (b) => fetch(BASE + '/dev/stock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
     const o = await openAdmin('owner', { width: 375 });
     const seen = []; const f0 = o.win.fetch;
-    o.win.fetch = (u, opt) => { seen.push({ u: String(u), m: (opt && opt.method) || 'GET', t: Date.now() }); return f0(u, opt); };
+    o.win.fetch = (u, opt) => { const x = { u: String(u), m: (opt && opt.method) || 'GET', t: Date.now(), done: false }; seen.push(x); const p = f0(u, opt); const fin = () => { x.done = true; }; Promise.resolve(p).then(fin, fin); return p; };   // done: the answer came back (the page's shared read is then over too)
     o.click(o.byText('#tabs .tab', /^Stock$/)); await until(() => page(o) === 'Stock' && o.qa('#viewStock .line').length >= 4, 5000, 'the stock page');
     await new Promise((r) => setTimeout(r, 500));
     const kes = () => o.qa('#viewStock .line').find((l) => o.text(l).indexOf('Atta Kesari') === 0);
@@ -1419,7 +1419,12 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await new Promise((r) => setTimeout(r, 800));
     const gets = (re) => seen.filter((x) => x.m === 'GET' && re.test(x.u)).length;
     ok(gets(/\/admin\/api\/inventory$/) === 1 && gets(/\/admin\/api\/stock\/needs-lot$/) === 1, 'one stock action reads /inventory once and needs-lot once (' + seen.map((x) => x.m + ' ' + x.u.replace(/^.*\/admin\/api/, '')).join(', ') + ')');
-    o.click(lowBtn()); await new Promise((r) => setTimeout(r, 600));   // put the flag back
+    // put the flag back, and wait for it exactly like the first click: the button flips back, and the reads it triggers have been asked and answered.
+    // (A read still in flight would be shared by the Stock click below, and no new request would be stamped after t0.)
+    const t1 = Date.now(); o.click(lowBtn());
+    await until(() => o.text(lowBtn() || o.doc.createElement('i')) === was, 5000, 'the low flag to go back');
+    await until(() => { const mine = seen.filter((x) => x.t >= t1 && x.m === 'GET' && /\/admin\/api\/(inventory|stock\/needs-lot)$/.test(x.u)); return mine.length >= 2 && mine.every((x) => x.done); }, 8000, 'the reads after the put-back to be asked and answered');
+    await new Promise((r) => setTimeout(r, 200));
     // a slow needs-lot: the Stock screen is drawn first, the strip fills in later
     await devStock({ slowNeedsMs: 2500 });
     o.q('#viewStock').textContent = '';
@@ -1498,8 +1503,9 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     // one character clears; Enter and Find search at once
     await toLots(o);
     o.set(o.q('#lotQ'), 'mngl'); await until(() => found().length > 0, 4000, 'the list');
-    o.set(o.q('#lotQ'), 'm'); await until(() => found().length > 1 && /Showing the first 50: type more to narrow\./.test(foundText()), 4000, 'the one-character list');
+    o.set(o.q('#lotQ'), 'm'); await until(() => found().length > 1 && /Type more to narrow\./.test(foundText()), 4000, 'the one-character list');
     ok(found().length > 1 && searches[searches.length - 1] === 'm', 'one character searches too, like a regular search box (' + found().length + ' cards)');
+    ok(/Type more to narrow\. Order numbers are searched from 3 letters or digits\./.test(foundText()) && !/first 50/.test(foundText()), 'a one-character list with few cards does not claim "the first 50", and says order numbers start at 3 letters or digits (' + foundText().slice(-110) + ')');
     o.set(o.q('#lotQ'), ''); await sleep(40);
     ok(found().length === 0 && foundText() === '', 'an empty box clears the results');
     searches.length = 0;
@@ -1509,7 +1515,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await sleep(400);
     ok(searches.length === 1, 'the pause does not search again after Enter (' + searches.join(',') + ')');
     o.set(o.q('#lotQ'), 'mngo-26101'); o.click(btn(o, /^Find$/)); await until(() => found().some((c) => c.getAttribute('data-slug') === 'atta-original'), 1500, 'Find to search at once');
-    ok(true, 'Find searches at once');
+    ok(found().length > 0 && found().every((c) => c.getAttribute('data-slug') === 'atta-original') && searches[searches.length - 1] === 'mngo-26101', 'Find searched what was typed, and only Original lots are shown (' + searches[searches.length - 1] + ', ' + found().length + ' cards)');
     // a stale answer never overwrites a newer one
     const card = (code, extra) => Object.assign({ code, slug: 'atta-original', name: 'Atta Original', status: 'released', onHand: 5, bakeDate: '2026-10-16', websiteStop: null, daysToStop: null, aliases: [], supplierBatch: null }, extra || {});
     stub = (q) => (q === 'slow' ? { delay: 900, body: { ok: true, lots: [card('STALE-ONE')], more: false } } : q === 'fast' ? { delay: 10, body: { ok: true, lots: [card('FRESH-ONE')], more: false } } : null);
@@ -1520,6 +1526,26 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     // clearing while a request is out: its answer is ignored too
     o.set(o.q('#lotQ'), 'slow'); await sleep(350); o.set(o.q('#lotQ'), ''); await sleep(1100);
     ok(foundText() === '', 'an answer that comes back after the box was cleared is dropped (' + foundText().slice(0, 60) + ')');
+    // a late answer never drags him back: leave Lots before an exact-code answer lands, the page stays where he went
+    const OLOT = { ok: true, lot: { code: '15OCT26', slug: 'atta-kesari' } };
+    stub = (q) => (q === 'MNGK-261016-01' ? { delay: 900, body: OLOT } : null);
+    o.set(o.q('#lotQ'), 'MNGK-261016-01'); await sleep(350);   // the debounce has fired and the request is on its way
+    o.click(o.byText('#tabs .tab', /^Orders$/)); await sleep(1200);
+    ok(!o.q('#viewStock .lothead') && !/^Lot|15OCT26/.test(o.text(o.q('#panel') || o.doc.createElement('i'))) && o.q('#viewStock').hidden && !o.q('#viewOrders').hidden, 'an exact-code answer that lands after he left Lots opens nothing (Orders stays, no lot page, no sheet)');
+    await toLots(o);
+    o.set(o.q('#lotQ'), 'MNGK-261016-01'); await sleep(20);   // the 250 ms pause has not passed: leave now
+    o.click(o.byText('#tabs .tab', /^Orders$/)); await sleep(1500);
+    ok(!o.q('#viewStock .lothead') && o.q('#viewStock').hidden && !o.q('#viewOrders').hidden, 'leaving Lots before the pause is over searches nothing and opens nothing');
+    // tapping a card while an answer is on its way cancels that answer
+    await toLots(o);
+    o.set(o.q('#lotQ'), 'mngl'); await until(() => found().length > 0, 4000, 'a list to tap');
+    stub = (q) => (q === 'MNGK-261016-01' ? { delay: 900, body: OLOT } : null);
+    o.set(o.q('#lotQ'), 'MNGK-261016-01'); await sleep(350);
+    const lite = found().find((c) => c.getAttribute('data-slug') === 'atta-lite-sugar'); o.click(lite);
+    await until(() => !!o.q('#lotHead') && /Sugar-Lite/.test(o.text(o.q('#lotHead'))), 4000, 'the tapped lot');
+    await sleep(1200);
+    ok(/Sugar-Lite/.test(o.text(o.q('#lotHead'))) && !/Kesari/.test(o.text(o.q('#lotHead'))), 'tapping a card cancels an answer on its way: the tapped lot stays (' + o.text(o.q('#lotHead')) + ')');
+    stub = null; await toLots(o);
     // order hits, sticker codes, the cap line and the empty-but-capped answer
     stub = (q) => (q === 'orders' ? { body: { ok: true, more: true, lots: [card('MNGO-261016-01', { orderId: 'MNG-AAAA-1010', boxes: 3, aliases: [] }), card('15OCT26', { slug: 'atta-kesari', name: 'Atta Kesari', aliases: ['MNGK-261016-01', 'MNGK-261017-01', 'OLD1'], status: 'hold', onHand: 0 })] } }
       : q === 'capped' ? { body: { ok: true, lots: [], more: true } } : null);
@@ -1529,9 +1555,16 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(!/sticker/.test(o.text(c1)), 'a lot whose own code is an MNG sticker code shows no "sticker" part (' + o.text(c1) + ')');
     ok(/15OCT26 · sticker MNGK-261016-01, MNGK-261017-01/.test(o.text(c2)) && !/OLD1/.test(o.text(c2)), 'several sticker codes are joined with ", " (' + o.text(c2) + ')');
     ok(/On hold/.test(o.text(c2)) && /0 on hand/.test(o.text(c2)), 'the card is marked On hold and says 0 on hand (' + o.text(c2) + ')');
-    ok(/Showing the first 50: type more to narrow\./.test(foundText()) && foundText().indexOf('Showing the first 50') > foundText().indexOf('0 on hand'), 'when more is true the line sits under the cards');
-    o.set(o.q('#lotQ'), 'capped'); await until(() => found().length === 0 && /Showing the first 50/.test(foundText()), 3000, 'the capped empty answer');
-    ok(found().length === 0 && !/Nothing found/.test(foundText()), 'an empty but capped answer says to type more, not "Nothing found"');
+    ok(/Type more to narrow\./.test(foundText()) && !/first 50|from 3 letters/.test(foundText()) && foundText().indexOf('Type more to narrow') > foundText().indexOf('0 on hand'), 'two cards with more true: "Type more to narrow." under the cards, no "first 50" and no 3-letter note for a 6-letter query (' + foundText().slice(-80) + ')');
+    o.set(o.q('#lotQ'), 'capped'); await until(() => found().length === 0 && /Type more to narrow/.test(foundText()), 3000, 'the capped empty answer');
+    ok(found().length === 0 && !/Nothing found|first 50/.test(foundText()), 'an empty but capped answer says to type more, not "Nothing found" and not "first 50" (' + foundText() + ')');
+    o.set(o.q('#lotQ'), 'zz'); stub = (q) => (q === 'zz' ? { body: { ok: true, lots: [], more: true } } : null);
+    await until(() => /Order numbers are searched from 3 letters or digits/.test(foundText()), 3000, 'the short empty answer');
+    ok(foundText() === 'Type more to narrow. Order numbers are searched from 3 letters or digits.', 'a two-letter query with nothing back says to type more and why (' + foundText() + ')');
+    stub = (q) => (q === 'fifty' ? { body: { ok: true, more: true, lots: Array.from({ length: 50 }, (_, i) => card('LOT-' + String(i).padStart(2, '0'))) } } : null);
+    o.set(o.q('#lotQ'), 'fifty'); await until(() => found().length === 50, 3000, 'fifty cards');
+    ok(/Showing the first 50: type more to narrow\./.test(foundText()) && !/Order numbers are searched/.test(foundText()), '50 cards with more true: the "first 50" line (' + foundText().slice(-70) + ')');
+    stub = null;
     stub = null;
     o.set(o.q('#lotQ'), 'zzqq'); await until(() => /Nothing found for zzqq/.test(foundText()), 3000, 'the empty answer');
     ok(/Nothing found for zzqq/.test(foundText()), 'a search with no hit says "Nothing found"');
@@ -1622,7 +1655,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     set(q('#q'), ''); await sleep(100);
     ok(/Print pick list \(1\)/.test(text(q('#bulk'))), 'clearing the search brings back the tick that was made in this step');
     click(o.byText('#flow .step', /Packed/)); await sleep(100);
-    ok(!/\(1\)/.test(text(q('#bulk'))) && /Create Delhivery shipments \(\d+\)/.test(text(q('#bulk'))) && !/Create Delhivery shipments \(1\)/.test(text(q('#bulk')).replace(/Select all \d+/, '')) || qa('#list .card').length === 1, 'a To pack tick is not counted against the Packed step (' + text(q('#bulk')) + ')');
+    ok(!/Print pick list \(1\)/.test(text(q('#bulk'))) && !/\(1\)/.test(text(q('#bulk'))) && /Create Delhivery shipments \(\d+\)/.test(text(q('#bulk'))), 'a To pack tick is not counted against the Packed step (' + text(q('#bulk')) + ')');
     ok(!/Clear \(/.test(text(q('#bulk'))), 'no "Clear (n)" for a tick that belongs to another step');
     click(o.byText('#flow .step', /To pack/)); await sleep(100);
     // Print pick list with nothing ticked: only To pack orders
