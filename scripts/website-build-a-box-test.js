@@ -149,7 +149,7 @@ async function open(soldOut = [], book = null) {
   const phone = (css.match(/@media \(max-width:700px\)\{\s*#gifts \.gb-lede[\s\S]*?\n\}/) || [''])[0];
   ok(/\.gb-fl \.gb-plus\{[^}]*left:36px[^}]*width:20px[^}]*height:20px[^}]*min-width:20px[^}]*padding:0[^}]*line-height:20px/.test(phone), 'F1/F2 phone: badge is a 20px circle on the thumbnail corner, centred glyph');
   ok(/\.gb-fl>span:last-child\{padding:0;/.test(phone) && !/@media \(max-width:720px\)\{\.gb-fl>span:last-child\{padding-right/.test(css), 'F1 phone: Flavor name has no right padding reserved for the badge');
-  ok(/\.gb-fl\.gb-out\{padding-bottom:\d+px\}/.test(css) && /\.gb-fl \.gb-so\{top:auto;bottom:/.test(css) && !/gb-out>span:last-child\{padding-right:70px/.test(css), 'F1 phone: Sold out pill sits under the name');
+  ok(/\.gb-fl \.gb-so\{top:auto;bottom:6px;left:60px/.test(css) && /\.gb-fl\.gb-out>span:last-child\{align-self:flex-start/.test(css) && !/gb-out>span:last-child\{padding-right:70px/.test(css) && !/\.gb-fl\.gb-out\{padding-bottom/.test(css), 'F1 phone: Sold out pill under the name, tile keeps its height');
   const num = +(phone.match(/\.gb-count\{font-size:(\d+)px/) || [0, 0])[1], small = +(phone.match(/\.gb-count small\{font-size:(\d+)px/) || [0, 1])[1];
   ok(num >= small * 1.3, 'F3 phone: box count number (' + num + 'px) at least 1.3x the "/ N boxes" text (' + small + 'px)');
   ok(/\.gb-fl\.picked\[disabled\]\{opacity:1;cursor:default;transform:none\}/.test(css) && /\.gb-fl\[disabled\]\{opacity:\.45/.test(css), 'F4: picked disabled tiles at full opacity, other disabled tiles stay faded');

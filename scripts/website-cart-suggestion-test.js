@@ -64,6 +64,18 @@ const slugs = (w) => JSON.parse(w.localStorage.getItem('munchingo_cart')).map((c
   w = await page('checkout.html', [O, K, A]); d = w.document;
   ok(!!d.querySelector('[data-aov-accept]'), 'checkout shows the card too');
 
+  // R3: Indian number format in the bag and the checkout summary
+  w = await page('cart.html', [O, A, K, S]); d = w.document;
+  ok(norm(d.getElementById('cart-items').textContent) === '₹1,146' && norm(d.getElementById('cart-total').textContent) === '₹1,146', 'cart.html: four singles total ₹1,146: ' + norm(d.getElementById('cart-total').textContent));
+  w = await page('checkout.html', [O, A, K, S]); d = w.document;
+  ok(/₹1,146/.test(norm(d.body.textContent)) && !/₹1146/.test(norm(d.body.textContent)), 'checkout.html: summary shows ₹1,146');
+  w = await page('cart.html', [O, K]); ok(norm(w.document.getElementById('cart-total').textContent) === '₹' + (259 + 299 + 49), 'cart.html: ₹558 + shipping stays plain under 1,000');
+  // R1 / R2 CSS
+  const css = fs.readFileSync(path.join(SITE, 'css/style.css'), 'utf8');
+  ok(/\.aov-actions \.aov-upgrade-btn,\.aov-actions \.aov-keep-btn\{[^}]*min-height:44px[^}]*border-radius:999px[^}]*font:600 14px/.test(css) && /\.aov-actions\{display:flex;gap:8px/.test(css), 'R1: matched pill buttons, 44px, 8px gap');
+  ok(/@media \(max-width:480px\)\{\.aov-actions\{flex-direction:column/.test(css), 'R1: stacked full width at 480px');
+  ok(/\.gb-fl\.gb-out \.gb-plus\{display:none!important\}/.test(css) && !/\.gb-fl\.gb-out\{padding-bottom/.test(css), 'R2: sold-out badge hidden on phones, no extra tile padding');
+
   // F9: sticky bar tip (setHint is private to cart-bar.js, so the wording is pinned in the source)
   const bar = fs.readFileSync(path.join(SITE, 'js/cart-bar.js'), 'utf8');
   const fn = (bar.match(/function setHint\(c\) \{[\s\S]*?\n  \}/) || [''])[0];
