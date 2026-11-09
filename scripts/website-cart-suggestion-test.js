@@ -126,6 +126,8 @@ const slugs = (w) => JSON.parse(w.localStorage.getItem('munchingo_cart')).map((c
   ok(/\.gb-fl\.gb-out \.gb-plus\{display:none!important\}/.test(css) && !/\.gb-fl\.gb-out\{padding-bottom/.test(css), 'R2: sold-out badge hidden on phones, no extra tile padding');
   // A hidden summary row stays hidden: .cart-summary .total-row{display:flex} beat the [hidden] attribute, so a set-only bag showed "You save vs MRP ₹0"
   ok(/\.cart-summary \.total-row\[hidden\]\{display:none\}/.test(css), 'a hidden cart summary row (e.g. "You save vs MRP") is not displayed');
+  const ck = fs.readFileSync(path.join(SITE, 'checkout.html'), 'utf8');
+  ok(/\.checkout-summary \.row>span:last-child\{white-space:nowrap/.test(ck), 'checkout amounts never break ("−₹41" stays on one line)');
 
   // F9: sticky bar tip (setHint is private to cart-bar.js, so the wording is pinned in the source)
   const bar = fs.readFileSync(path.join(SITE, 'js/cart-bar.js'), 'utf8');
