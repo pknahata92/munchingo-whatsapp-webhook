@@ -246,7 +246,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     const mo = m ? MONTHS.findIndex((x) => x.toUpperCase() === m[2].toUpperCase()) : -1;
     if (mo >= 0) {
       const bake = '20' + m[3] + '-' + String(mo + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
-      const same = rows.filter((l) => l.bake_date && String(l.bake_date).slice(0, 10) === bake);
+      const same = rows.filter((l) => l.status !== 'void' && l.status !== 'rejected' && l.bake_date && String(l.bake_date).slice(0, 10) === bake);   // a dead lot is not one to land on
       if (same.length === 1) return { code: same[0].lot_code, bestBefore: same[0].best_before ? String(same[0].best_before).slice(0, 10) : '' };
       if (same.length > 1) throw new StockError(`More than one ${item.name} lot was baked on ${dateWords(bake)}. Correct it from that lot's page with Fix lot.`, 409);
     }
@@ -258,6 +258,8 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // and the new one written in the same save, so a refused correction changes nothing.
   async function receive({ slug, received, damaged = 0, lot, bestBefore, ref, note, billedKg, amountRupees, confirmDuplicate = false, replaces = null, isOwner = false, actor, biscuitsViaDelivery = false }) {
     const item = await need(slug);
+    // "Never a second spelling of a lot" for NEW biscuit receipts rests on the admin route passing biscuitsViaDelivery: true (they are refused here and go
+    // through New delivery, which makes the lot). Corrections (`replaces`) resolve the typed code through resolveReceiptLot.
     // The admin route sets this: a new biscuit receipt there must go through Stock, New delivery (Task 10). A correction of an old receipt (`replaces`) is allowed.
     if (biscuitsViaDelivery && item.kind === 'product' && (replaces == null || replaces === '')) throw new StockError('Biscuits are received with Stock, New delivery, so every box gets its lot and the hold check.', 409);
     const rec = int(received), dmg = int(damaged || 0);

@@ -1003,7 +1003,9 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     await fix('atta-original', '5nov26');
     ok(lastRec('atta-original').lot_code === 'MNGO-261105-01', 'Fix A: a one-digit day also finds the lot');
     let n = st.mv.length, id = await oldReceipt('atta-lite-sugar'); n = st.mv.length;
+    const lastBefore = st.mv.length && st.mv[st.mv.length - 1];
     await rejects(inv.receive({ slug: 'atta-lite-sugar', received: 5, lot: '06NOV26', replaces: id, actor: A, isOwner: true }), /^More than one Lite lot was baked on 6 Nov\. Correct it from that lot's page with Fix lot\.$|^More than one .* lot was baked on 6 Nov\. Correct it from that lot's page with Fix lot\.$/, 'Fix A: two lots of one flavour on one bake date are refused');
+    ok(st.mv.length === n && st.mv[st.mv.length - 1] === lastBefore && st.mv.some((m) => m.id === id && !m.reversed_by && m.type === 'RECEIVE'), 'Fix A: the ambiguity refusal writes nothing (same row count, same last row, the old receipt still live)');
     id = await oldReceipt('atta-kesari'); n = st.mv.length;
     const e = await inv.receive({ slug: 'atta-kesari', received: 5, lot: '30SEP26', replaces: id, actor: A, isOwner: true }).then(() => null, (x) => x);
     ok(e && /^No lot 30SEP26 for .+\. New stock is entered with Stock, New delivery\.$/.test(e.message) && e.status === 409, 'Fix A: an unknown code is refused with the New delivery message (409) (' + (e && e.message) + ')');
@@ -1017,6 +1019,17 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     const pid = st.mv.filter((m) => m.item_slug === 'packing-tape' && m.type === 'RECEIVE').pop().id;
     await inv.receive({ slug: 'packing-tape', received: 9, lot: 'Any Lot 1', replaces: pid, actor: A, isOwner: true });
     ok(lastRec('packing-tape').lot_code === 'Any Lot 1', 'Fix A: packaging receipts keep the lot as typed');
+    // a lot that was voided or rejected is not a lot to land on: a day with only a dead lot is the normal "No lot" refusal; a live one beside it still wins
+    await st.insertLots([L('atta-original', 'MNGO-261110-01', '2026-11-10', { status: 'void' }), L('atta-kesari', 'MNGK-261111-01', '2026-11-11', { status: 'rejected' }),
+      L('atta-ajwain', 'MNGA-261112-01', '2026-11-12', { status: 'void' }), L('atta-ajwain', 'MNGA-261112-02', '2026-11-12')]);
+    const idO = await oldReceipt('atta-original'), nDead = st.mv.length;
+    const dead = await inv.receive({ slug: 'atta-original', received: 5, lot: '10NOV26', replaces: idO, actor: A, isOwner: true }).then(() => null, (x) => x);
+    ok(dead && /^No lot 10NOV26 for .+\. New stock is entered with Stock, New delivery\.$/.test(dead.message) && dead.status === 409 && st.mv.length === nDead, 'Fix A: a day with only a void lot is refused as "No lot", nothing written (' + (dead && dead.message) + ')');
+    const idK = await oldReceipt('atta-kesari');
+    const rej = await inv.receive({ slug: 'atta-kesari', received: 5, lot: '11NOV26', replaces: idK, actor: A, isOwner: true }).then(() => null, (x) => x);
+    ok(rej && /^No lot 11NOV26 for /.test(rej.message), 'Fix A: a day with only a rejected lot is refused as "No lot" (' + (rej && rej.message) + ')');
+    await fix('atta-ajwain', '12NOV26');
+    ok(lastRec('atta-ajwain').lot_code === 'MNGA-261112-02', 'Fix A: a void lot and a live lot on one day: the live one is the lot');
   }
 
   // ---- Fix B (9 Nov 2026): boxes with no lot never count toward the website number ----
