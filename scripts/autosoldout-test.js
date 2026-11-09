@@ -56,5 +56,12 @@ const A = { email: 'x@y.z', name: 'X' };
   ok(stock.autoSoldOutSlugs().join() === before && before === 'atta-kesari', 'if the ledger cannot be read the last known sold-out list is kept');
   inv.instance = () => ({ sellable: async () => { throw new Error('Run stock_ledger_migration.sql in Supabase first.'); } }); const o = console.error; let logged = false; console.error = () => { logged = true; }; await stock.refresh(); console.error = o;
   ok(!logged, 'a not-yet-migrated database stays quiet');
+  // Fix B: boxes with no lot never count toward the website number (packing refuses them)
+  {
+    const stN = memStore('2026-10-01T00:00:00.000Z'); const realN = inv.makeInventory(stN, { now: () => Date.parse('2026-10-31T06:00:00Z') });
+    await stN.insert([{ item_slug: 'atta-kesari', qty: 3, type: 'COUNT_FIX', lot_code: null, best_before: null }]);
+    inv.instance = () => realN; await stock.refresh();
+    ok(stock.sellable('atta-kesari') === 0 && stock.autoSoldOutSlugs().join() === 'atta-kesari' && !catalog.isAvailable('atta-kesari'), 'Fix B: a flavour whose only stock is 3 no-lot boxes is sold out on the website');
+  }
   console.log(`autosoldout-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

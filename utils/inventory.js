@@ -66,6 +66,14 @@ function lotInfo(ctx, r) {
   return m ? { status: m.status, best_before: m.best_before || r.best_before || null, lot: m.lot, ownerHold: m.ownerHold } : { status: null, best_before: r.best_before || null };
 }
 const eligibleRow = (ctx, r, purpose) => lotRules.eligible(lotInfo(ctx, r), purpose, ctx.today, ctx.s);
+// Boxes of one flavour the website may count (Fix B, 9 Nov 2026). Packing never takes a box without a lot, so a box with no lot is never
+// promised on the website: no-lot rows count only as min(0, their net), i.e. an old shortfall still subtracts, a surplus never adds.
+// Lotted rows keep the plain rule (released or legacy, before the website stop date). Rows: { item_slug, lot_code, best_before, qty }.
+function webCount(ctx, rows) {
+  let lotted = 0, noLot = 0;
+  for (const r of rows) { if (r.lot_code == null) noLot += r.qty; else if (eligibleRow(ctx, r, 'web')) lotted += r.qty; }
+  return lotted + Math.min(0, noLot);
+}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const dateWords = (iso) => `${parseInt(iso.slice(8, 10), 10)} ${MONTHS[parseInt(iso.slice(5, 7), 10) - 1]}`;
@@ -108,11 +116,16 @@ function boxesBySlug(items) {
 
 // What the website may still sell per flavour: boxes on the shelf minus boxes already paid for but not yet packed (stock is only
 // deducted at Packed). Only flavours that have stock recorded are included; an item nobody has counted yet is left alone.
-// With `ctx` (from lotContext) only boxes in lots the website may sell count: released or legacy, and today before the website stop date.
+// With `ctx` (from lotContext) only boxes in lots the website may sell count: released or legacy, and today before the website stop date;
+// boxes with no lot count only when negative (webCount).
 // Without it every box counts, as before lots existed.
 function computeSellable(items, byLotRows, committed, ctx) {
-  const out = {}; const has = new Set(); const sum = {}; const total = {};
-  for (const r of byLotRows) { has.add(r.item_slug); total[r.item_slug] = (total[r.item_slug] || 0) + r.qty; if (ctx && !eligibleRow(ctx, r, 'web')) continue; sum[r.item_slug] = (sum[r.item_slug] || 0) + r.qty; }
+  const out = {}; const has = new Set(); const sum = {}; const total = {}; const mine = {};
+  for (const r of byLotRows) {
+    has.add(r.item_slug); total[r.item_slug] = (total[r.item_slug] || 0) + r.qty;
+    if (ctx) (mine[r.item_slug] = mine[r.item_slug] || []).push(r); else sum[r.item_slug] = (sum[r.item_slug] || 0) + r.qty;
+  }
+  if (ctx) for (const slug of Object.keys(mine)) sum[slug] = webCount(ctx, mine[slug]);
   // never more than is on the shelf: a lot that cannot be sold may have a negative balance
   for (const i of items) { if (i.kind === 'product' && i.active && has.has(i.slug)) out[i.slug] = (ctx ? Math.min(total[i.slug] || 0, sum[i.slug] || 0) : (sum[i.slug] || 0)) - ((committed || {})[i.slug] || 0); }
   return out;
@@ -183,7 +196,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       }) : [];
       const elig = (purpose) => (m ? m.lots.filter((l) => eligibleRow(ctx, { item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before }, purpose)).reduce((n, l) => n + l.qty, 0) : 0);
       const usable = i.kind === 'product' ? (m ? Math.min(m.total, elig('other')) : 0) : null;
-      const webBoxes = i.kind === 'product' && m && m.any ? Math.min(m.total, elig('web')) : null;
+      const webBoxes = i.kind === 'product' && m && m.any ? Math.min(m.total, webCount(ctx, m.lots.map((l) => ({ item_slug: i.slug, lot_code: l.lot_code, best_before: l.best_before, qty: l.qty })))) : null;
       // boxes in lots on hold (Task 12): on the shelf, not on the website, so a flavour whose stock is all held never looks fine silently
       const onHold = i.kind === 'product' ? Math.max(0, lotList.filter((l) => l.status === 'hold').reduce((n, l) => n + l.qty, 0)) : null;
       return { slug: i.slug, name: i.name, kind: i.kind, unit: i.unit, low_level: i.low_level, manual_low: !!i.manual_low, on_hand: m ? m.total : 0, usable, on_hold: onHold, committed: committed[i.slug] || 0, sellable: webBoxes == null ? null : webBoxes - (committed[i.slug] || 0), paused: paused.includes(i.slug), at_events: outAt[i.slug] || 0, counted: !!(m && m.any), last_counted: i.kind === 'packaging' && m && m.last ? m.last : null, status: statusOf(i, m), lots: lotList };

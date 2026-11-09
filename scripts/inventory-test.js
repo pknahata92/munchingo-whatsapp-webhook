@@ -906,7 +906,8 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     await inv.receive({ slug: 'atta-original', received: 12, lot: '27OCT26', bestBefore: '2027-01-25', actor: A });
     await st.insert([{ item_slug: 'atta-ajwain', qty: 5, type: 'RECEIVE', lot_code: null }]);
     st.committedMap = { 'atta-kesari': 3 };
-    const preBranch = computeSellable(await st.items(), await st.byLot(), await st.committed());   // no lot context: every box counts
+    // no lot context: every box counts; with Fix B the website never counts the 5 no-lot Ajwain boxes (packing refuses a box without a lot)
+    const preBranch = { ...computeSellable(await st.items(), await st.byLot(), await st.committed()), 'atta-ajwain': 0 };
     st.lots = async () => { throw new Error(MIGRATE); };
     const logged = []; const err0 = console.error; console.error = (...a) => { logged.push(a.join(' ')); };
     let got = null, ov = null, tk = null, cd = null;
@@ -919,8 +920,8 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       await inv.sellable().catch(() => {});
       var ov2 = await inv.overview().catch((e) => e), got2 = await inv.sellable().catch((e) => e);
     } finally { console.error = err0; }
-    ok(ov2 && !(ov2 instanceof Error) && JSON.stringify(got2) === JSON.stringify(computeSellable(await st.items(), await st.byLot(), await st.committed())), 'I1: with the settings missing too, the Stock screen and the website count still work (' + (ov2 instanceof Error ? ov2.message : JSON.stringify(got2)) + ')');
-    eq(got, preBranch, 'I1: with the lot table missing, sellable() equals the pre-branch computeSellable');
+    ok(ov2 && !(ov2 instanceof Error) && JSON.stringify(got2) === JSON.stringify({ ...computeSellable(await st.items(), await st.byLot(), await st.committed()), 'atta-ajwain': 0 }), 'I1: with the settings missing too, the Stock screen and the website count still work (' + (ov2 instanceof Error ? ov2.message : JSON.stringify(got2)) + ')');
+    eq(got, preBranch, 'I1: with the lot table missing, sellable() equals the pre-branch computeSellable (but for no-lot boxes, Fix B)');
     ok(ov && !(ov instanceof Error) && ov.items.find((i) => i.slug === 'atta-kesari').on_hand === 40, 'I1: the Stock screen (overview) still works (' + (ov instanceof Error ? ov.message : 'ok') + ')');
     ok(tk && !(tk instanceof Error) && tk.onHand === 38, 'I1: a take-out still works (' + (tk instanceof Error ? tk.message : JSON.stringify(tk)) + ')');
     ok(cd && !(cd instanceof Error) && cd.onHand === 10 && cd.diff === -2, 'I1: a count-down still works (' + (cd instanceof Error ? cd.message : JSON.stringify(cd)) + ')');
@@ -1016,6 +1017,73 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     const pid = st.mv.filter((m) => m.item_slug === 'packing-tape' && m.type === 'RECEIVE').pop().id;
     await inv.receive({ slug: 'packing-tape', received: 9, lot: 'Any Lot 1', replaces: pid, actor: A, isOwner: true });
     ok(lastRec('packing-tape').lot_code === 'Any Lot 1', 'Fix A: packaging receipts keep the lot as typed');
+  }
+
+  // ---- Fix B (9 Nov 2026): boxes with no lot never count toward the website number ----
+  {
+    const mkB = () => { const st = memStore('2026-10-16T00:00:00.000Z'); return { st, inv: makeInventory(st) }; };
+    const FLB = ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'];
+    const lotted = async (st, slug, code, qty, bb) => { await st.insertLots([{ item_slug: slug, lot_code: code, status: 'released', best_before: bb || '2027-02-03' }]); await st.insert([{ item_slug: slug, qty, type: 'RECEIVE', lot_code: code, best_before: bb || '2027-02-03' }]); };
+    const noLot = (st, slug, qty) => st.insert([{ item_slug: slug, qty, type: qty > 0 ? 'COUNT_FIX' : 'SALE', lot_code: null, best_before: null }]);
+    const web = async (inv, slug) => (await inv.sellable())[slug];
+    const screen = async (inv, slug) => (await inv.overview()).items.find((i) => i.slug === slug).sellable;
+    // 1. +1 no-lot is not counted
+    { const { st, inv } = mkB(); await lotted(st, 'atta-kesari', 'MNGK-261105-01', 10); await noLot(st, 'atta-kesari', 1);
+      eq([await web(inv, 'atta-kesari'), await screen(inv, 'atta-kesari')], [10, 10], 'Fix B: +1 no-lot is not counted (website and screen)'); }
+    // 2. -2 no-lot still subtracts
+    { const { st, inv } = mkB(); await lotted(st, 'atta-kesari', 'MNGK-261105-01', 10); await noLot(st, 'atta-kesari', -2);
+      eq([await web(inv, 'atta-kesari'), await screen(inv, 'atta-kesari')], [8, 8], 'Fix B: -2 no-lot still subtracts (website and screen)'); }
+    // 3. only stock is +3 no-lot: shows 0
+    { const { st, inv } = mkB(); await noLot(st, 'atta-kesari', 3); st.committedMap = { 'atta-kesari': 0 };
+      eq([await web(inv, 'atta-kesari'), await screen(inv, 'atta-kesari')], [0, 0], 'Fix B: a flavour whose only stock is +3 no-lot shows 0');
+      const o = (await inv.overview()).items.find((i) => i.slug === 'atta-kesari'); ok(o.on_hand === 3, 'Fix B: the shelf still shows the 3 boxes on hand'); }
+    // 4. +3 and -2 no-lot net +1: still not counted; -2 and +3 in the opposite sign order the same
+    { const { st, inv } = mkB(); await lotted(st, 'atta-kesari', 'MNGK-261105-01', 10); await noLot(st, 'atta-kesari', 3); await noLot(st, 'atta-kesari', -2);
+      eq(await web(inv, 'atta-kesari'), 10, 'Fix B: no-lot rows net +1 (3 - 2) add nothing'); }
+    // 5. live figures, 9 Nov, committed 0: expected 29 / 81 / 39 / 37
+    { const { st, inv } = mkB();
+      await lotted(st, 'atta-original', 'MNGO-261105-01', 29); await noLot(st, 'atta-original', 1);
+      await lotted(st, 'atta-kesari', '27OCT26', 81, '2027-01-25');
+      await lotted(st, 'atta-ajwain', '27OCT26', 11, '2027-01-25'); await lotted(st, 'atta-ajwain', 'MNGA-261105-01', 28); await noLot(st, 'atta-ajwain', 1);
+      await lotted(st, 'atta-lite-sugar', '27OCT26', 23, '2027-01-25'); await lotted(st, 'atta-lite-sugar', 'MNGL-261105-01', 14);
+      const got = await inv.sellable(); const exp = { 'atta-original': 29, 'atta-kesari': 81, 'atta-ajwain': 39, 'atta-lite-sugar': 37 };
+      console.log('Fix B live fixture, sellable():', JSON.stringify(got));
+      eq(FLB.map((f) => got[f]), FLB.map((f) => exp[f]), 'Fix B: live 9 Nov figures give Original 29, Kesari 81, Ajwain 39, Sugar-Lite 37');
+      const ov = await inv.overview(); ok(FLB.every((f) => ov.items.find((i) => i.slug === f).sellable === got[f]), 'Fix B: the Stock screen Website number equals sellable() for every flavour (live fixture)');
+      // the old rule (every box in an eligible lot, no-lot rows included) would have said 30 / 81 / 40 / 37
+      const rows = await st.byLot(), old = {};
+      for (const f of FLB) old[f] = rows.filter((r) => r.item_slug === f).reduce((n, r) => n + r.qty, 0);
+      eq(FLB.map((f) => old[f]), [30, 81, 40, 37], 'Fix B: before the fix the same ledger promised 30 / 81 / 40 / 37'); }
+    // 6. no-ctx behaviour unchanged
+    { const items = [{ slug: 'atta-kesari', kind: 'product', active: true }];
+      eq(computeSellable(items, [{ item_slug: 'atta-kesari', lot_code: null, qty: 3 }, { item_slug: 'atta-kesari', lot_code: 'L', qty: 4 }], { 'atta-kesari': 1 }), { 'atta-kesari': 6 }, 'Fix B: without a lot context every box still counts'); }
+    // 7. property: new <= old for every ledger; fixtures with no no-lot stock unchanged
+    { const { st } = mkB();
+      await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'H', status: 'hold', best_before: '2027-02-03' }, { item_slug: 'atta-kesari', lot_code: 'R', status: 'released', best_before: '2027-02-03' }, { item_slug: 'atta-original', lot_code: 'R', status: 'released', best_before: '2027-02-03' }]);
+      const items = await st.items(), ctx = await lotContext(st, NOW);
+      const lotsOf = ['H', 'R', 'LEG', 'OLD'], bbOf = { H: '2027-02-03', R: '2027-02-03', LEG: '2027-01-25', OLD: '2026-10-01' };
+      let seed = 7; const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+      let checked = 0, unchanged = 0, lowered = 0, bad = null;
+      for (let t = 0; t < 400 && !bad; t++) {
+        const rows = [];
+        for (const slug of ['atta-kesari', 'atta-original']) {
+          for (const code of [...lotsOf, null]) { if (rnd(3) === 0) continue; rows.push({ item_slug: slug, lot_code: code, best_before: code ? bbOf[code] : null, qty: rnd(21) - 6 }); }
+        }
+        const committed = { 'atta-kesari': rnd(4), 'atta-original': rnd(4) };
+        const neu = computeSellable(items, rows, committed, ctx);
+        // old rule: the pre-fix with-ctx number, spelled out
+        const oldRule = {}; for (const slug of ['atta-kesari', 'atta-original']) {
+          const mine = rows.filter((r) => r.item_slug === slug); if (!mine.length) continue;
+          const tot = mine.reduce((n, r) => n + r.qty, 0), el = mine.filter((r) => { const m = r.lot_code != null ? ctx.meta[slug + '|' + r.lot_code] : null; return require('../utils/lots').eligible(m ? { status: m.status, best_before: m.best_before || r.best_before } : { status: null, best_before: r.best_before }, 'web', ctx.today, ctx.s); }).reduce((n, r) => n + r.qty, 0);
+          oldRule[slug] = Math.min(tot, el) - committed[slug];
+        }
+        for (const slug of Object.keys(oldRule)) {
+          checked++; if (neu[slug] > oldRule[slug]) { bad = { rows, slug, neu: neu[slug], old: oldRule[slug] }; break; }
+          if (neu[slug] < oldRule[slug]) lowered++;
+          if (!rows.some((r) => r.item_slug === slug && r.lot_code == null && r.qty !== 0)) { unchanged++; if (neu[slug] !== oldRule[slug]) { bad = { rows, slug, neu: neu[slug], old: oldRule[slug], why: 'no no-lot stock but changed' }; break; } }
+        }
+      }
+      ok(!bad && checked > 500 && lowered > 0 && unchanged > 50, 'Fix B property: the new website number is never above the old one, and unchanged where there is no no-lot stock (' + checked + ' checked, ' + lowered + ' lowered, ' + unchanged + ' unchanged' + (bad ? ', FAILED ' + JSON.stringify(bad) : '') + ')'); }
   }
 
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

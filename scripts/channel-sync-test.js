@@ -974,5 +974,30 @@ const eq = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: got $
     ok(missing.length === 0, `hooks missing: ${missing.join(' | ')}`);
   }
 
+  // ---- Fix B: a flavour whose only stock has no lot is sold out on the website AND on Meta/Google (one number, utils/inventory sellable) ----
+  {
+    const { memStore } = require('./inventory-memstore'); const invMod = require(path.join(root, 'utils/inventory.js'));
+    const stB = memStore('2026-10-01T00:00:00.000Z'); const NOWB = Date.parse('2026-10-31T06:00:00Z'); const realB = invMod.makeInventory(stB, { now: () => NOWB });
+    await stB.insertLots([{ item_slug: 'atta-original', lot_code: 'MNGO-261105-01', status: 'released', best_before: '2027-02-03' }]);
+    await stB.insert([{ item_slug: 'atta-original', qty: 5, type: 'RECEIVE', lot_code: 'MNGO-261105-01', best_before: '2027-02-03' },
+      { item_slug: 'atta-kesari', qty: 3, type: 'COUNT_FIX', lot_code: null, best_before: null },   // the only Kesari stock has no lot
+      { item_slug: 'atta-ajwain', qty: 4, type: 'RECEIVE', lot_code: 'MNGA-261105-01', best_before: '2027-02-03' }, { item_slug: 'atta-ajwain', qty: -6, type: 'SALE', lot_code: null, best_before: null }]);
+    await stB.insertLots([{ item_slug: 'atta-ajwain', lot_code: 'MNGA-261105-01', status: 'released', best_before: '2027-02-03' }]);
+    const ps = { 'atta-original': { price: 259, mrp: 300 }, 'atta-kesari': { price: 299, mrp: 350 }, 'atta-ajwain': { price: 259, mrp: 300 }, 'atta-lite-sugar': { price: 329, mrp: 350 } };
+    require.cache[require.resolve(path.join(root, 'utils/database.js'))] = { id: 'db', filename: 'db', loaded: true, exports: { listStock: async () => [], setStock: async () => {} } };
+    require.cache[require.resolve(path.join(root, 'utils/prices.js'))] = { id: 'pr', filename: 'pr', loaded: true, exports: { ensureFresh: async () => {} } };
+    invMod.instance = () => realB;
+    const stockPath = require.resolve(path.join(root, 'utils/stock.js')); delete require.cache[stockPath]; const stock = require(stockPath);
+    await stock.refresh();
+    const catalog = require(path.join(root, 'utils/catalog.js'));
+    const shape2 = require(path.join(root, 'utils/channels/shape.js'));
+    const want = shape2.publicState({ isAvailable: catalog.isAvailable, prices: ps });
+    eq([stock.sellable('atta-original'), stock.sellable('atta-kesari'), stock.sellable('atta-ajwain')], [5, 0, -2], 'Fix B: stock.js numbers: 5 lotted boxes, 3 no-lot boxes count 0, 4 lotted less a 6 no-lot shortfall is -2');
+    eq(stock.autoSoldOutSlugs().sort(), ['atta-ajwain', 'atta-kesari'], 'Fix B: the website sold-out list has the no-lot-only and the shortfall flavour');
+    eq(SLUGS_OF(want, 'in stock'), ['atta-lite-sugar', 'atta-original'].sort(), 'Fix B: the Meta/Google public state is in stock only for the flavour with lotted stock (Sugar-Lite is untracked, so never limited)');
+    eq([want['atta-kesari'].availability, want['atta-ajwain'].availability, want['atta-original'].availability], ['out of stock', 'out of stock', 'in stock'], 'Fix B: Kesari (+3 no-lot only) and Ajwain (net shortfall) go out of stock on the channels, Original stays in stock');
+    function SLUGS_OF(w, a) { return Object.keys(w).filter((k) => w[k].availability === a).sort(); }
+  }
+
   console.log(`channel-sync-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
