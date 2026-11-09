@@ -128,6 +128,7 @@ const slugs = (w) => JSON.parse(w.localStorage.getItem('munchingo_cart')).map((c
   ok(/\.cart-summary \.total-row\[hidden\]\{display:none\}/.test(css), 'a hidden cart summary row (e.g. "You save vs MRP") is not displayed');
   const ck = fs.readFileSync(path.join(SITE, 'checkout.html'), 'utf8');
   ok(/\.checkout-summary \.row>span:last-child\{white-space:nowrap/.test(ck), 'checkout amounts never break ("−₹41" stays on one line)');
+  ok(/\/Full Range Sets\/i\.test\(data\.error/.test(ck), 'checkout does not repeat the set note after any of the three coupon errors');
 
   // F9: sticky bar tip (setHint is private to cart-bar.js, so the wording is pinned in the source)
   const bar = fs.readFileSync(path.join(SITE, 'js/cart-bar.js'), 'utf8');

@@ -619,7 +619,7 @@ async function setStock({ slug, available, actor }) {
 }
 
 // ── Prices (owner only) ──
-const PRICE_ROWS = [['atta-original', 'Atta Original'], ['atta-ajwain', 'Atta Ajwain'], ['atta-kesari', 'Atta Kesari'], ['atta-lite-sugar', 'Atta Sugar-Lite'], ['trio-gift-set', 'Trio Gift Set (3 boxes)'], ['full-range-set', 'Full Range Gift Set (4 boxes)']];
+const PRICE_ROWS = [['atta-original', 'Atta Original'], ['atta-ajwain', 'Atta Ajwain'], ['atta-kesari', 'Atta Kesari'], ['atta-lite-sugar', 'Atta Sugar-Lite'], ['trio-gift-set', 'Trio Set (3 boxes)'], ['full-range-set', 'Full Range Set (4 boxes)']];
 // Gift sets are never typed in: the server prices them from the single boxes by the box rule (catalog.priceBook).
 const DERIVED_SLUGS = ['trio-gift-set', 'full-range-set'];
 const BOX_RULE_LABEL = 'Set by the box rule (3 Flavors: 8% off singles; all 4: 12.5% off)';

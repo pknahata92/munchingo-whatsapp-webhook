@@ -81,7 +81,7 @@ for (const f of ['404.html', 'shop.html', 'build-a-box.html', 'terms.html']) {
 ok(read('404.html').includes('or build a box.') && read('build-a-box.html').includes('Build a Munchingo box: ') && read('build-a-box.html').includes('with a note."'), 'meta wording: build a box / with a note');
 ok(read('shop.html').includes('and two sets.') && (read('shop.html').match(/<span class="v2-tag">Set<\/span>/g) || []).length === 2, 'shop: two sets, tag "Set" x2');
 ok((read('corporate-gifting.html').match(/the Trio and Full Range Sets on our /g) || []).length === 2, 'corporate: FAQ (JSON-LD and visible) names the Trio and Full Range Sets');
-ok(read('checkout.html').includes('/Trio or Full Range Sets/i.test(data.error'), 'checkout: coupon-error matcher uses the new wording');
+ok(read('checkout.html').includes('/Full Range Sets/i.test(data.error'), 'checkout: coupon-error matcher uses the new wording');
 for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html']) ok(!read(f).includes('🪔') && /<span>Gifting\? \w+(-\w+)? is in every <b>Full Range Set<\/b>/.test(read(f)), f + ': no diya on the gifting link');
 {
   const d = doc('index.html');
@@ -126,7 +126,7 @@ ok(read('js/stall.js').includes("': which Flavors?'"), 'stall: which Flavors?');
 ok(!/\.was-price|\.promo-note|Pre-Diwali gift set offer note/.test(read('css/style.css')), 'style.css: no .was-price / .promo-note / Pre-Diwali offer comment');
 // B3: prices.js on the six pages that load the bag but did not re-price it, before cart.js
 for (const f of ['about.html', 'contact.html', 'terms.html', 'privacy-policy.html', 'our-story.html', 'maida-free-cookies-guide.html']) {
-  const s = read(f), pi = s.indexOf('<script src="js/prices.js?v=9"></script>'), ci = s.indexOf('<script src="js/cart.js?v=43"');
+  const s = read(f), pi = s.indexOf('<script src="js/prices.js?v=9" data-no-reload></script>'), ci = s.indexOf('<script src="js/cart.js?v=43"');
   ok(pi > 0 && ci > pi, f + ': prices.js v9 loads before cart.js');
 }
 // cache numbers: every page on one number per file

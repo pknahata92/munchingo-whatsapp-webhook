@@ -159,7 +159,7 @@ async function login(email) {
   ok((await cp('', o.token, { code: 'BACKWARDS', type: 'flat', value: 10, startsAt: '2030-02-01', expiresAt: '2030-01-01' })).s === 400, 'start after expiry refused');
   ok((await cp('', o.token, { code: 'BADSCOPE', type: 'flat', value: 10, scope: 'atta-original' })).s === 400, 'unsupported scope refused');
   const so = await cp('', o.token, { code: 'NOSETS10', type: 'percent', value: 10, scope: 'singles-only', expiresAt: '2030-01-31' });
-  ok(so.j.ok && so.j.coupon.scope === 'singles-only' && so.j.coupon.conditions.includes('not on gift sets') && /not gift sets/.test(so.j.coupon.shareEn) && /गिफ़्ट सेट/.test(so.j.coupon.shareHi), 'a code can exclude gift sets; wording appears in the card and in both share messages');
+  ok(so.j.ok && so.j.coupon.scope === 'singles-only' && so.j.coupon.conditions.includes('not on sets') && /not sets/.test(so.j.coupon.shareEn) && /सेट पर नहीं/.test(so.j.coupon.shareHi) && !/गिफ़्ट/.test(so.j.coupon.shareHi), 'a code can exclude sets; wording appears in the card and in both share messages');
   ok((await cp('/NOSETS10/delete', o.token, {})).j.ok, 'cleanup of the gift-set test code');
   const pz = await cp('/FRIEND-HERA', o.token, { active: false }); ok(pz.j.ok && pz.j.coupon.status === 'paused', 'pause');
   const rz = await cp('/FRIEND-HERA', o.token, { active: true, expiresAt: '2031-06-30', maxUses: 5, note: 'now for 5 people' }); ok(rz.j.ok && rz.j.coupon.status === 'live' && rz.j.coupon.maxUses === 5 && /2031/.test(rz.j.coupon.expiresAt) && rz.j.coupon.note === 'now for 5 people', 'resume + extend + edit limits and note');
