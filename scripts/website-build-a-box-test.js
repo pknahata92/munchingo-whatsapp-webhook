@@ -11,6 +11,8 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 class Local extends ResourceLoader { fetch(url) { const u = new URL(url); if (u.hostname !== 'localhost') return Promise.resolve(Buffer.from('')); const f = path.join(SITE, decodeURIComponent(u.pathname)); return Promise.resolve(fs.existsSync(f) ? fs.readFileSync(f) : Buffer.from('')); } }
 const text = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
+// panel text with a space between the label cell and the value cell of each row (the rows are two cells now)
+const spaced = (el) => { if (!el) return ''; const c = el.cloneNode(true); c.querySelectorAll('.gb-row,.gb-total').forEach((r) => Array.from(r.children).forEach((k) => k.insertAdjacentText('beforebegin', ' '))); return text(c); };
 
 async function open(soldOut = [], book = null) {
   const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'build-a-box.html'), 'utf8'), {
@@ -25,7 +27,7 @@ async function open(soldOut = [], book = null) {
   const click = (el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true }));
   const tile = (v) => d.querySelector(`.gb-fl[data-f="${v}"]`);
   const g = (n) => d.querySelector(`[data-gb="${n}"]`);
-  const panel = () => text(d.querySelector('.gb-panel'));
+  const panel = () => spaced(d.querySelector('.gb-panel'));
   const visible = (el) => !!el && !el.hidden && el.style.display !== 'none';
   const cartLines = () => JSON.parse(w.localStorage.getItem('munchingo_cart') || '[]');
 
@@ -41,6 +43,10 @@ async function open(soldOut = [], book = null) {
   ok(panel().includes('Same boxes as singles ₹1,146'), 'Full Range: same boxes as singles ₹1,146');
   ok(panel().includes('You save ₹147'), 'Full Range: you save ₹147');
   ok(panel().includes('Gift boxes ship free'), 'Full Range: gift boxes ship free');
+  // saving rows: label cell on the left, amount alone in the value cell (lines up with the Total column)
+  const rowCells = (n) => [...g(n).closest('.gb-row').children].map(text);
+  ok(rowCells('cmp').join('|') === 'Same boxes as singles|₹1,146' && text(g('cmp')) === '₹1,146', 'Full Range: compare row is label cell + amount cell: ' + rowCells('cmp').join('|'));
+  ok(rowCells('sv').join('|') === 'You save|₹147' && text(g('sv')) === '₹147' && g('sv').closest('.gb-row').classList.contains('gb-save'), 'Full Range: saving row is label cell + gold amount cell: ' + rowCells('sv').join('|'));
   ok(!visible(g('stepup')), 'Full Range: no step-up');
   ok(!/MRP/i.test(panel()) && !d.querySelector('.gb-panel s, .gb-panel del, [data-gb="mrp"]'), 'no MRP row or crossed-out price in the panel');
   ok(!/promo/i.test(d.querySelector('.gb-panel').innerHTML), 'no promo element in the panel');
@@ -85,6 +91,7 @@ async function open(soldOut = [], book = null) {
   // partial Trio: no step-up, no comparison
   click(tile('Kesari')); await wait(50);
   ok(!visible(g('stepup')), 'unfilled Trio: no step-up');
+  ok(g('cmprow').style.display === 'none' && g('svrow').style.display === 'none' && text(g('cmp')) === '' && text(g('sv')) === '', 'unfilled Trio: comparison and saving rows hidden and empty');
   ok(g('tot').parentNode.style.display === 'none' && text(g('tot')) === '', 'unfilled Trio: total row hidden, no dash');
 
   // ---- JSON-LD ----
@@ -100,7 +107,7 @@ async function open(soldOut = [], book = null) {
   const BOOK = { 'atta-original': { price: 259, mrp: 300 }, 'atta-ajwain': { price: 259, mrp: 300 }, 'atta-kesari': { price: 319, mrp: 350 }, 'atta-lite-sugar': { price: 329, mrp: 350 } };
   const d3 = await open([], BOOK); const w3 = d3.window, doc3 = w3.document;
   const c3 = (el) => el.dispatchEvent(new w3.MouseEvent('click', { bubbles: true, cancelable: true }));
-  const p3 = () => text(doc3.querySelector('.gb-panel'));
+  const p3 = () => spaced(doc3.querySelector('.gb-panel'));
   c3(doc3.querySelector('.gb-opt[data-size="3"]')); await wait(50);
   ['Original', 'Kesari', 'Lite-sugar'].forEach((v) => c3(doc3.querySelector(`.gb-fl[data-f="${v}"]`))); await wait(50);
   const box = Math.floor((907 * 0.92 + 1) / 10) * 10 - 1;
@@ -136,6 +143,19 @@ async function open(soldOut = [], book = null) {
   const su = doc2.querySelector('[data-gb="stepup"]');
   ok(!su || su.hidden || su.style.display === 'none', 'Full Range unavailable: step-up hidden');
   d2.window.close();
+
+  // ---- phone / tile CSS rules exist (no browser here: the controller checks them visually) ----
+  const css = fs.readFileSync(path.join(SITE, 'css/style.css'), 'utf8');
+  const phone = (css.match(/@media \(max-width:700px\)\{\s*#gifts \.gb-lede[\s\S]*?\n\}/) || [''])[0];
+  ok(/\.gb-fl \.gb-plus\{[^}]*left:36px[^}]*width:20px[^}]*height:20px[^}]*min-width:20px[^}]*padding:0[^}]*line-height:20px/.test(phone), 'F1/F2 phone: badge is a 20px circle on the thumbnail corner, centred glyph');
+  ok(/\.gb-fl>span:last-child\{padding:0;/.test(phone) && !/@media \(max-width:720px\)\{\.gb-fl>span:last-child\{padding-right/.test(css), 'F1 phone: Flavor name has no right padding reserved for the badge');
+  ok(/\.gb-fl\.gb-out\{padding-bottom:\d+px\}/.test(css) && /\.gb-fl \.gb-so\{top:auto;bottom:/.test(css) && !/gb-out>span:last-child\{padding-right:70px/.test(css), 'F1 phone: Sold out pill sits under the name');
+  const num = +(phone.match(/\.gb-count\{font-size:(\d+)px/) || [0, 0])[1], small = +(phone.match(/\.gb-count small\{font-size:(\d+)px/) || [0, 1])[1];
+  ok(num >= small * 1.3, 'F3 phone: box count number (' + num + 'px) at least 1.3x the "/ N boxes" text (' + small + 'px)');
+  ok(/\.gb-fl\.picked\[disabled\]\{opacity:1;cursor:default;transform:none\}/.test(css) && /\.gb-fl\[disabled\]\{opacity:\.45/.test(css), 'F4: picked disabled tiles at full opacity, other disabled tiles stay faded');
+  ok(/\.gb-stepup\{margin-top:16px;padding-top:14px;border-top:1px solid rgba\(246,234,218,\.14\)\}/.test(css), 'F6: step-up has separation and a hairline');
+  const xb = css.match(/\.gb-slot \.x::before\{[^}]*top:-(\d+)px;right:-(\d+)px;bottom:-(\d+)px;left:-(\d+)px/);
+  ok(xb && 22 + (+xb[1]) + (+xb[3]) >= 36 && 22 + (+xb[2]) + (+xb[4]) >= 36, 'F7: remove button hit area is at least 36x36 (22px circle plus ring)');
 
   console.log(`website-build-a-box-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
