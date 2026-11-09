@@ -1057,6 +1057,11 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     // 6. no-ctx behaviour unchanged
     { const items = [{ slug: 'atta-kesari', kind: 'product', active: true }];
       eq(computeSellable(items, [{ item_slug: 'atta-kesari', lot_code: null, qty: 3 }, { item_slug: 'atta-kesari', lot_code: 'L', qty: 4 }], { 'atta-kesari': 1 }), { 'atta-kesari': 6 }, 'Fix B: without a lot context every box still counts'); }
+    // 6b. reviewer's probe: an expired no-lot surplus must not hide a no-lot shortfall (old 8, never 10)
+    { const { st, inv } = mkB(); await lotted(st, 'atta-kesari', 'MNGK-261105-01', 10);
+      await st.insert([{ item_slug: 'atta-kesari', qty: 5, type: 'COUNT_FIX', lot_code: null, best_before: '2026-10-01' }, { item_slug: 'atta-kesari', qty: -2, type: 'SALE', lot_code: null, best_before: null }]);
+      st.committedMap = { 'atta-kesari': 0 };
+      eq([await web(inv, 'atta-kesari'), await screen(inv, 'atta-kesari')], [8, 8], 'Fix B: lotted 10, expired no-lot +5, no-lot -2: website 8 (not 10), screen the same'); }
     // 7. property: new <= old for every ledger; fixtures with no no-lot stock unchanged
     { const { st } = mkB();
       await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'H', status: 'hold', best_before: '2027-02-03' }, { item_slug: 'atta-kesari', lot_code: 'R', status: 'released', best_before: '2027-02-03' }, { item_slug: 'atta-original', lot_code: 'R', status: 'released', best_before: '2027-02-03' }]);
@@ -1067,7 +1072,8 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       for (let t = 0; t < 400 && !bad; t++) {
         const rows = [];
         for (const slug of ['atta-kesari', 'atta-original']) {
-          for (const code of [...lotsOf, null]) { if (rnd(3) === 0) continue; rows.push({ item_slug: slug, lot_code: code, best_before: code ? bbOf[code] : null, qty: rnd(21) - 6 }); }
+          for (const code of lotsOf) { if (rnd(3) === 0) continue; rows.push({ item_slug: slug, lot_code: code, best_before: bbOf[code], qty: rnd(21) - 6 }); }
+          for (const bb of [null, '2026-10-01', '2027-02-03']) { if (rnd(2) === 0) continue; rows.push({ item_slug: slug, lot_code: null, best_before: bb, qty: rnd(21) - 6 }); }   // no-lot rows: no date, expired, future
         }
         const committed = { 'atta-kesari': rnd(4), 'atta-original': rnd(4) };
         const neu = computeSellable(items, rows, committed, ctx);

@@ -70,9 +70,15 @@ const eligibleRow = (ctx, r, purpose) => lotRules.eligible(lotInfo(ctx, r), purp
 // promised on the website: no-lot rows count only as min(0, their net), i.e. an old shortfall still subtracts, a surplus never adds.
 // Lotted rows keep the plain rule (released or legacy, before the website stop date). Rows: { item_slug, lot_code, best_before, qty }.
 function webCount(ctx, rows) {
-  let lotted = 0, noLot = 0;
-  for (const r of rows) { if (r.lot_code == null) noLot += r.qty; else if (eligibleRow(ctx, r, 'web')) lotted += r.qty; }
-  return lotted + Math.min(0, noLot);
+  let lotted = 0, noLot = 0, total = 0, oldElig = 0;
+  for (const r of rows) {
+    total += r.qty; const el = eligibleRow(ctx, r, 'web');
+    if (el) oldElig += r.qty;
+    if (r.lot_code == null) noLot += r.qty; else if (el) lotted += r.qty;
+  }
+  // Never above the pre-fix number (min(total, eligible sum), no-lot rows judged by their own best before): an expired no-lot surplus
+  // must not hide a no-lot shortfall.
+  return Math.min(lotted + Math.min(0, noLot), Math.min(total, oldElig));
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
