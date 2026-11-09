@@ -543,9 +543,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     const sumOf = (slug, codes) => codes.reduce((a, c) => a + (onHand.get(`${slug}|${c}`) || 0), 0);
     // canShip: a website order can still be packed from it (released or legacy, today on or before the last ship date), so Assign lot
     // offers only those lots (Task 12)
-    const entry = (slug, code, status, bake, bb, qty) => {
+    const entry = (slug, code, status, bake, bb, qty, aliases) => {
       const cut = bb ? lots.cutoffs(bb, w.s) : null;
-      return { code, slug, name: w.products.get(slug), status, onHand: qty, bakeDate: bake, bestBefore: bb, websiteStop: cut ? cut.websiteStop : null, daysToStop: cut ? daysBetween(today, cut.websiteStop) : null,
+      return { code, slug, name: w.products.get(slug), status, aliases: aliases || [], onHand: qty, bakeDate: bake, bestBefore: bb, websiteStop: cut ? cut.websiteStop : null, daysToStop: cut ? daysBetween(today, cut.websiteStop) : null,
         lastShip: cut ? cut.lastShip : null, canShip: lots.eligible({ status, best_before: bb }, 'pack', today, w.s) };
     };
     const out = [];
@@ -554,7 +554,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       const rows = w.ledger.filter((r) => r.item_slug === l.item_slug && codes.includes(r.lot_code) && r.best_before);
       const bb = day(l.best_before) || rows.map((r) => day(r.best_before)).sort()[0] || null;
       const p = lots.parseCode(l.lot_code);
-      const e = entry(l.item_slug, l.lot_code, l.status == null ? null : l.status, day(l.bake_date) || (p && p.bakeDate) || null, bb, sumOf(l.item_slug, codes));
+      const e = entry(l.item_slug, l.lot_code, l.status == null ? null : l.status, day(l.bake_date) || (p && p.bakeDate) || null, bb, sumOf(l.item_slug, codes), l.aliases || []);
       if (lots.ownerHold(l)) { e.ownerHold = true; e.holdReason = l.hold_reason || null; }   // I2: held by the owner, not a new delivery
       out.push(e);
     }
@@ -683,15 +683,29 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
 
   async function partial(w, c, n) {
     const has = (v) => v != null && v !== '' && (up(v).includes(c) || bare(v).includes(n));
+    // "starts": at the start of the value, or of any part after a - / or space; raw and separator-stripped (typing "27" ranks 27OCT26 above MNGA-261027-01)
+    const starts = (v) => {
+      if (v == null || v === '') return false;
+      const t = up(v);
+      for (let i = 0; i < t.length; i++) { if (i && !/[-/\s]/.test(t[i - 1])) continue; const rest = t.slice(i); if (rest.startsWith(c) || bare(rest).startsWith(n)) return true; }
+      return false;
+    };
+    const first = new Set();   // the cards that match at a start; they list before the contains-only ones
     const { cards, rowOf, card } = await lotCards(w);
     const out = [], direct = new Set();
     for (const l of cards.values()) {
       const r = rowOf(l.slug, l.code);
-      if (has(l.code) || (r && ((r.aliases || []).some(has) || has(r.supplier_batch)))) { direct.add(`${l.slug}|${l.code}`); out.push(card(l)); }
+      if (has(l.code) || (r && ((r.aliases || []).some(has) || has(r.supplier_batch)))) {
+        direct.add(`${l.slug}|${l.code}`);
+        const k = card(l); out.push(k);
+        if (starts(l.code) || (r && ((r.aliases || []).some(starts) || starts(r.supplier_batch)))) first.add(k);
+      }
     }
     // Orders: the id is the part of the ref before "@". Their lots are the SALE rows not undone (the restoreForOrder rule: ref + flavour + lot);
     // lot-less sales are skipped. A lot already listed by its own code is not listed again for an order.
-    const { rows, capped } = (await store.saleRowsMatching(n)) || { rows: [], capped: false };   // only the sale rows whose order ID can match, read in the database
+    // Under 3 letters or digits the order read is skipped (a short query would read thousands of sale rows per keystroke), and the answer says more: true.
+    const short = c.replace(/[^A-Z0-9]/g, '').length < 3;
+    const { rows, capped } = short ? { rows: [], capped: false } : ((await store.saleRowsMatching(n)) || { rows: [], capped: false });   // only the sale rows whose order ID can match, read in the database
     const byOrder = new Map();
     for (const r of rows) {
       const id = orderOfRef(r.ref).orderId;
@@ -706,13 +720,13 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
         const own = w.index.get(`${r.item_slug}|${r.lot_code}`), k = `${r.item_slug}|${own ? own.lot_code : r.lot_code}`;
         g.set(k, (g.get(k) || 0) - r.qty);
       }
-      for (const [k, boxes] of g) if (!direct.has(k) && cards.has(k)) out.push(card(cards.get(k), { orderId, boxes }));
+      for (const [k, boxes] of g) if (!direct.has(k) && cards.has(k)) { const oc = card(cards.get(k), { orderId, boxes }); out.push(oc); if (starts(orderId)) first.add(oc); }
     }
     const rank = (slug) => { const i = FORM_ORDER.indexOf(slug); return i < 0 ? FORM_ORDER.length : i; };
-    out.sort((a, b) => rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0)
+    out.sort((a, b) => (first.has(a) ? 0 : 1) - (first.has(b) ? 0 : 1) || rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0)
       || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) || (String(a.orderId || '') < String(b.orderId || '') ? -1 : String(a.orderId || '') > String(b.orderId || '') ? 1 : 0));
     // capped: more sale rows matched than the store reads, so the order hits may be missing; never look complete (same as the 50 cap)
-    return out.length || capped ? { lots: out.slice(0, PARTIAL_CAP), more: out.length > PARTIAL_CAP || capped } : { none: true };
+    return out.length || capped || short ? { lots: out.slice(0, PARTIAL_CAP), more: out.length > PARTIAL_CAP || capped || short } : { none: true };
   }
 
   async function search(q) {
@@ -748,7 +762,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       if (g.size) return { orderLots: [...g.values()].sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : String(a.code || '') < String(b.code || '') ? -1 : 1)) };
     }
     const n = bare(c);
-    if (c.length < 2 || n.length < 2) return { none: true };   // one character is too loose to mean anything
+    if (!c.replace(/[^A-Z0-9]/g, '')) return { none: true };   // no letter or digit: nothing to look for (one character is fine: a partial list, 9 Nov 2026)
     return partial(w, c, n);
   }
 

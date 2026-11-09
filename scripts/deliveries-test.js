@@ -828,7 +828,8 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(names, [[KC, 'atta-kesari'], ['15OCT26', 'atta-kesari'], ['15OCT26', 'atta-original'], [null, null]], 'newest bake first, undated legacy after, Untraced last');
     // Task 12 changed this check: each entry also says its last ship date and whether a website order can still be packed from it
     // (released or legacy, and today on or before the last ship date), so Assign lot can offer only the lots that can ship
-    eq(lots0[0], { code: KC, slug: 'atta-kesari', name: 'Atta Kesari', status: 'hold', onHand: 81, bakeDate: '2026-11-05', bestBefore: '2027-02-03', websiteStop: '2026-12-13', daysToStop: 36, lastShip: '2026-12-15', canShip: false }, 'list entry fields');
+    // Task 2 (search as you type) changed this check: each entry also carries the lot's aliases, so the Lots list cards can show the sticker code
+    eq(lots0[0], { code: KC, slug: 'atta-kesari', name: 'Atta Kesari', status: 'hold', aliases: [], onHand: 81, bakeDate: '2026-11-05', bestBefore: '2027-02-03', websiteStop: '2026-12-13', daysToStop: 36, lastShip: '2026-12-15', canShip: false }, 'list entry fields');
     eq([lots0[1].canShip, lots0[1].lastShip, lots0[2].canShip, lots0[2].lastShip, lots0[3].canShip, lots0[3].lastShip], [true, '2026-11-24', true, '2026-11-24', false, null], 'released and legacy lots before their last ship date can ship; Untraced never');
     eq([lots0[1].status, lots0[1].onHand, lots0[2].status, lots0[2].onHand, lots0[2].websiteStop], ['released', 49, null, 50, '2026-11-22'], 'legacy entries (Kesari 50 less the pack of 1; Original from the ledger)');
     eq([lots0[3].name, lots0[3].onHand, lots0[3].status], ['Untraced (before 30 Oct 2026)', 27, null], 'Untraced entry sums the lot-less rows');
@@ -1135,6 +1136,7 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     await dl.hold({ code: '15OCT26', slug: 'atta-original', reason: 'Krazy Bakers recall' }, OWN);
     await rejects(dl.release({ code: '15OCT26', slug: 'atta-original', tasted: true, weightG: 260 }, A), /^This lot was put on hold by the owner\. Only the owner can release it\.$/, 'I2: staff cannot release a backfilled lot the owner held', 403);
     ok((await dl.listLots()).find((l) => l.code === '15OCT26' && l.slug === 'atta-original').ownerHold === true, 'I2: the backfilled lot is listed as held by the owner');
+    eq((await dl.listLots()).find((l) => l.code === '15OCT26' && l.slug === 'atta-original').aliases, ['MNGO-261016-01'], 'the Lots list rows carry the lot aliases (the sticker code shown on the lot card)');
     const k2 = await dl.save(input({ billNo: 'I2-2', invoiceRupees: 8500, rows: [{ slug: 'atta-ajwain', invoiceBoxes: 100, counted: 100, rateRupees: 85 }] }), A);
     ok(!('ownerHold' in (await dl.listLots()).find((l) => l.code === k2.lots[0].code)), 'I2: a new delivery on hold carries no ownerHold mark in the Lots list');
     const ov = (await inv.overview()).items.find((i) => i.slug === 'atta-original');
@@ -1258,9 +1260,15 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(await L.search('bbbb'), { none: true }, 'an order whose packing was undone has no lots');
     eq(await L.search('cccc'), { none: true }, 'a lot-less sale gives no lot');
     // 1 character
-    eq(await L.search('m'), { none: true }, '1 character gives no partial list');
-    eq(await L.search('2'), { none: true }, '1 digit gives no partial list');
-    eq(await L.search('zz'), { none: true }, 'no partial match');
+    // Task 2 (owner, 9 Nov): a search box that works from one character. These replace the "1 character gives nothing" checks.
+    const m1 = await L.search('m'), m2 = await L.search('mn'), m4 = await L.search('mngl');
+    ok(m1.lots.length > 0 && m1.more === true, '1 character gives a partial list of lots, and says more: true (the order read is skipped)');
+    ok(m1.lots.length >= m2.lots.length && m2.lots.length >= m4.lots.length && m4.lots.length >= 1, 'm -> mn -> mngl narrows the list (' + [m1.lots.length, m2.lots.length, m4.lots.length] + ')');
+    ok(m1.lots.some((c) => c.slug === SLP && c.code === '15OCT26') && m2.lots.some((c) => c.slug === SLP && c.code === '15OCT26') && m4.lots.some((c) => c.slug === SLP && c.code === '15OCT26'), 'the Sugar-Lite lot-1 card stays in the list at m, mn and mngl');
+    eq([m4.more], [false], 'from 3 letters or digits the order read runs and the list can be complete');
+    ok((await L.search('2')).lots.length > 0, '1 digit gives a partial list too');
+    eq(await L.search('zz'), { lots: [], more: true }, 'no lot matches a short query: an empty list that still says to type more');
+    eq(await L.search('---'), { none: true }, 'only separators: nothing to look for');
     // exact answers unchanged
     eq(await L.search('MNGK-261105-01'), { lot: { code: 'MNGK-261105-01', slug: 'atta-kesari' } }, 'exact code');
     eq(await L.search('mngk-261105-01'), { lot: { code: 'MNGK-261105-01', slug: 'atta-kesari' } }, 'exact code, any case');
@@ -1283,6 +1291,20 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     const r2 = await L.search('cap-05');
     eq([r2.lots.length, r2.more], [10, false], 'fewer than 50: no more');
     eq(await L.search('CAP-007'), { lot: { code: 'CAP-007', slug: 'atta-original' } }, 'a whole code stays exact even though it is also a substring');
+  }
+
+  // Ranking: matches at the start of the code, an alias, the supplier batch or the order ID (or of a part after - / space) come first
+  {
+    const { st } = fresh();
+    await st.insertLots([{ item_slug: 'atta-ajwain', lot_code: 'MNGA-261027-01', bake_date: '2026-10-27', best_before: '2027-01-25', status: 'released' },
+      { item_slug: 'atta-lite-sugar', lot_code: '27OCT26', bake_date: '2026-10-27', best_before: '2027-01-25', status: 'released' },
+      { item_slug: 'atta-original', lot_code: 'MNGO-261101-01', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'released', supplier_batch: 'KB/27/OCT' }]);
+    const L = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    const c = (r) => r.lots.map((x) => x.code);
+    eq(c(await L.search('27')), ['MNGO-261101-01', '27OCT26', 'MNGA-261027-01'], 'typing 27: the two that start with 27 (a code, and a supplier batch part after a slash; flavour order inside the group) rank above MNGA-261027-01, which only contains it');
+    eq(c(await L.search('261027')), ['MNGA-261027-01'], 'contains matching still finds MNGA-261027-01 for 261027 (a part after a hyphen starts with it)');
+    eq(c(await L.search('6102')), ['MNGA-261027-01'], 'a mid-part match is still found (contains)');
+    eq(c(await L.search('mnga')), ['MNGA-261027-01'], 'a prefix at the very start');
   }
 
   // Cost: one world read per search, and only the matching sale rows come back from the store
@@ -1308,8 +1330,10 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq([st.saleCalls.length, st.saleCalls[0] && st.saleCalls[0].n], [1, 0], 'a query that matches no order brings back zero sale rows');
     reset(); await L.search('aaaa');
     eq(st.saleCalls.map((x) => ({ q: x.q, n: x.n })), [{ q: 'AAAA', n: 1 }], 'only the matching order\'s rows come back (the other order is not read)');
-    reset(); await L.search('QQ');
-    eq(st.saleCalls.map((x) => ({ q: x.q, n: x.n })), [{ q: 'QQ', n: 2 }], 'a pack and its undo share a ref and both come back, so the undo rule still works');
+    reset(); await L.search('QQQ');
+    eq(st.saleCalls.map((x) => ({ q: x.q, n: x.n })), [{ q: 'QQQ', n: 2 }], 'a pack and its undo share a ref and both come back, so the undo rule still works (3 characters: the order read runs)');
+    reset(); const q2 = await L.search('QQ');
+    eq([st.saleCalls.length, q2.more], [0, true], 'under 3 letters or digits the order-ID read is skipped and the answer says more: true');
     eq(await L.search('qqqq'), { none: true }, 'the undone order gives no lot');
     eq((await st.saleRowsMatching('MNGAAAA')).rows.length, 1, 'separators in the stored ref are allowed between the typed letters');
     eq((await st.saleRowsMatching('2026')).rows.length, 0, 'the time after the @ is never matched');
