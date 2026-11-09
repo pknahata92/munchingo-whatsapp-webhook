@@ -75,6 +75,20 @@ const bp = (total, d) => Math.floor((total * (1 - d) + 1) / 10) * 10 - 1;
   ok(b['trio-gift-set'].price === 739 && b['trio-gift-set'].mrp === null && b['full-range-set'].price === 989, 'book with live table follows the rule');
   ok(!JSON.stringify(b).includes('promo'), 'no promo key anywhere (table on)');
 
+  // the order email's set block prices come from the box rule at send time, never a literal (it said 739 before)
+  const emailText = () => require('../utils/emailTemplates').shell({ title: 't', body: '', promo: 'full' })
+    .replace(/&#8377;/g, '₹').replace(/&middot;/g, '·').replace(/&#8599;/g, '↗').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  stubPrices(null);
+  let em = emailText();
+  ok(em.includes('from ₹749') && em.includes('Trio Set · any 3 Flavors'), 'email: Trio "from ₹749" with "Trio Set · any 3 Flavors": ' + (em.match(/.{0,40}Trio.{0,40}/) || [''])[0]);
+  ok(em.includes('₹999') && em.includes('Full Range Set · all 4'), 'email: Full Range ₹999 with "Full Range Set · all 4"');
+  ok(!em.includes('739'), 'email: never 739 on the built-in prices');
+  ok(em.includes('Pick a set, fill it with their favourite Flavors and add a note in your own words.') && !/gift set/i.test(em), 'email: "Pick a set ... Flavors", no "gift set": ' + (em.match(/Pick a.{0,80}/) || [''])[0]);
+  ok(/href="https:\/\/munchingo\.com\/build-a-box"/.test(require('../utils/emailTemplates').shell({ title: 't', body: '', promo: 'full' })), 'email: the set block links to /build-a-box');
+  stubPrices({ 'atta-original': { price: 249, mrp: 300 }, 'atta-ajwain': { price: 259, mrp: 300 }, 'atta-kesari': { price: 299, mrp: 350 }, 'atta-lite-sugar': { price: 329, mrp: 350 } });
+  em = emailText();
+  ok(em.includes('from ₹739') && em.includes('₹989'), 'email: follows a live single-price change (Original 249: from ₹739, Full Range ₹989)');
+
   // /api/prices
   stubPrices(null);
   const express = require('express');

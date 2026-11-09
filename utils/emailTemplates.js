@@ -32,22 +32,26 @@ function button(href, label, style = 'solid') {
 }
 
 // ── Gift block ────────────────────────────────────────────────────────────────
+// The set prices come from the box rule at send time (catalog.priceBook: the Trio "from" its cheapest mix, the Full Range its
+// rule price), never a typed number: a hard-coded Trio price went stale when the rule changed (it said 739).
 function giftBlock() {
+  const book = require('./catalog').priceBook();
+  const trioFrom = book['trio-gift-set'].price, fullRange = book['full-range-set'].price;
   return `
   <tr><td style="padding:8px 28px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.navy};border-radius:16px;">
       <tr><td style="padding:28px 26px;text-align:center;">
         <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:${C.gold};">Love it? Pass it on</div>
         <div style="font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.2;color:#FFF9EC;margin:10px 0 8px;">Somebody you love deserves a box too.</div>
-        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a gift set, fill it with their favourite flavours and add a note in your own words. We bake it in Bikaner and deliver it straight to their doorstep, anywhere in India.</div>
+        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a set, fill it with their favourite Flavors and add a note in your own words. We bake it in Bikaner and deliver it straight to their doorstep, anywhere in India.</div>
         <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;">
           <tr>
-            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">${inr(739)}</b><br>Trio set &middot; any 3 flavours</td>
+            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">from ${inr(trioFrom)}</b><br>Trio Set &middot; any 3 Flavors</td>
             <td width="12"></td>
-            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">${inr(999)}</b><br>Full Range &middot; all 4</td>
+            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">${inr(fullRange)}</b><br>Full Range Set &middot; all 4</td>
           </tr>
         </table>
-        <a href="${SITE}/gifting.html#gifting" style="display:inline-block;background:${C.gold};color:${C.navy};font-family:${FONT};font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;padding:14px 30px;border-radius:999px;">Build a gift set &#8599;</a>
+        <a href="${SITE}/build-a-box" style="display:inline-block;background:${C.gold};color:${C.navy};font-family:${FONT};font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;padding:14px 30px;border-radius:999px;">Build a set &#8599;</a>
       </td></tr>
     </table>
   </td></tr>`;
@@ -321,12 +325,12 @@ function deliveredHtml({ order }) {
 function reviewRequestHtml({ order, url, founders }) {
   const first = String(order.customer_name || 'there').trim().split(/\s+/)[0];
   const line = founders
-    ? `You bought Munchingo before it had a single review, a following or a track record. Just my word. That's trust, and I know it. So please be a terrible critic: what's off and what's amazing, no sugar coating. Tap below to rate each flavor from order ${esc(order.order_id)}. You're already our guinea pig for every future launch, free.<br><br>Love, Prashant`
-    : `Your Munchingo box (order ${esc(order.order_id)}) arrived a few days ago. How were the cookies? Tap below to rate each flavor. It takes about 20 seconds, and honest is more useful to us than nice.`;
+    ? `You bought Munchingo before it had a single review, a following or a track record. Just my word. That's trust, and I know it. So please be a terrible critic: what's off and what's amazing, no sugar coating. Tap below to rate each Flavor from order ${esc(order.order_id)}. You're already our guinea pig for every future launch, free.<br><br>Love, Prashant`
+    : `Your Munchingo box (order ${esc(order.order_id)}) arrived a few days ago. How were the cookies? Tap below to rate each Flavor. It takes about 20 seconds, and honest is more useful to us than nice.`;
   const body = card(`
     <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">${line}</div>
     <div style="text-align:center;padding:22px 0 4px;">${button(url, 'Rate your box')}</div>`);
-  return shell({ preheader: 'How were the cookies? Rate each flavor in about 20 seconds.', title: `How was your box, ${esc(first)}?`, subtitle: 'Honest is more useful to us than nice.', body, promo: 'none', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean) });
+  return shell({ preheader: 'How were the cookies? Rate each Flavor in about 20 seconds.', title: `How was your box, ${esc(first)}?`, subtitle: 'Honest is more useful to us than nice.', body, promo: 'none', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean) });
 }
 
 // ── Owner: refund processed (with credit note) ───────────────────────────────

@@ -74,8 +74,8 @@ function validateSubmission(order, body) {
   const wanted = flavoursFor(order).map((f) => f.slug);
   if (!wanted.length) return fail('There is nothing to rate in this order.');
   const given = b.ratings && typeof b.ratings === 'object' ? b.ratings : {};
-  if (Object.keys(given).some((k) => !wanted.includes(k))) return fail('That flavor is not in this order.');
-  if (wanted.some((k) => !(k in given))) return fail('Please rate every flavor.');
+  if (Object.keys(given).some((k) => !wanted.includes(k))) return fail('That Flavor is not in this order.');
+  if (wanted.some((k) => !(k in given))) return fail('Please rate every Flavor.');
   for (const k of wanted) {
     const v = given[k];
     if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 5) return fail('Ratings are 1 to 5 stars.');

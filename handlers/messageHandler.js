@@ -208,7 +208,7 @@ async function sendIngredients(to) {
       `✅ Pure desi ghee — no palm oil, no refined oils\n` +
       `✅ No maida / refined flour\n` +
       `✅ No trans fat\n\n` +
-      `Full ingredient list per flavour:\n` +
+      `Full ingredient list per Flavor:\n` +
       `• *Original* — whole wheat atta, sugar, desi cow ghee, milk solids, glucose, raising agent, cardamom\n` +
       `• *Kesari* — same as Original, plus real saffron (kesar)\n` +
       `• *Sugar-Lite* — whole wheat atta, desi cow ghee, sweetener (maltitol), milk solids, cardamom, raising agent — *no added sugar*\n` +

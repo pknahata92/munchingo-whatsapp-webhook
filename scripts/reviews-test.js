@@ -31,9 +31,9 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   let v = r.validateSubmission(order, good);
   ok(v.ok && v.row.order_id === 'MNG-AB12-2210' && v.row.ratings['atta-kesari'] === 4 && v.row.display_name === 'Riya' && v.row.city === 'Mumbai' && v.row.consent_publish === true && v.row.customer_phone === '919810000001', 'a complete review is accepted with first name and city (' + JSON.stringify(v.row || v) + ')');
   v = r.validateSubmission(order, { ...good, ratings: { 'atta-original': 5, 'atta-kesari': 4 } });
-  ok(!v.ok && v.status === 400 && /Please rate every flavor/.test(v.error), 'a missing flavour is refused');
+  ok(!v.ok && v.status === 400 && v.error === 'Please rate every Flavor.', 'a missing flavour is refused (Flavor capitalised): ' + v.error);
   v = r.validateSubmission(order, { ...good, ratings: { ...good.ratings, 'atta-ajwain': 5 } });
-  ok(!v.ok && v.status === 400, 'a flavour not in the order is refused');
+  ok(!v.ok && v.status === 400 && v.error === 'That Flavor is not in this order.', 'a flavour not in the order is refused (Flavor capitalised): ' + v.error);
   for (const bad of [0, 6, 4.5, '5', null]) { v = r.validateSubmission(order, { ...good, ratings: { ...good.ratings, 'atta-original': bad } }); ok(!v.ok && v.status === 400, 'rating ' + JSON.stringify(bad) + ' is refused'); }
   v = r.validateSubmission(order, { ...good, comment: 'x'.repeat(501) });
   ok(!v.ok && v.status === 400, 'a comment over 500 characters is refused');

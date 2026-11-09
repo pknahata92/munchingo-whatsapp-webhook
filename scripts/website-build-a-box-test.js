@@ -1,6 +1,6 @@
 'use strict';
 // Build-a-Box (9 Nov 2026): Full Range first and selected; Trio priced per mix; the panel compares with the SAME singles' web
-// prices (never MRP); a filled Trio offers a step-up to the Full Range; gift boxes ship free; Trio JSON-LD is an AggregateOffer.
+// prices (never MRP); a filled Trio offers a step-up to the Full Range; sets ship free; Trio JSON-LD is an AggregateOffer.
 //   SITE_DIR=../munchingo-website-box-pricing node scripts/website-build-a-box-test.js
 const fs = require('fs'), path = require('path');
 let JSDOM, ResourceLoader;
@@ -38,11 +38,26 @@ async function open(soldOut = [], book = null) {
   ['Try all four', 'One of each · 1kg', 'BEST VALUE'].forEach((s) => ok(text(opts[0]).includes(s), 'Full Range option says "' + s + '": ' + text(opts[0])));
   ['Pick any 3', 'from ₹749', 'PICK & MIX'].forEach((s) => ok(text(opts[1]).includes(s), 'Trio option says "' + s + '": ' + text(opts[1])));
 
+  // ---- wording after Diwali (Prashant, 9 Nov): Trio Set / Full Range Set, no "gift", Flavors capitalised ----
+  ok(text(opts[0].querySelector('b')) === 'Full Range Set' && text(opts[1].querySelector('b')) === 'Trio Set', 'options are named Full Range Set and Trio Set: ' + text(opts[0].querySelector('b')) + ' / ' + text(opts[1].querySelector('b')));
+  ok(d.querySelector('.gb-opts').getAttribute('aria-label') === 'Set size', 'the option group is labelled Set size');
+  ok(text(d.querySelector('.gb-k')) === 'Your set', 'panel heading Your set');
+  ok(text(g('notelink')) === 'Add a note', 'note link Add a note');
+  const noteTa = d.querySelector('[data-gb="note"] textarea');
+  ok(noteTa.getAttribute('placeholder') === 'e.g. Happy birthday, love Priya' && noteTa.getAttribute('aria-label') === 'Note', 'note example and label: ' + noteTa.getAttribute('placeholder') + ' / ' + noteTa.getAttribute('aria-label'));
+  ok(text(d.querySelector('[data-gb-step2]')) === 'Filled with all four Flavors', 'step 2 for the Full Range: Filled with all four Flavors');
+  ok(text(g('great')) === '✦ Great choice — every Flavor, already in the box.', 'Full Range note: every Flavor');
+  ok(text(g('cta')) === 'Add set to bag →', 'button Add set to bag →: ' + text(g('cta')));
+  ok(text(g('ship')) === 'Trio and Full Range ship free', 'ship line Trio and Full Range ship free');
+  ok(!/gift/i.test(text(d.querySelector('.gb-panel')).replace(/🎁/g, '')) && !/gift/i.test(text(d.querySelector('[data-gb-left]'))), 'no "gift" wording left in the builder: ' + text(d.querySelector('.gb-panel')));
+  ok(d.title === 'Build a Box: Trio and Full Range Sets | Munchingo', 'page title: ' + d.title);
+  ok(d.querySelector('meta[property="og:title"]').content === 'Cookie box: any 3 or all 4 Flavors | Munchingo', 'og:title: ' + d.querySelector('meta[property="og:title"]').content);
+
   // ---- Full Range ----
   ok(text(g('tot')) === '₹999', 'Full Range total 999, got ' + text(g('tot')));
   ok(panel().includes('Same boxes as singles ₹1,146'), 'Full Range: same boxes as singles ₹1,146');
   ok(panel().includes('You save ₹147'), 'Full Range: you save ₹147');
-  ok(panel().includes('Gift boxes ship free'), 'Full Range: gift boxes ship free');
+  ok(panel().includes('Trio and Full Range ship free') && !/Gift boxes/i.test(panel()), 'Full Range: Trio and Full Range ship free');
   // saving rows: label cell on the left, amount alone in the value cell (lines up with the Total column)
   const rowCells = (n) => [...g(n).closest('.gb-row').children].map(text);
   ok(rowCells('cmp').join('|') === 'Same boxes as singles|₹1,146' && text(g('cmp')) === '₹1,146', 'Full Range: compare row is label cell + amount cell: ' + rowCells('cmp').join('|'));
@@ -54,10 +69,11 @@ async function open(soldOut = [], book = null) {
   // ---- Trio O+A+K ----
   click(opts[1]); await wait(50);
   ok(opts[1].getAttribute('aria-checked') === 'true', 'Trio selects');
+  ok(text(d.querySelector('[data-gb-step2]')) === 'Fill it with any 3 Flavors', 'step 2 for the Trio: Fill it with any 3 Flavors');
   ['Original', 'Ajwain', 'Kesari'].forEach((v) => click(tile(v))); await wait(50);
   ok(text(g('tot')) === '₹749', 'Trio O+A+K total 749, got ' + text(g('tot')));
   ok(panel().includes('Same boxes as singles ₹817') && panel().includes('You save ₹68'), 'Trio O+A+K: singles ₹817, save ₹68: ' + panel());
-  ok(panel().includes('Gift boxes ship free'), 'Trio: gift boxes ship free');
+  ok(panel().includes('Trio and Full Range ship free'), 'Trio: Trio and Full Range ship free');
   ok(visible(g('stepup')) && text(g('stepup')).includes('Add the 4th Flavor for ₹250 more'), 'Trio O+A+K: step-up ₹250 more: ' + text(g('stepup')));
   ok(!/MRP/i.test(panel()), 'Trio: no MRP');
 
@@ -65,6 +81,7 @@ async function open(soldOut = [], book = null) {
   click(g('cta')); await wait(50);
   let lines = cartLines();
   ok(lines.length === 1 && lines[0].slug === 'trio-gift-set-ajwain-kesari-original' && lines[0].price === 749, 'cart has the canonical Trio slug at 749: ' + JSON.stringify(lines));
+  ok(lines[0].name === 'Trio Set (Original, Kesari, Ajwain)' && lines[0].unit === '750g, 3 Flavors', 'the bag line reads Trio Set (Original, Kesari, Ajwain), 750g, 3 Flavors: ' + lines[0].name + ' / ' + lines[0].unit);
 
   // ---- Trio K+SL+O ----
   click(tile('Ajwain')); click(tile('Lite-sugar')); await wait(50);
@@ -83,7 +100,7 @@ async function open(soldOut = [], book = null) {
   ok(d.querySelectorAll('.gb-slot.full').length === 4, 'all four slots filled');
   click(g('cta')); await wait(50);
   lines = cartLines();
-  ok(lines.some((l) => l.slug === 'full-range-set' && l.price === 999), 'Full Range added at 999: ' + JSON.stringify(lines));
+  ok(lines.some((l) => l.slug === 'full-range-set' && l.price === 999 && l.name === 'Full Range Set'), 'Full Range Set added at 999: ' + JSON.stringify(lines));
 
   // step-up button wording (a filled Trio)
   click(opts[1]); await wait(50); ['Original', 'Ajwain', 'Kesari'].forEach((v) => click(tile(v))); await wait(50);
@@ -98,6 +115,7 @@ async function open(soldOut = [], book = null) {
   const ld = JSON.parse([...d.querySelectorAll('script[type="application/ld+json"]')].map((s) => s.textContent).find((t) => /trio-gift-set/.test(t)));
   const prod = (sku) => ld['@graph'].find((n) => n.sku === sku);
   const t = prod('trio-gift-set').offers, f = prod('full-range-set').offers;
+  ok(prod('trio-gift-set').name === 'Munchingo Trio Set' && prod('full-range-set').name === 'Munchingo Full Range Set', 'JSON-LD names: ' + prod('trio-gift-set').name + ' / ' + prod('full-range-set').name);
   ok(t['@type'] === 'AggregateOffer' && t.lowPrice === '749' && t.highPrice === '809' && t.priceCurrency === 'INR', 'Trio JSON-LD AggregateOffer 749-809: ' + JSON.stringify(t));
   ok(/schema.org\/(In|Out)Stock/.test(t.availability) && !('price' in t), 'Trio JSON-LD keeps availability, no flat price');
   ok(f.price === '999' && /schema.org\/InStock/.test(f.availability), 'Full Range JSON-LD price 999');
@@ -132,6 +150,14 @@ async function open(soldOut = [], book = null) {
     const dd = await open(out); const dc = dd.window.document;
     ok(dc.querySelector('.gb-opt[data-size="3"]').getAttribute('aria-checked') === 'true' && dc.querySelector('.gb-opt[data-size="4"]').getAttribute('aria-checked') === 'false', why + ': opens with the Trio selected');
     ok(!/Full Range returns soon/.test(text(dc.querySelector('[data-gb="cta"]'))), why + ': button is not "Full Range returns soon"');
+    dd.window.close();
+  }
+
+  // ---- B4: "from ₹X" is the lowest Trio that can be built from the Flavors in stock ----
+  for (const [out, want, why] of [[['atta-ajwain'], '₹809', 'Ajwain out: only O+K+SL'], [['atta-kesari'], '₹779', 'Kesari out: only O+A+SL'], [['atta-original'], '₹809', 'Original out: only A+K+SL'], [['atta-lite-sugar'], '₹749', 'Sugar-Lite out: O+A+K still buildable']]) {
+    const dd = await open(out); const dc = dd.window.document;
+    const from = text(dc.querySelector('[data-gb-from]'));
+    ok(from === want, 'B4 ' + why + ': Trio option says from ' + want + ', got ' + from);
     dd.window.close();
   }
 

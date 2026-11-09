@@ -49,9 +49,82 @@ for (const f of pages.concat(jsFiles)) {
 for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html']) ok(text(doc(f).querySelector('.v2-bundle')).includes('Mix any 3 boxes from ₹749') && !/for ₹749/.test(text(doc(f).querySelector('.v2-bundle'))), f + ': bundle line says Mix any 3 boxes from ₹749');
 for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html'])
   ok(read(f).includes('(the Trio is from ₹749)'), f + ': (the Trio is from ₹749)');
-ok(read('maida-free-cookies-guide.html').includes('gift sets</a> start at ₹749'), 'maida guide: gift sets start at ₹749');
+ok(read('maida-free-cookies-guide.html').includes('our <a href="build-a-box.html">sets</a> start at ₹749'), 'maida guide: our sets start at ₹749');
 for (const f of ['corporate-gifting.html', 'contact.html']) ok(/20 boxes/.test(read(f)), f + ': says 20 boxes');
 ok(/from 20 boxes/.test(read('js/cart.js')), 'cart.js search index says from 20 boxes');
+
+
+// ---- Final wave, 9 Nov 2026 (Prashant): top bar, note example, Trio Set / Full Range Set, Flavors capitalised ----
+const topBar = pages.filter((f) => read(f).includes('<span>Start with any two Flavors</span>'));
+ok(topBar.length >= 16, 'the top bar is on ' + topBar.length + ' pages');
+for (const f of topBar) {
+  const s = read(f);
+  ok((s.match(/<span>Trio and Full Range ship free<\/span>/g) || []).length === 1 && (s.match(/<span aria-hidden="true">Trio and Full Range ship free<\/span>/g) || []).length === 1, f + ': top bar says Trio and Full Range ship free (visible span and aria-hidden duplicate)');
+}
+for (const f of pages.concat(jsFiles, ['data/products.js'])) ok(!/Diwali/.test(read(f)), f + ': no Diwali');
+ok(read('cart.html').includes('placeholder="e.g. Happy birthday, love Priya"') && read('checkout.html').includes('placeholder="e.g. Happy birthday, love Priya"') && read('js/gift-builder.js').includes('placeholder="e.g. Happy birthday, love Priya"'), 'note example: e.g. Happy birthday, love Priya (cart, checkout, builder)');
+ok(/<label for="cart-gift-note">Add a note <span>\(optional\)<\/span><\/label>/.test(read('cart.html')), 'cart: Add a note (optional)');
+ok(read('checkout.html').includes('id="ck-gift-toggle">🎁 Add a note</button>') && read('checkout.html').includes('<label for="ck-gift-note">Note</label>'), 'checkout: Add a note / Note');
+// set names and "gift" wording
+// code comments, and the regexes that rename old saved bag lines, may still name the old sets; nothing a visitor reads does
+const noComments = (f, s) => (f.endsWith('.js') ? s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1') : s.replace(/<!--[\s\S]*?-->/g, ''));
+for (const f of pages.concat(jsFiles, ['data/products.js'])) {
+  const s = noComments(f, read(f));
+  ok(!/Trio Gift Set|Full Range Gift Set/i.test(s.replace(/\/\^?Trio Gift Set[^/]*\/|\/\^?Full Range Gift Set[^/]*\//g, '')), f + ': no "Trio Gift Set" / "Full Range Gift Set"');
+  ok(!/Gift boxes ship free/i.test(s), f + ': no "Gift boxes ship free"');
+}
+{
+  const d = doc('index.html');
+  ok(text(d.querySelector('#gifts .eyebrow')) === 'Trio and Full Range', 'home eyebrow: Trio and Full Range');
+  ok(text(d.querySelector('.v2-hero-gift')) === 'Build a box ↗', 'home hero link: Build a box ↗');
+  ok(d.querySelector('.v2-front img').getAttribute('alt') === 'All four Munchingo atta cookie boxes with a bowl of cookies', 'home hero alt: with a bowl of cookies');
+  ok([...doc('404.html').querySelectorAll('.v2-ctas a')].some((a) => text(a) === 'Build a box ↗'), '404 hero link: Build a box ↗');
+  const b = doc('build-a-box.html');
+  ok(b.title === 'Build a Box: Trio and Full Range Sets | Munchingo', 'build-a-box <title>');
+  ok(b.querySelector('meta[property="og:title"]').content === 'Cookie box: any 3 or all 4 Flavors | Munchingo', 'build-a-box og:title');
+  ok(b.querySelector('meta[name="twitter:title"]').content === 'Build a Box: Trio and Full Range Sets | Munchingo', 'build-a-box twitter:title follows the new <title>');
+  const shopLd = JSON.parse(doc('shop.html').querySelector('script[type="application/ld+json"]').textContent);
+  ok(JSON.stringify(shopLd).includes('"name":"Trio Set"') && JSON.stringify(shopLd).includes('"name":"Full Range Set"'), 'shop JSON-LD: Trio Set / Full Range Set');
+}
+for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html']) {
+  const s = read(f);
+  ok(s.includes('in every <b>Full Range Set</b>') && s.includes('A set works too (the Trio is from ₹749).') && s.includes('Or build a set →'), f + ': Full Range Set / A set works too / Or build a set');
+}
+ok(read('our-story.html').includes('pick a <a href="index.html#gifts">set</a> for someone you grew up with'), 'our story: pick a set');
+// Flavors: the search box on every page, and no lowercase or British "flavor(s)" in what a visitor reads
+const searchPages = pages.filter((f) => /data-search-input/.test(read(f)));
+ok(searchPages.length >= 18, 'search box on ' + searchPages.length + ' pages');
+for (const f of searchPages) ok(read(f).includes('placeholder="Search Flavors, boxes, FAQs..."'), f + ': search placeholder says Flavors');
+const visible = (f) => {
+  const d = doc(f), parts = [];
+  d.querySelectorAll('script[type="application/ld+json"]').forEach((e) => parts.push(e.textContent));
+  d.querySelectorAll('script:not([type="application/ld+json"]),style,noscript').forEach((e) => e.remove());
+  parts.push(d.body ? d.body.textContent : '');
+  d.querySelectorAll('[placeholder],[alt],[aria-label],[title],meta[content]').forEach((e) => ['placeholder', 'alt', 'aria-label', 'title', 'content'].forEach((a) => e.getAttribute(a) && parts.push(e.getAttribute(a))));
+  d.querySelectorAll('a[href]').forEach((a) => { try { parts.push(decodeURIComponent(a.getAttribute('href'))); } catch (e) { /* not encoded */ } });
+  parts.push(d.title);
+  return parts.join(' \n ');
+};
+for (const f of pages) {
+  const v = visible(f), bad = v.match(/.{0,30}(\bflavou?rs?\b|\bFlavours?\b).{0,20}/g);
+  ok(!bad, f + ': Flavor(s) capitalised in visitor text' + (bad ? ': ' + bad.slice(0, 3).join(' | ') : ''));
+}
+ok(read('data/products.js').includes('Every other Flavor builds on this one.') && (read('data/products.js').match(/our other Flavors/g) || []).length === 2, 'data/products.js descriptions: Flavor(s)');
+ok(read('js/review.js').includes("'Rate each Flavor. Honest is more useful to us than nice.'"), 'review page: Rate each Flavor.');
+ok(read('js/stall.js').includes("': which Flavors?'"), 'stall: which Flavors?');
+// B2: retired promo CSS gone
+ok(!/\.was-price|\.promo-note|Pre-Diwali gift set offer note/.test(read('css/style.css')), 'style.css: no .was-price / .promo-note / Pre-Diwali offer comment');
+// B3: prices.js on the six pages that load the bag but did not re-price it, before cart.js
+for (const f of ['about.html', 'contact.html', 'terms.html', 'privacy-policy.html', 'our-story.html', 'maida-free-cookies-guide.html']) {
+  const s = read(f), pi = s.indexOf('<script src="js/prices.js?v=9"></script>'), ci = s.indexOf('<script src="js/cart.js?v=43"');
+  ok(pi > 0 && ci > pi, f + ': prices.js v9 loads before cart.js');
+}
+// cache numbers: every page on one number per file
+const versions = {};
+for (const f of pages) for (const m of read(f).matchAll(/(?:src|href)="((?:js|css|data)\/[a-z0-9-]+\.(?:js|css))\?v=(\d+)"/g)) (versions[m[1]] = versions[m[1]] || new Set()).add(m[2]);
+for (const [file, set] of Object.entries(versions)) ok(set.size === 1, file + ' is loaded at one version on every page: ' + [...set].join(','));
+ok(versions['data/products.js'] && [...versions['data/products.js']][0] === '7', 'data/products.js is v7');
+ok(versions['js/review.js'] && [...versions['js/review.js']][0] === '2', 'js/review.js is v2');
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

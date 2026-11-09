@@ -1236,9 +1236,13 @@ header small{color:var(--ink2);opacity:1}
         : h('p', { class: 'note' }, 'Price control is not switched on yet, so the shop still uses its built-in prices. Run product_prices_migration.sql in Supabase first.');
       var rows = j.rows.map(function (r) {
         if (r.derived) {
-          var mixes = r.byMix ? Object.keys(r.byMix).map(function (k) { return k.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(' ') + ' ₹' + r.byMix[k]; }) : [];
+          // Mix keys are the Trio slug's tokens ("kesari-lite-sugar-original"); "lite-sugar" holds a hyphen, so match the known tokens
+          // and print the Flavor names in site order, joined by " + ", with Indian number format. A missing price is left out.
+          var MIX_NAMES = [['original', 'Original'], ['kesari', 'Kesari'], ['lite-sugar', 'Sugar-Lite'], ['ajwain', 'Ajwain']];
+          var mixLabel = function (k) { var p = '-' + k + '-'; return MIX_NAMES.filter(function (t) { return p.indexOf('-' + t[0] + '-') >= 0; }).map(function (t) { return t[1]; }).join(' + '); };
+          var mixes = r.byMix ? Object.keys(r.byMix).filter(function (k) { return r.byMix[k] != null; }).map(function (k) { return mixLabel(k) + ' ' + inr(r.byMix[k]); }) : [];
           return h('div', { class: 'sw', style: 'flex-direction:column;align-items:stretch' }, h('b', {}, r.name),
-            h('div', {}, (r.byMix ? 'From ₹' : '₹') + r.price),
+            r.price == null ? null : h('div', {}, (r.byMix ? 'From ' : '') + inr(r.price)),
             mixes.length ? h('small', { class: 'muted' }, mixes.join(' · ')) : null,
             h('small', { class: 'muted' }, r.label));
         }

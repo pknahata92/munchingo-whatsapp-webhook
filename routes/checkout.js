@@ -70,7 +70,7 @@ function normaliseItems(cartItems) {
                 return { error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' };
           }
           if (typeof c.slug === 'string' && c.slug.startsWith('trio-gift-set') && !isValidTrioSlug(c.slug)) {
-                return { error: 'A Trio Gift Set holds 3 different flavours. Please rebuild it from the gift set picker and try again.' };
+                return { error: 'A Trio Set holds 3 different Flavors. Please rebuild it from the set picker and try again.' };
           }
           if (!isAvailable(c.slug)) {
                 return { error: `Sorry, "${nameForSlug(c.slug)}" is currently sold out. Please remove it from your cart and try again.` };

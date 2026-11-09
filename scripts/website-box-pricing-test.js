@@ -116,7 +116,7 @@ ok(C.cartTotal() === 518 && C.cartShipping() === 49, '2 singles (518): shipping 
 ok(textOf(C.renderAovProgressHtml(C.getCart())).indexOf('Add one more box and it ships free (free shipping from ₹777).') >= 0, '2 singles: one more box nudge, exact sentence');
 w = load({ book: SINGLES, rule: RULE, cart: [line(OAK, 749)] }); C = w.MunchingoCart;
 ok(C.cartTotal() === 749 && C.cartShipping() === 0 && C.cartPayable() === 749, 'the 749 box alone: shipping 0');
-ok(/Gift boxes ship free/.test(textOf(C.renderAovProgressHtml(C.getCart()))), 'a gift box says Gift boxes ship free');
+ok(textOf(C.renderAovProgressHtml(C.getCart())).indexOf("Trio and Full Range ship free \u2713 you're all set") === 0 && !/Gift boxes/.test(C.renderAovProgressHtml(C.getCart())), 'a set says Trio and Full Range ship free ✓ you\'re all set: ' + textOf(C.renderAovProgressHtml(C.getCart())));
 ok(C.shippingFor(518, false) === 49 && C.shippingFor(777, false) === 0 && C.shippingFor(749, true) === 0 && C.shippingFor(100, true) === 0, 'shippingFor mirrors the backend');
 w = load({ book: SINGLES, rule: RULE, cart: [line('atta-original', 259, 3)] }); C = w.MunchingoCart;
 ok(C.cartShipping() === 0, '3 singles at 777: free');
@@ -124,6 +124,22 @@ w = load({ book: SINGLES, rule: RULE, cart: [line('atta-original', 259), line(OA
 ok(C.cartShipping() === 0, 'a gift box plus a single ships free');
 w = load({ book: SINGLES, rule: RULE }); w.MunchingoCart.addToCart({ slug: 'atta-original', name: 'o', price: 259, unit: 'x' }); w.MunchingoCart.addToCart({ slug: 'atta-ajwain', name: 'a', price: 259, unit: 'x' }); w.MunchingoCart.addToCart({ slug: 'atta-kesari', name: 'k', price: 299, unit: 'x' });
 ok(w.MunchingoCart.getCart().length === 3 && w.MunchingoCart.autoPackOfFour === undefined, 'adding singles never swaps the bag');
+
+// ---- set lines saved before 9 Nov read with today's names (Trio Set / Full Range Set, 3 Flavors) ----
+w = load({ book: SINGLES, rule: RULE, cart: [{ slug: OAK, name: 'Trio Gift Set (Original, Kesari, Ajwain)', price: 799, unit: '750g, 3 flavors', qty: 1 }, { slug: 'full-range-set', name: 'Full Range Gift Set', price: 999, unit: '1kg, one of each', qty: 1 }, line('atta-original', 259)] }); C = w.MunchingoCart;
+const relabelled = C.getCart();
+ok(relabelled[0].name === 'Trio Set (Original, Kesari, Ajwain)' && relabelled[0].unit === '750g, 3 Flavors' && relabelled[0].price === 749, 'a saved Trio line reads Trio Set (…), 750g, 3 Flavors, at 749: ' + JSON.stringify(relabelled[0]));
+ok(relabelled[1].name === 'Full Range Set' && relabelled[2].name === 'atta-original', 'a saved Full Range line reads Full Range Set; singles keep their names');
+// lines the bag itself creates use the new names
+w = load({ book: SINGLES, rule: RULE, cart: [line('atta-original', 259), line('atta-ajwain', 259), line('atta-kesari', 299)] }); C = w.MunchingoCart; C.acceptSuggestion();
+ok(C.getCart()[0].name === 'Trio Set (Original, Kesari, Ajwain)' && C.getCart()[0].unit === '750g, 3 Flavors', 'a Trio made in the bag is named Trio Set (Original, Kesari, Ajwain): ' + C.getCart()[0].name);
+w = load({ book: SINGLES, rule: RULE, cart: [line('atta-original', 259), line('atta-ajwain', 259), line('atta-kesari', 299), line('atta-lite-sugar', 329)] }); C = w.MunchingoCart; C.acceptSuggestion();
+ok(C.getCart()[0].slug === 'full-range-set' && C.getCart()[0].name === 'Full Range Set', 'a Full Range made in the bag is named Full Range Set');
+// the search index: no gift-set names, Flavors capitalised (cart.js source)
+const cartSrc = fs.readFileSync(path.join(SITE, 'js/cart.js'), 'utf8');
+ok(cartSrc.includes("{ title: 'The Trio Set', desc: 'Choose any 3 of 4 Flavors, 250g each.', type: 'Set', url: 'build-a-box.html' }") && cartSrc.includes("{ title: 'The Full Range Set', desc: 'One of each Flavor, 1kg total, 4 boxes.', type: 'Set', url: 'build-a-box.html' }"), 'search index: The Trio Set / The Full Range Set, type Set, Flavors');
+ok(!/name: 'Trio Gift Set|name: 'Full Range Gift Set|'Gift Set'|'The Trio Gift Set'|'The Full Range Gift Set'|"gift set"|Gift boxes ship free/.test(cartSrc), 'cart.js has no gift-set names, type, hints or ship line left');
+ok(cartSrc.includes('Try a Flavor name'), 'search hint: Try a Flavor name');
 
 // ---- pages: nothing promo is visible ----
 class Local extends ResourceLoader { fetch(url) { const u = new URL(url); if (u.hostname !== 'localhost') return Promise.resolve(Buffer.from('')); const f = path.join(SITE, decodeURIComponent(u.pathname)); return Promise.resolve(fs.existsSync(f) ? fs.readFileSync(f) : Buffer.from('')); } }
@@ -142,6 +158,22 @@ async function page(file) {
     ok(shown.length === 0, f + ': no promo or was-price element is visible (' + shown.length + ')');
     const sets = Array.from(d.querySelectorAll('[data-price-for="trio-gift-set"],[data-price-for="full-range-set"]')).map((e) => e.textContent.trim());
     ok(sets.length > 0 && sets.every((t) => t === '₹749' || t === '₹999'), f + ': set prices read 749 / 999: ' + sets.join(','));
+  }
+  // B1: the sticky bag bar is full when shipping is free because of a set (not total / 777)
+  {
+    const dom = new JSDOM(fs.readFileSync(path.join(SITE, 'shop.html'), 'utf8'), {
+      url: 'http://localhost/shop.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+      beforeParse(x) { x.localStorage.setItem('munchingo_prices', JSON.stringify(SINGLES)); x.localStorage.setItem('munchingo_box_rule', JSON.stringify(RULE)); x.localStorage.setItem('munchingo_cart', JSON.stringify([line(OAK, 749)])); x.fetch = () => new Promise(() => {}); x.scrollTo = () => {}; x.SVGElement.prototype.getComputedTextLength = () => 100; x.matchMedia = x.matchMedia || (() => ({ matches: false, addEventListener() {}, addListener() {} })); },
+    });
+    await wait(700);
+    const fill = dom.window.document.querySelector('[data-mcb-fill]'), hint = dom.window.document.querySelector('[data-mcb-hint]');
+    ok(fill && fill.style.width === '100%' && hint && hint.textContent === 'Free shipping', 'B1: a ₹749 Trio fills the sticky bar to 100% beside Free shipping: ' + (fill && fill.style.width));
+    const two = new JSDOM(fs.readFileSync(path.join(SITE, 'shop.html'), 'utf8'), {
+      url: 'http://localhost/shop.html', runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+      beforeParse(x) { x.localStorage.setItem('munchingo_prices', JSON.stringify(SINGLES)); x.localStorage.setItem('munchingo_box_rule', JSON.stringify(RULE)); x.localStorage.setItem('munchingo_cart', JSON.stringify([line('atta-original', 259, 2)])); x.fetch = () => new Promise(() => {}); x.scrollTo = () => {}; x.SVGElement.prototype.getComputedTextLength = () => 100; x.matchMedia = x.matchMedia || (() => ({ matches: false, addEventListener() {}, addListener() {} })); },
+    });
+    await wait(700);
+    ok(two.window.document.querySelector('[data-mcb-fill]').style.width === Math.round(518 / 777 * 100) + '%', 'B1: two singles (₹518, ₹49 shipping) still fill to 518/777');
   }
   console.log(`website-box-pricing-test: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
