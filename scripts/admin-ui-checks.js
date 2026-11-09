@@ -1482,10 +1482,11 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const btn = (w, re) => Array.from(w.q('#viewStock').querySelectorAll('button')).find((b) => re.test(w.text(b)));
     const toLots = async (w) => { w.q('#viewStock').textContent = ''; w.click(w.byText('#tabs .tab', /^Stock$/)); await until(() => page(w) === 'Stock' && !!btn(w, /^Lots$/), 5000, 'the stock page'); w.click(btn(w, /^Lots$/)); await until(() => page(w) === 'Lots' && w.qa('#viewStock .lotcard').length > 0, 5000, 'the Lots list'); };
     const found = () => o.qa('#lotFound .lotcard'), foundText = () => o.text(o.q('#lotFound'));
-    const searches = []; const f0 = o.win.fetch; let stub = null;   // stub(q) -> { body, delay } or null to go through
+    const searches = []; const f0 = o.win.fetch; let stub = null, lotFail = null;   // stub(q) -> { body, delay } or null to go through
     o.win.fetch = (u, opt) => {
       const m = /\/stock\/search\?q=([^&]*)/.exec(String(u));
       if (m) { const q = decodeURIComponent(m[1]); searches.push(q); const r = stub && stub(q); if (r) return new Promise((res) => setTimeout(() => res({ status: 200, json: async () => r.body }), r.delay || 0)); }
+      if (lotFail && /\/stock\/lots\/[^/?]+/.test(String(u))) return lotFail === 'net' ? Promise.reject(new TypeError('network down')) : Promise.resolve({ status: 200, json: async () => ({ ok: false, error: 'Could not open the lot.' }) });
       return f0(u, opt);
     };
     await toLots(o);
@@ -1554,6 +1555,15 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await sleep(1200);
     ok(/Sugar-Lite/.test(o.text(o.q('#lotHead'))) && !/Kesari/.test(o.text(o.q('#lotHead'))), 'tapping a card cancels an answer on its way: the tapped lot stays (' + o.text(o.q('#lotHead')) + ')');
     stub = null; await toLots(o);
+    // an exact code whose lot page fails to open: the box says so (never empty), and the page stays Lots
+    for (const mode of ['bad', 'net']) {
+      lotFail = mode;
+      stub = (q) => (q === 'MNGK-261016-01' ? { body: { ok: true, lot: { code: '15OCT26', slug: 'atta-kesari' } } } : null);
+      o.set(o.q('#lotQ'), 'MNGK-261016-01'); o.click(btn(o, /^Find$/));
+      await until(() => /Could not open 15OCT26\. Try again\./.test(foundText()), 4000, 'the open-failed line (' + mode + ')');
+      ok(page(o) === 'Lots' && foundText().trim() !== '' && !/Opening/.test(foundText()), 'a lot page that fails to open (' + mode + ') leaves an error line in the box and stays on Lots (' + foundText() + ')');
+      lotFail = null; stub = null; await toLots(o);
+    }
     // order hits, sticker codes, the cap line and the empty-but-capped answer
     stub = (q) => (q === 'orders' ? { body: { ok: true, more: true, lots: [card('MNGO-261016-01', { orderId: 'MNG-AAAA-1010', boxes: 3, aliases: [] }), card('15OCT26', { slug: 'atta-kesari', name: 'Atta Kesari', aliases: ['MNGK-261016-01', 'MNGK-261017-01', 'OLD1'], status: 'hold', onHand: 0 })] } }
       : q === 'capped' ? { body: { ok: true, lots: [], more: true } } : null);
@@ -1592,17 +1602,17 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
       o.set(o.q('#lotQ'), ''); await sleep(40);
       ok(shown(full()) && shown(throwBtn()) && found().length === 0, 'clearing the box brings the full list and Throw away expired back');
       o.set(o.q('#lotQ'), 'm'); await until(() => found().length > 1, 4000, 'the m list again');
-      o.set(o.q('#lotQ'), ''); o.q('#lotQ').dispatchEvent(new o.win.Event('search', { bubbles: true })); await sleep(40);
-      ok(shown(full()), 'the native clear (a search event) brings the list back');
+      o.q('#lotQ').value = ''; o.q('#lotQ').dispatchEvent(new o.win.Event('search', { bubbles: true })); await sleep(40);   // the native clear "x": a search event only, no input event
+      ok(shown(full()) && found().length === 0, 'the native clear (a search event alone) brings the list back');
       o.set(o.q('#lotQ'), 'zz'); await until(() => /Type more to narrow|Nothing found/.test(foundText()), 4000, 'the zz answer');
       ok(!shown(full()) && !shown(throwBtn()) && found().length === 0 && /Type more to narrow|Nothing found/.test(foundText()), 'zz: only the type-more line shows, no full list');
       o.set(o.q('#lotQ'), 'zzqq'); await until(() => /Nothing found for zzqq/.test(foundText()), 3000, 'the empty answer');
       ok(!shown(full()) && /Nothing found for zzqq/.test(o.text(o.q('#viewStock'))), 'an answer of nothing found keeps the full list hidden');
-      o.set(o.q('#lotQ'), 'mngl'); o.click(btn(o, /^Find$/)); await sleep(20);
-      ok(!shown(full()), 'Find with text hides the full list at once');
-      await until(() => found().length > 0, 4000, 'the Find list');
       await toLots(o);
       ok(shown(full()) && o.q('#lotQ').value === '' && shown(throwBtn()), 'reopening Lots starts with the full list and an empty box');
+      o.q('#lotQ').value = 'mngl'; o.click(btn(o, /^Find$/));   // typed text with no input event, from a visible full list: Find itself must hide it, at once
+      ok(!shown(full()), 'Find with text hides the full list at once');
+      await until(() => found().length > 0, 4000, 'the Find list');
     }
     ok(/\.lotcode\{white-space:nowrap/.test(await (await fetch(BASE + '/admin')).text()), 'long codes do not break at their hyphens (the lotcode rule)');
     ok(o.errors.length === 0, 'no page errors in the Lots search (' + o.errors.join(' | ').slice(0, 200) + ')');

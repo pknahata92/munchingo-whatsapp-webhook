@@ -1643,7 +1643,17 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       if (my !== lotSeq || !box.isConnected || state.tab !== 'stock') return;   // newer search, box cleared, or the user already left Stock (leaving only hides the page, so the box stays attached)
       box.textContent = '';
       if (!j.ok) return box.appendChild(h('p', { class: 'dlerr' }, j.error || 'Could not search just now.'));
-      if (j.lot) return openLot(j.lot.code, j.lot.slug);
+      if (j.lot) {   // an exact code: say so in the box while the lot page loads, and keep a plain error line there if it cannot open (never a blank box)
+        var code = j.lot.code;
+        box.appendChild(h('p', { class: 'muted' }, 'Opening ' + code + '…'));
+        var seq0 = 0;
+        openLot(code, j.lot.slug, { onFail: function () {
+          if (lotSeq !== seq0 || !box.isConnected) return;   // a newer search or tap came since: leave the box to it
+          box.textContent = ''; box.appendChild(h('p', { class: 'dlerr' }, 'Could not open ' + code + '. Try again.'));
+        } });
+        seq0 = lotSeq;   // openLot has just bumped it
+        return;
+      }
       if (j.choose) return box.appendChild(lotChoices(j.choose));
       if (j.orderLots) return box.appendChild(h('div', { class: 'sec' }, h('h3', {}, 'Lots in ' + t.toUpperCase()), j.orderLots.map(function (x) {
         var nm = DL_NAME[x.slug] || x.slug, l = (all || []).filter(function (y) { return y.code === x.code && y.slug === x.slug; })[0];
@@ -1678,9 +1688,9 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     lotSeq++; clearTimeout(lotTimer);   // tapping a card cancels a search answer that is still on its way
     api('/admin/api/stock/lots/' + encodeURIComponent(code) + (slug ? '?slug=' + encodeURIComponent(slug) : '')).then(function (j) {
       if (j.choose) return invShow('Which flavour?', [lotChoices(j.choose), lotBack()]);
-      if (!j.ok) return toast(j.error || 'Could not open the lot.', 6000);
+      if (!j.ok) { toast(j.error || 'Could not open the lot.', 6000); return opts.onFail && opts.onFail(); }
       drawLot(j, opts.note);
-    }, function () { toast('No signal. Try again.', 6000); });
+    }, function () { toast('No signal. Try again.', 6000); if (opts.onFail) opts.onFail(); });
   }
   function drawLot(p, note) {
     var L = p.lot || {}, own = state.role === 'owner', st = lotChip(L.status), n = p.numbers || {}, dt = p.dates || {}, dv = p.delivery;
