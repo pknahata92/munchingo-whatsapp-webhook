@@ -15,7 +15,7 @@ const { priceCart } = require('../utils/offers');
 const { checkPincode } = require('../utils/delhivery');
 const deliveryArea = require('../utils/deliveryArea');
 const { createSubscription, attachSubscriptionToOrder } = require('../utils/subscriptions');
-const { MIN_BOXES, goodsOnly, shippingFor, shippingItem } = require('../utils/shipping');
+const { MIN_BOXES, goodsOnly, hasGiftBox, shippingFor, shippingItem } = require('../utils/shipping');
 const { boxesIn } = require('../utils/orderText');
 
 // "Subscribe & Save" — flat discount on every renewal (see
@@ -23,7 +23,7 @@ const { boxesIn } = require('../utils/orderText');
 // link each cycle" model, not true autopay). A subscribing order always
 // gets this discount instead of any coupon code — the two are mutually
 // exclusive by design, to avoid compounding-discount margin risk.
-const SUBSCRIPTION_DISCOUNT_PCT = 8;
+const SUBSCRIPTION_DISCOUNT_PCT = 5;
 const SUBSCRIPTION_FREQUENCY_DAYS = 30;
 
 // Minimum order for the automated (nationwide courier) checkout: 2 boxes (a Pack of 2, any two Flavors; gift sets count as 3 and 4).
@@ -70,7 +70,7 @@ function normaliseItems(cartItems) {
                 return { error: 'One or more items in your cart are no longer recognised. Please refresh and try again.' };
           }
           if (typeof c.slug === 'string' && c.slug.startsWith('trio-gift-set') && !isValidTrioSlug(c.slug)) {
-                return { error: 'A Trio Gift Set holds 3 different flavours. Please rebuild it from the gift set picker and try again.' };
+                return { error: 'A Trio Set holds 3 different Flavors. Please rebuild it from the set picker and try again.' };
           }
           if (!isAvailable(c.slug)) {
                 return { error: `Sorry, "${nameForSlug(c.slug)}" is currently sold out. Please remove it from your cart and try again.` };
@@ -186,7 +186,7 @@ router.post('/api/checkout', rateLimit({ windowMs: 60_000, max: 5 }), async (req
       }
       // Shipping: Rs 49 under Rs 777 of items (before any discount), free from there. Saved as an ordinary line so every downstream
       // total (Razorpay, invoice, Zoho, refunds, emails) carries it; goods-only lists skip it (utils/shipping.js).
-      const shippingFee = shippingFor(realTotal);
+      const shippingFee = shippingFor(realTotal, { hasGiftBox: hasGiftBox(enrichedItems) });
       const finalTotal = priced.finalTotal + shippingFee;
       const orderItems = shippingFee ? [...enrichedItems, shippingItem(shippingFee)] : enrichedItems;
       const discountAmount = priced.discount ? priced.discount.amount : 0;
@@ -333,9 +333,9 @@ router.post('/api/quote', rateLimit({ windowMs: 60_000, max: 30 }), async (req, 
     if (error) return res.status(400).json({ ok: false, error });
     const p = await priceCart({ items: enriched, couponCode: code || null, customerPhone: phone ? normalisePhone(phone) : null, subscribe: !!subscribe, subscriptionPct: SUBSCRIPTION_DISCOUNT_PCT });
     const d = p.discount;
-    const shipping = shippingFor(p.realTotal), boxes = enriched.reduce((n, i) => n + boxesIn(i) * i.quantity, 0);
+    const giftBox = hasGiftBox(enriched), shipping = shippingFor(p.realTotal, { hasGiftBox: giftBox }), boxes = enriched.reduce((n, i) => n + boxesIn(i) * i.quantity, 0);
     res.json({
-      ok: true, total: p.realTotal, singles: p.singles, finalTotal: p.finalTotal + shipping, goodsTotal: p.realTotal, shipping, boxes, minBoxes: MIN_BOXES, freeFrom: require('../utils/shipping').FREE_FROM, next: p.next, tiers: p.tiers, couponError: p.couponError,
+      ok: true, total: p.realTotal, singles: p.singles, finalTotal: p.finalTotal + shipping, goodsTotal: p.realTotal, shipping, giftBoxFree: giftBox && p.realTotal < require('../utils/shipping').FREE_FROM, boxes, minBoxes: MIN_BOXES, freeFrom: require('../utils/shipping').FREE_FROM, next: p.next, tiers: p.tiers, couponError: p.couponError,
       discount: d ? { kind: d.kind, amount: d.amount, label: d.label, code: d.code } : null,
       couponBeaten: !!(d && d.kind === 'tier' && d.beat && d.beat.kind === 'coupon'),
     });
@@ -460,7 +460,7 @@ router.get('/api/stock', rateLimit({ windowMs: 60_000, max: 60 }), async (req, r
 // on the server regardless of what the browser says.
 router.get('/api/prices', rateLimit({ windowMs: 60_000, max: 60 }), async (req, res) => {
   await require('../utils/stock').ensureFresh();      // refreshes stock and prices together
-  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, prices: require('../utils/catalog').priceBook() });
+  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, prices: require('../utils/catalog').priceBook(), boxRule: Object.fromEntries(Object.entries(require('../utils/boxPricing').BOX_DISCOUNT).map(([n, d]) => [n, d * 100])) });
 });
 
 // Public, read-only: how many Founding 100 places are left. Nothing else about the coupon is exposed.

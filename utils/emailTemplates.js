@@ -14,10 +14,10 @@ const C = { navy: '#0B2D50', gold: '#CEAD5E', terra: '#A35A34', terraDeep: '#864
 const FONT = "'Poppins','Helvetica Neue',Helvetica,Arial,sans-serif";
 
 const FLAVOURS = [
-  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', price: 259, img: 'email-original.jpg' },
-  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', price: 299, img: 'email-kesari.jpg' },
-  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', price: 259, img: 'email-ajwain.jpg' },
-  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', price: 329, img: 'email-lite.jpg' },
+  { slug: 'atta-original', name: 'Atta Original', tag: 'Gently sweet', img: 'email-original.jpg' },
+  { slug: 'atta-kesari', name: 'Atta Kesari', tag: 'Royally sweet', img: 'email-kesari.jpg' },
+  { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', img: 'email-ajwain.jpg' },
+  { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', img: 'email-lite.jpg' },
 ];
 
 function esc(str) {
@@ -32,22 +32,26 @@ function button(href, label, style = 'solid') {
 }
 
 // ── Gift block ────────────────────────────────────────────────────────────────
+// The set prices come from the box rule at send time (catalog.priceBook: the Trio "from" its cheapest mix, the Full Range its
+// rule price), never a typed number: a hard-coded Trio price went stale when the rule changed (it said 739).
 function giftBlock() {
+  const book = require('./catalog').priceBook();
+  const trioFrom = book['trio-gift-set'].price, fullRange = book['full-range-set'].price;
   return `
   <tr><td style="padding:8px 28px 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.navy};border-radius:16px;">
       <tr><td style="padding:28px 26px;text-align:center;">
         <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:${C.gold};">Love it? Pass it on</div>
         <div style="font-family:Georgia,'Times New Roman',serif;font-size:26px;line-height:1.2;color:#FFF9EC;margin:10px 0 8px;">Somebody you love deserves a box too.</div>
-        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a gift set, fill it with their favourite flavours and add a note in your own words. We bake it in Bikaner and deliver it straight to their doorstep, anywhere in India.</div>
+        <div style="font-family:${FONT};font-size:14px;line-height:1.6;color:#DCE3EE;margin:0 auto 18px;max-width:420px;">Pick a set, fill it with their favourite Flavors and add a note in your own words. We bake it in Bikaner and deliver it straight to their doorstep, anywhere in India.</div>
         <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;">
           <tr>
-            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">${inr(739)}</b><br>Trio set &middot; any 3 flavours</td>
+            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">from ${inr(trioFrom)}</b><br>Trio Set &middot; any 3 Flavors</td>
             <td width="12"></td>
-            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">${inr(999)}</b><br>Full Range &middot; all 4</td>
+            <td style="background:#14406B;border-radius:12px;padding:12px 18px;font-family:${FONT};color:#FFF9EC;font-size:13px;text-align:center;"><b style="color:${C.gold};font-size:18px;">${inr(fullRange)}</b><br>Full Range Set &middot; all 4</td>
           </tr>
         </table>
-        <a href="${SITE}/gifting.html#gifting" style="display:inline-block;background:${C.gold};color:${C.navy};font-family:${FONT};font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;padding:14px 30px;border-radius:999px;">Build a gift set &#8599;</a>
+        <a href="${SITE}/build-a-box" style="display:inline-block;background:${C.gold};color:${C.navy};font-family:${FONT};font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;padding:14px 30px;border-radius:999px;">Build a set &#8599;</a>
       </td></tr>
     </table>
   </td></tr>`;
@@ -56,6 +60,7 @@ function giftBlock() {
 // ── Browse block: flavours they haven't tried yet come first ──────────────────
 function browseBlock(boughtSlugs = [], heading = 'Which one is next?') {
   const bought = new Set(boughtSlugs);
+  const { priceForSlug } = require('./catalog');   // read at render time, so an admin price change reaches the email
   const ordered = [...FLAVOURS.filter((f) => !bought.has(f.slug)), ...FLAVOURS.filter((f) => bought.has(f.slug))];
   const tiles = ordered.slice(0, 4).map((f) => `
         <td width="50%" valign="top" style="padding:7px;">
@@ -64,7 +69,7 @@ function browseBlock(boughtSlugs = [], heading = 'Which one is next?') {
             <div style="padding:12px 14px 14px;font-family:${FONT};text-align:left;">
               <div style="font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:${C.terra};">${esc(f.tag)}</div>
               <div style="font-size:15px;font-weight:600;color:${C.ink};margin:3px 0 2px;">${esc(f.name)}</div>
-              <div style="font-size:13px;color:${C.ink2};">${inr(f.price)} &middot; 250g &nbsp;<span style="color:${C.terra};font-weight:600;">Shop &#8599;</span></div>
+              <div style="font-size:13px;color:${C.ink2};">${inr(priceForSlug(f.slug))} &middot; 250g &nbsp;<span style="color:${C.terra};font-weight:600;">Shop &#8599;</span></div>
             </div>
           </a>
         </td>`);
@@ -163,7 +168,7 @@ function customerConfirmationHtml({ order, invoice }) {
       </tr></table>
       <div style="height:10px;"></div>
       ${summaryTable({ items, totalRupees: order.total, discountRupees: discount, couponCode: order.coupon_code, gstAmount })}`),
-    order.gift_note ? `<tr><td style="padding:16px 28px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBEFE8;border:1px dashed ${C.terra};border-radius:12px;"><tr><td style="padding:14px 18px;font-family:${FONT};font-size:13px;color:${C.ink};"><b style="color:${C.terra};">&#127873; Your gift note</b><br>${esc(order.gift_note)}</td></tr></table></td></tr>` : '',
+    order.gift_note ? `<tr><td style="padding:16px 28px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBEFE8;border:1px dashed ${C.terra};border-radius:12px;"><tr><td style="padding:14px 18px;font-family:${FONT};font-size:13px;color:${C.ink};"><b style="color:${C.terra};">&#127873; Your note</b><br>${esc(order.gift_note)}</td></tr></table></td></tr>` : '',
     invoice ? `<tr><td style="padding:16px 28px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EAF1EC;border-radius:12px;"><tr><td style="padding:14px 18px;font-family:${FONT};font-size:13px;line-height:1.55;color:${C.ink};"><b>&#128196; Your GST tax invoice is attached</b><br><span style="color:${C.ink2};">Invoice ${esc(invoice.invoiceNo)} &middot; PDF attached to this email. Keep it handy for your records.</span></td></tr></table></td></tr>` : '',
     steps(),
   ].join('');
@@ -321,12 +326,12 @@ function deliveredHtml({ order }) {
 function reviewRequestHtml({ order, url, founders }) {
   const first = String(order.customer_name || 'there').trim().split(/\s+/)[0];
   const line = founders
-    ? `You bought Munchingo before it had a single review, a following or a track record. Just my word. That's trust, and I know it. So please be a terrible critic: what's off and what's amazing, no sugar coating. Tap below to rate each flavor from order ${esc(order.order_id)}. You're already our guinea pig for every future launch, free.<br><br>Love, Prashant`
-    : `Your Munchingo box (order ${esc(order.order_id)}) arrived a few days ago. How were the cookies? Tap below to rate each flavor. It takes about 20 seconds, and honest is more useful to us than nice.`;
+    ? `You bought Munchingo before it had a single review, a following or a track record. Just my word. That's trust, and I know it. So please be a terrible critic: what's off and what's amazing, no sugar coating. Tap below to rate each Flavor from order ${esc(order.order_id)}. You're already our guinea pig for every future launch, free.<br><br>Love, Prashant`
+    : `Your Munchingo box (order ${esc(order.order_id)}) arrived a few days ago. How were the cookies? Tap below to rate each Flavor. It takes about 20 seconds, and honest is more useful to us than nice.`;
   const body = card(`
     <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">${line}</div>
     <div style="text-align:center;padding:22px 0 4px;">${button(url, 'Rate your box')}</div>`);
-  return shell({ preheader: 'How were the cookies? Rate each flavor in about 20 seconds.', title: `How was your box, ${esc(first)}?`, subtitle: 'Honest is more useful to us than nice.', body, promo: 'none', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean) });
+  return shell({ preheader: 'How were the cookies? Rate each Flavor in about 20 seconds.', title: `How was your box, ${esc(first)}?`, subtitle: 'Honest is more useful to us than nice.', body, promo: 'none', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean) });
 }
 
 // ── Owner: refund processed (with credit note) ───────────────────────────────

@@ -1,5 +1,5 @@
 'use strict';
-// The gift builder (Build a box page; it left the home page in the storefront restructure, website 7a4b95d) when Flavors are sold out: tiles say so, a message explains it, Full Range and Trio say when
+// The gift builder on build-a-box.html when Flavors are sold out: tiles say so, a message explains it, Full Range and Trio say when
 // they are unavailable, and a link points to the singles in stock. Back in stock, all of it disappears.   node scripts/gift-builder-soldout-test.js
 const fs = require('fs'), path = require('path');
 let JSDOM, ResourceLoader;
@@ -24,13 +24,15 @@ async function open(soldOut) {
   const tile = (v) => d.querySelector(`.gb-fl[data-f="${v}"]`);
   const click = (el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true }));
   ok(d.querySelector('.gb-fl'), 'the builder is on the page');
+  click(d.querySelector('.gb-opt[data-size="3"]')); await wait(100);   // the builder opens on the Full Range; pick the Trio
   ['Kesari', 'Lite-sugar'].forEach((v) => { const t = tile(v); ok(t && !t.querySelector('.gb-so').hidden && /Sold out/.test(text(t.querySelector('.gb-so'))) && /Back soon/.test(text(t.querySelector('.gb-so'))) && t.disabled, v + ': tile says Sold out, Back soon, and cannot be picked'); });
   ['Original', 'Ajwain'].forEach((v) => { const t = tile(v); ok(t && t.querySelector('.gb-so').hidden && !t.disabled, v + ': in-stock tile is normal'); });
   const msg = d.querySelector('[data-gb-stock]');
   ok(!msg.hidden && /Kesari and Sugar-Lite are sold out for now/.test(text(msg)) && /Original and Ajwain are available/.test(text(msg)), 'a message names what is out and what is available: ' + text(msg));
-  ok(/A Trio needs 3 different flavors/.test(text(msg)), 'the message says why the Trio cannot be completed');
+  ok(/A Trio needs 3 different Flavors and the Full Range needs all four, so both are unavailable until we restock\./.test(text(msg)), 'the message says why the Trio cannot be completed (Flavors capitalised): ' + text(msg));
+  ok(!/flavors|flavours/.test(text(msg)), 'no lowercase flavors in the sold-out message');
   ok(/Trio unavailable today/.test(text(d.querySelector('[data-gb="cta"]'))) && d.querySelector('[data-gb="cta"]').disabled, 'Trio button says unavailable today');
-  ok(!d.querySelector('[data-gb="singles"]').hidden && /single boxes/.test(text(d.querySelector('[data-gb="singles"]'))) && d.querySelector('[data-gb="singles"]').getAttribute('href') === 'shop.html', 'a link points to the single boxes in stock (the Shop page since the restructure)');
+  ok(!d.querySelector('[data-gb="singles"]').hidden && /single boxes/.test(text(d.querySelector('[data-gb="singles"]'))) && d.querySelector('[data-gb="singles"]').getAttribute('href') === 'shop.html', 'a link points to the single boxes in stock');
   click(d.querySelector('.gb-opt[data-size="4"]')); await wait(100);
   ok(/Full Range returns soon/.test(text(d.querySelector('[data-gb="cta"]'))) && /Back soon/.test(text(d.querySelector('.gb-opt[data-size="4"] small'))), 'Full Range: option says back soon and the button says it returns soon');
   ok(/The Full Range needs all four|both are unavailable/.test(text(msg)), 'Full Range message explains');
@@ -39,6 +41,15 @@ async function open(soldOut) {
   // one Flavor out: a Trio is still possible from the other three
   dom = await open(['atta-kesari']); d = dom.window.document; w = dom.window;
   ok(/Kesari is sold out for now/.test(text(d.querySelector('[data-gb-stock]'))) && !/unavailable/.test(text(d.querySelector('[data-gb="cta"]'))), 'one out: Trio still buildable from the other three');
+  d.querySelector('.gb-opt[data-size="4"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true })); await wait(100);
+  ok(/The Full Range needs all four Flavors, so it returns when we restock\./.test(text(d.querySelector('[data-gb-stock]'))), 'one out, Full Range chosen: "The Full Range needs all four Flavors": ' + text(d.querySelector('[data-gb-stock]')));
+  dom.window.close();
+
+  // fewer than 3 in stock: the paused card names sets without "gift"
+  dom = await open(['atta-kesari', 'atta-lite-sugar']); d = dom.window.document;
+  ok(text(d.querySelector('[data-gb="pausedTitle"]')) === 'Sets are paused for now.', 'paused card: Sets are paused for now.');
+  ok(decodeURIComponent(d.querySelector('[data-gb="notify"]').getAttribute('href')).endsWith('please tell me when the sets are back.'), 'notify message: when the sets are back');
+  ok(/A Trio needs three different Flavors/.test(text(d.querySelector('[data-gb="pausedText"]'))), 'paused text says Flavors');
   dom.window.close();
 
   // everything in stock: nothing extra is shown

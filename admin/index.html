@@ -2170,6 +2170,17 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       var note = j.live ? h('p', { class: 'muted' }, 'Changes apply to new orders within 30 seconds. Orders already placed keep the price the customer paid. Customers with the old price in their bag see the new price when the page loads.')
         : h('p', { class: 'note' }, 'Price control is not switched on yet, so the shop still uses its built-in prices. Run product_prices_migration.sql in Supabase first.');
       var rows = j.rows.map(function (r) {
+        if (r.derived) {
+          // Mix keys are the Trio slug's tokens ("kesari-lite-sugar-original"); "lite-sugar" holds a hyphen, so match the known tokens
+          // and print the Flavor names in site order, joined by " + ", with Indian number format. A missing price is left out.
+          var MIX_NAMES = [['original', 'Original'], ['kesari', 'Kesari'], ['lite-sugar', 'Sugar-Lite'], ['ajwain', 'Ajwain']];
+          var mixLabel = function (k) { var p = '-' + k + '-'; return MIX_NAMES.filter(function (t) { return p.indexOf('-' + t[0] + '-') >= 0; }).map(function (t) { return t[1]; }).join(' + '); };
+          var mixes = r.byMix ? Object.keys(r.byMix).filter(function (k) { return r.byMix[k] != null; }).map(function (k) { return mixLabel(k) + ' ' + inr(r.byMix[k]); }) : [];
+          return h('div', { class: 'sw', style: 'flex-direction:column;align-items:stretch' }, h('b', {}, r.name),
+            r.price == null ? null : h('div', {}, (r.byMix ? 'From ' : '') + inr(r.price)),
+            mixes.length ? h('small', { class: 'muted' }, mixes.join(' · ')) : null,
+            h('small', { class: 'muted' }, r.label));
+        }
         var price = h('input', { type: 'number', inputmode: 'numeric', min: '50', step: '1', value: r.price == null ? '' : String(r.price), 'aria-label': r.name + ' price' });
         var mrp = h('input', { type: 'number', inputmode: 'numeric', min: '50', step: '1', value: r.mrp == null ? '' : String(r.mrp), placeholder: 'none', 'aria-label': r.name + ' MRP' });
         return h('div', { class: 'sw', style: 'flex-direction:column;align-items:stretch' }, h('b', {}, r.name),

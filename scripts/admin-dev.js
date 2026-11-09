@@ -12,7 +12,7 @@ const CODE_BASE = PORT === 8430 ? '/tmp/admin-dev-code' : '/tmp/admin-dev-code-'
 process.env.ADMIN_EMAILS = 'owner@example.com';
 const team = [{ email: 'staff@example.com', name: 'Staff', role: 'staff', active: true, created_at: new Date().toISOString() }];
 const events = [];
-const priceRows = [{ slug: 'atta-original', price: 300, mrp: 300 }, { slug: 'atta-ajwain', price: 300, mrp: 300 }, { slug: 'atta-kesari', price: 350, mrp: 350 }, { slug: 'atta-lite-sugar', price: 350, mrp: 350 }, { slug: 'trio-gift-set', price: 739, mrp: null }, { slug: 'full-range-set', price: 999, mrp: null }];
+const priceRows = [{ slug: 'atta-original', price: 300, mrp: 300 }, { slug: 'atta-ajwain', price: 300, mrp: 300 }, { slug: 'atta-kesari', price: 350, mrp: 350 }, { slug: 'atta-lite-sugar', price: 350, mrp: 350 }, { slug: 'trio-gift-set', price: 749, mrp: null }, { slug: 'full-range-set', price: 999, mrp: null }];
 const spendTiers = [{ id: 1, min_singles: 1500, discount: 100, label: null, starts_at: null, ends_at: null, active: true, created_at: '2026-10-12T00:00:00Z' }];
 let tierSeq = 1;
 const coupons = [

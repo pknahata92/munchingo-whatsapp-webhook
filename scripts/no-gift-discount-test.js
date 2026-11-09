@@ -11,20 +11,20 @@ const { priceCart } = require('../utils/offers');
 const { buildInvoice } = require('../utils/invoice');
 
 const single = (slug, price, q = 1) => ({ slug, item_price: price, quantity: q, productName: slug });
-const trio = { slug: 'trio-gift-set-ajwain-kesari-original', item_price: 799, quantity: 1, productName: 'Trio Gift Set' };
+const trio = { slug: 'trio-gift-set-ajwain-kesari-original', item_price: 749, quantity: 1, productName: 'Trio Gift Set' };
 const full = { slug: 'full-range-set', item_price: 999, quantity: 1, productName: 'Full Range Gift Set' };
 
 (async () => {
   // Subscribe & Save: on the singles only.
   let r = await priceCart({ items: [single('atta-original', 259, 2), trio], subscribe: true, subscriptionPct: 8 });
-  ok(r.discount && r.discount.amount === Math.round(518 * 0.08) && r.finalTotal === 518 + 799 - r.discount.amount, 'subscription: 8% of the 518 of singles, not of 1,317');
+  ok(r.discount && r.discount.amount === Math.round(518 * 0.08) && r.finalTotal === 518 + 749 - r.discount.amount, 'subscription: 8% of the 518 of singles, not of 1,267');
   r = await priceCart({ items: [trio, full], subscribe: true, subscriptionPct: 8 });
-  ok(r.discount === null && r.finalTotal === 1798, 'subscription: gift boxes alone get no discount');
+  ok(r.discount === null && r.finalTotal === 1748, 'subscription: gift boxes alone get no discount');
   // Spend tier: singles only (unchanged rule, kept under test).
   r = await priceCart({ items: [single('atta-original', 259, 2), trio], couponCode: null });
-  ok(r.discount && r.discount.kind === 'tier' && r.discount.amount === 52 && r.finalTotal === 518 + 799 - 52, 'tier: 10% of the singles only');
+  ok(r.discount && r.discount.kind === 'tier' && r.discount.amount === 52 && r.finalTotal === 518 + 749 - 52, 'tier: 10% of the singles only');
   r = await priceCart({ items: [trio, full], couponCode: null });
-  ok(r.discount === null && r.finalTotal === 1798, 'tier: gift boxes alone get nothing');
+  ok(r.discount === null && r.finalTotal === 1748, 'tier: gift boxes alone get nothing');
   // A code: the stubbed validator already works on singlesTotal; check the engine passes singles, not the order total.
   COUPON = { pct: 20 };
   r = await priceCart({ items: [single('atta-kesari', 299, 1), full], couponCode: 'X' });
@@ -34,8 +34,8 @@ const full = { slug: 'full-range-set', item_price: 999, quantity: 1, productName
   // Invoice: the discount is shown on the single-box lines, never on the gift set line.
   const order = { order_id: 'MNG-T-1', items: [
     { slug: 'atta-original', productName: 'Atta Original', quantity: 2, item_price: 259, unit: '250g' },
-    { slug: 'trio-gift-set-ajwain-kesari-original', productName: 'Trio Gift Set', quantity: 1, item_price: 799, unit: '750g' },
-  ], discount_amount: 52, total: 518 + 799 - 52, delivery_address: 'x, Faridabad, Haryana 121007' };
+    { slug: 'trio-gift-set-ajwain-kesari-original', productName: 'Trio Gift Set', quantity: 1, item_price: 749, unit: '750g' },
+  ], discount_amount: 52, total: 518 + 749 - 52, delivery_address: 'x, Faridabad, Haryana 121007' };
   const inv = buildInvoice(order, { invoiceNo: 'T/1', issuedAt: new Date() });
   const lines = inv.items || inv.lines || [];
   const orig = lines.find((l) => /Original/.test(l.name)), tr = lines.find((l) => /Trio/.test(l.name));

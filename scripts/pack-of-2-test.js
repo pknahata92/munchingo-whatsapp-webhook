@@ -1,5 +1,5 @@
 'use strict';
-// The 25 Oct 2026 flow: prices 259/299, Trio 799, minimum 2 boxes, Rs 49 shipping under Rs 777, and what that does downstream.
+// The 25 Oct 2026 flow: prices 259/299, Trio 749, minimum 2 boxes, Rs 49 shipping under Rs 777, and what that does downstream.
 //   node scripts/pack-of-2-test.js
 const path = require('path');
 process.env.SUPABASE_URL = 'x'; process.env.SUPABASE_SERVICE_ROLE_KEY = 'x'; process.env.RESEND_API_KEY = process.env.RESEND_API_KEY || 'x';
@@ -28,7 +28,7 @@ const { boxesIn } = require('../utils/orderText');
   // prices
   ok(catalog.priceForSlug('atta-original') === 259 && catalog.priceForSlug('atta-ajwain') === 259, 'Original and Ajwain are Rs 259');
   ok(catalog.priceForSlug('atta-kesari') === 299 && catalog.priceForSlug('atta-lite-sugar') === 329, 'Kesari Rs 299, Sugar-Lite Rs 329 (27 Oct)');
-  ok(catalog.priceForSlug('trio-gift-set-ajwain-kesari-original') === 799 && catalog.priceForSlug('full-range-set') === 999, 'Trio Rs 799, Full Range Rs 999');
+  ok(catalog.priceForSlug('trio-gift-set-ajwain-kesari-original') === 749 && catalog.priceForSlug('full-range-set') === 999, 'Trio Rs 749, Full Range Rs 999');
   const book = catalog.priceBook();
   ok(book['atta-original'].mrp === 300 && book['atta-kesari'].mrp === 350, 'the printed MRP (300 / 350) stays as the struck-through price');
 
@@ -62,8 +62,8 @@ const { boxesIn } = require('../utils/orderText');
   o = saved[saved.length - 1]; ok(r.j.ok && o.total === 628 + 49, 'Kesari + Sugar-Lite: Rs 628 + Rs 49 = Rs 677');
   r = await post('/api/checkout', { ...buyer, items: cart(['atta-original', 3]), total: 777 });
   o = saved[saved.length - 1]; ok(r.j.ok && o.total === 777 && o.items.length === 1, 'three boxes (Rs 777) ship free: no shipping line');
-  r = await post('/api/checkout', { ...buyer, items: cart(['trio-gift-set-ajwain-kesari-original', 1]), total: 799 });
-  o = saved[saved.length - 1]; ok(r.j.ok && o.total === 799 && o.items.length === 1, 'a Trio counts as 3 boxes, Rs 799, free shipping');
+  r = await post('/api/checkout', { ...buyer, items: cart(['trio-gift-set-ajwain-kesari-original', 1]), total: 749 });
+  o = saved[saved.length - 1]; ok(r.j.ok && o.total === 749 && o.items.length === 1, 'a Trio counts as 3 boxes, Rs 749, and ships free (a gift box always does)');
   r = await post('/api/checkout', { ...buyer, items: cart(['atta-original', 2]), total: 518 });
   o = saved[saved.length - 1]; if (!r.j.ok || o.total !== 567) console.log('DBG', JSON.stringify(r), o.total, JSON.stringify(o.items)); ok(r.j.ok && o.total === 567, 'two boxes of the same Flavor also make a Pack of 2');
 

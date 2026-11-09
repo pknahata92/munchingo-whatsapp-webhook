@@ -11,7 +11,7 @@ require.cache[p] = { id: p, filename: p, loaded: true, exports: { current: () =>
 const cat = require('../utils/catalog');
 ok(cat.priceForSlug('atta-lite-sugar') === 329, 'backend fallback price is 329');
 ok(cat.priceForSlug('atta-kesari') === 299 && cat.priceForSlug('atta-original') === 259, 'other Flavors unchanged');
-ok(/'atta-lite-sugar'[^}]*price: 329/.test(fs.readFileSync(path.join(__dirname, '../utils/emailTemplates.js'), 'utf8')), 'email product grid shows 329');
+ok(require('../utils/emailTemplates').shippedHtml({ order: { order_id: 'X', items: [] }, carrier: 'D', awb: '1', trackUrl: 'https://x.test' }).includes('&#8377;329 &middot; 250g'), 'email product grid shows 329 (read from the catalog)');
 const page = read('atta-lite-sugar.html');
 ok(!/₹299|"price": "299"|'atta-lite-sugar', 299\)/.test(page) && /"price": "329"/.test(page) && /Add to bag · ₹329/.test(page), 'Sugar-Lite page: structured data, price box, button and fallback say 329');
 ok(/'Lite-sugar': 329/.test(read('js/gift-builder.js')), 'gift builder fallback 329');

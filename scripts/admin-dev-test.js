@@ -69,6 +69,16 @@ async function login(email) {
   ok((await call('/prices', o.token, { slug: 'atta-original', price: 280, mrp: 300 })).j.ok, 'owner changes a price');
   ok((await call('/prices', o.token)).j.rows[0].price === 280, 'new price reads back');
   await call('/prices', o.token, { slug: 'atta-original', price: 300, mrp: 300 });
+  // box prices: derived from the box rule, shown read-only, never saved
+  for (const [sl, pr] of [['atta-original', 259], ['atta-ajwain', 259], ['atta-kesari', 299], ['atta-lite-sugar', 329]]) await call('/prices', o.token, { slug: sl, price: pr });   // the real single prices; the practice ones are different
+  const bx = (await call('/prices', o.token)).j.rows, trio = bx.find((r) => r.slug === 'trio-gift-set'), full = bx.find((r) => r.slug === 'full-range-set');
+  ok(trio && full && trio.derived === true && full.derived === true && !bx.slice(0, 4).some((r) => r.derived), 'both set rows are derived, the four singles are not');
+  ok(trio.price === 749 && trio.byMix && Object.keys(trio.byMix).length === 4 && trio.byMix['ajwain-lite-sugar-original'] === 779 && trio.byMix['kesari-lite-sugar-original'] === 809 && trio.byMix['ajwain-kesari-lite-sugar'] === 809 && trio.byMix['ajwain-kesari-original'] === 749, 'the Trio carries its four per-mix prices');
+  ok(full.price === 999 && full.mrp == null, 'Full Range reads 999 with no MRP');
+  const sp = await call('/prices', o.token, { slug: 'full-range-set', price: 899 });
+  ok(sp.s === 400 && /set by the box rule/.test(sp.j.error || ''), 'saving a set price is refused with "set by the box rule" (' + sp.s + ' ' + sp.j.error + ')');
+  ok((await call('/prices', o.token)).j.rows.find((r) => r.slug === 'full-range-set').price === 999, 'and Full Range still reads 999');
+  for (const [sl, pr] of [['atta-original', 300], ['atta-ajwain', 300], ['atta-kesari', 350], ['atta-lite-sugar', 350]]) await call('/prices', o.token, { slug: sl, price: pr, mrp: pr });   // back to the practice prices
 
   // no / bad token
   ok((await call('/orders', null)).s === 401, 'no token 401');
@@ -151,7 +161,7 @@ async function login(email) {
   ok((await cp('', o.token, { code: 'BACKWARDS', type: 'flat', value: 10, startsAt: '2030-02-01', expiresAt: '2030-01-01' })).s === 400, 'start after expiry refused');
   ok((await cp('', o.token, { code: 'BADSCOPE', type: 'flat', value: 10, scope: 'atta-original' })).s === 400, 'unsupported scope refused');
   const so = await cp('', o.token, { code: 'NOSETS10', type: 'percent', value: 10, scope: 'singles-only', expiresAt: '2030-01-31' });
-  ok(so.j.ok && so.j.coupon.scope === 'singles-only' && so.j.coupon.conditions.includes('not on gift sets') && /not gift sets/.test(so.j.coupon.shareEn) && /गिफ़्ट सेट/.test(so.j.coupon.shareHi), 'a code can exclude gift sets; wording appears in the card and in both share messages');
+  ok(so.j.ok && so.j.coupon.scope === 'singles-only' && so.j.coupon.conditions.includes('not on sets') && /not sets/.test(so.j.coupon.shareEn) && /सेट पर नहीं/.test(so.j.coupon.shareHi) && !/गिफ़्ट/.test(so.j.coupon.shareHi), 'a code can exclude sets; wording appears in the card and in both share messages');
   ok((await cp('/NOSETS10/delete', o.token, {})).j.ok, 'cleanup of the gift-set test code');
   const pz = await cp('/FRIEND-HERA', o.token, { active: false }); ok(pz.j.ok && pz.j.coupon.status === 'paused', 'pause');
   const rz = await cp('/FRIEND-HERA', o.token, { active: true, expiresAt: '2031-06-30', maxUses: 5, note: 'now for 5 people' }); ok(rz.j.ok && rz.j.coupon.status === 'live' && rz.j.coupon.maxUses === 5 && /2031/.test(rz.j.coupon.expiresAt) && rz.j.coupon.note === 'now for 5 people', 'resume + extend + edit limits and note');

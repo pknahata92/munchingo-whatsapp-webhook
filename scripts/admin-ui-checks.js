@@ -1427,5 +1427,32 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Prices screen: box prices are shown, read-only, with the rule in plain words
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, qa, text, click } = o;
+    click(o.byText('#tabs .tab', /^More$/)); await sleep(200);
+    click(o.byText('#viewMore .morebtn', /^Prices/));
+    await until(() => /Prices/.test(text(q('#panel'))) && qa('#panel input').length > 0, 4000, 'the Prices screen');
+    const panel = text(q('#panel'));
+    ok(panel.includes('Set by the box rule (3 Flavors: 8% off singles; all 4: 12.5% off)'), 'the Prices screen shows the box rule text');
+    const cards = qa('#panel .sw'); const set = (re) => cards.find((c) => re.test(text(c.querySelector('b'))));
+    const trio = set(/Trio/), full = set(/Full Range/), single = set(/Original/);
+    ok(trio && full && trio.querySelectorAll('input').length === 0 && full.querySelectorAll('input').length === 0 && trio.querySelectorAll('button').length === 0, 'the two set rows have no editable input and no Save button');
+    ok(single && single.querySelectorAll('input').length === 2, 'a single box still has its price and MRP inputs');
+    ok(/From ₹\d+/.test(text(trio)) && (text(trio).match(/ ₹\d+/g) || []).length >= 4 && /₹\d+/.test(text(full)), 'the set rows show the derived prices (Trio from the lowest mix with all four mixes, Full Range one price): ' + text(trio) + ' | ' + text(full));
+    // Mix labels use the Flavor names (Original, Kesari, Sugar-Lite, Ajwain in that order) joined by " + ", prices in en-IN
+    const mixes = text(trio.querySelector('small'));
+    const token = o.win.localStorage.getItem('mngAdminToken');
+    const book = (await (await fetch(BASE + '/admin/api/prices', { headers: { Authorization: 'Bearer ' + token } })).json()).rows; const tb = book.find((r) => r.slug === 'trio-gift-set'), fb = book.find((r) => r.slug === 'full-range-set');
+    const inrIN = (n) => '₹' + Number(n).toLocaleString('en-IN');
+    const want = [['ajwain-kesari-original', 'Original + Kesari + Ajwain'], ['ajwain-lite-sugar-original', 'Original + Sugar-Lite + Ajwain'], ['kesari-lite-sugar-original', 'Original + Kesari + Sugar-Lite'], ['ajwain-kesari-lite-sugar', 'Kesari + Sugar-Lite + Ajwain']];
+    ok(want.every(([k, label]) => mixes.includes(label + ' ' + inrIN(tb.byMix[k]))), 'mix labels read like "Original + Kesari + Sugar-Lite ₹809": ' + mixes);
+    ok(!/Lite Sugar|Ajwain Kesari Original/.test(text(trio)), 'no "Lite Sugar" or space-joined tokens: ' + text(trio));
+    ok(text(trio).includes('From ' + inrIN(tb.price)) && text(full).includes(inrIN(fb.price)) && (fb.price < 1000 || /₹\d,\d{3}/.test(text(full))), 'From and Full Range prices in en-IN (₹1,129 style): ' + text(trio).slice(0, 40) + ' | ' + text(full));
+    ok(!/₹null|₹undefined/.test(text(q('#panel'))), 'no ₹null on the Prices screen');
+    ok(o.errors.length === 0, 'no page errors on the Prices screen (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };

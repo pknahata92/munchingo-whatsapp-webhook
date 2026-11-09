@@ -317,7 +317,7 @@ function renderInvoicePdf(inv) {
     doc.fillColor(C.ink2).font('Helvetica').fontSize(8)
       .text('Prices include GST. This is a computer-generated invoice and does not require a signature. Questions about this order? Write to ' + inv.seller.email + ' or WhatsApp ' + inv.seller.phone + '.', L, y, { width: W });
     doc.fillColor(C.terra).font('Helvetica-Bold').fontSize(9)
-      .text('Loved it? A Munchingo gift set makes the best "just because". Visit ' + inv.seller.site + '/#gifts', L, doc.y + 10, { width: W });
+      .text('Loved it? A Munchingo Trio or Full Range Set makes the best "just because". Visit ' + inv.seller.site + '/build-a-box', L, doc.y + 10, { width: W });
     doc.end();
   });
 }
