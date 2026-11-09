@@ -46,6 +46,7 @@ for (const f of pages.concat(jsFiles)) {
   ok(!/25 boxes|start at 25|from 25 /i.test(s), f + ': no 25-box bulk minimum');
   if (f !== 'stall.html') ok(!s.includes('₹799'), f + ': no ₹799');
 }
+for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html']) ok(text(doc(f).querySelector('.v2-bundle')).includes('Mix any 3 boxes from ₹749') && !/for ₹749/.test(text(doc(f).querySelector('.v2-bundle'))), f + ': bundle line says Mix any 3 boxes from ₹749');
 for (const f of ['atta-original.html', 'atta-ajwain.html', 'atta-kesari.html', 'atta-lite-sugar.html'])
   ok(read(f).includes('(the Trio is from ₹749)'), f + ': (the Trio is from ₹749)');
 ok(read('maida-free-cookies-guide.html').includes('gift sets</a> start at ₹749'), 'maida guide: gift sets start at ₹749');
