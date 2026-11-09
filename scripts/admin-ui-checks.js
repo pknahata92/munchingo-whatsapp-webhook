@@ -455,6 +455,14 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(dates.length === 2 && !!seededBB && dates[0].value === '2026-10-15' && dates[1].value === seededBB, 'the dates are calendar pickers, refilled from the old receipt: prepared 2026-10-15 (from the lot code), best before ' + seededBB + ' (the practice stock\'s seeded date) (saw ' + dates.map((d) => d.value).join(' / ') + ')');
     ok(inputs.some((i) => i.value === '15OCT26'), 'correcting without touching the date keeps the old lot code exactly');
     ok(inputs.some((i) => i.value === '3 crushed'), 'the old note is carried over');
+    // Fix A (9 Nov 2026): a biscuit's lot box is read-only and fills only from the calendar (and from the receipt being corrected)
+    const lotBox = inputs.find((i) => i.value === '15OCT26');
+    ok(lotBox.readOnly === true && dates[0].type === 'date', 'Fix A: the biscuit lot-code box is read-only');
+    dates[0].value = '2026-10-27'; dates[0].dispatchEvent(new (dates[0].ownerDocument.defaultView).Event('change', { bubbles: true }));
+    ok(lotBox.value === '27OCT26' && dates[1].value === '2027-01-25', 'Fix A: picking a date on the calendar fills the lot code (27OCT26) and the best before');
+    dates[0].value = '2026-10-15'; dates[0].dispatchEvent(new (dates[0].ownerDocument.defaultView).Event('change', { bubbles: true }));
+    ok(lotBox.value === '15OCT26' && dates[1].value === '2027-01-13', 'Fix A: picking the old date again restores the lot code');
+    dates[1].value = seededBB;
     ok((await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand === before, 'opening Correct changes nothing yet');
     set(inputs[0], '36'); set(inputs[1], '0');
     click(byText('#viewStock button', /^Save receipt$/));

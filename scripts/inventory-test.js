@@ -980,5 +980,43 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
     eq(mine.map((m) => [m.lot_code, m.qty, m.best_before]), [['27OCT26', -6, '2027-01-20'], [null, -4, null]], 'fallback pack: one sale for the lot (both lines, earliest best before) and one lot-less line for the old count-up and the shortfall');
   }
 
+  // Fix A (9 Nov 2026): a corrected biscuit receipt lands on the real lot, never on a second spelling of it.
+  {
+    const st = memStore('2026-10-01T00:00:00.000Z'); const inv = makeInventory(st);
+    const L = (slug, code, bake, extra = {}) => ({ item_slug: slug, lot_code: code, delivery_id: null, bake_date: bake, best_before: '2027-01-25', status: 'released', aliases: [], ...extra });
+    await st.insertLots([
+      L('atta-kesari', '27OCT26', '2026-10-27'),
+      L('atta-ajwain', '27OCT26', '2026-10-27', { best_before: '2027-01-27', aliases: ['MNGA-261027-01'] }),
+      L('atta-original', 'MNGO-261105-01', '2026-11-05', { best_before: '2027-02-03' }),
+      L('atta-lite-sugar', 'MNGL-261106-01', '2026-11-06'), L('atta-lite-sugar', 'MNGL-261106-02', '2026-11-06'),
+    ]);
+    const oldReceipt = async (slug) => { await inv.receive({ slug, received: 10, lot: 'SEED-' + slug, actor: A, confirmDuplicate: true }); return st.mv.filter((m) => m.item_slug === slug && m.type === 'RECEIVE').pop().id; };
+    const fix = async (slug, lot, extra = {}) => inv.receive({ slug, received: 12, lot, replaces: await oldReceipt(slug), actor: A, isOwner: true, ...extra });
+    const lastRec = (slug) => st.mv.filter((m) => m.item_slug === slug && m.type === 'RECEIVE').pop();
+    await fix('atta-kesari', '27oct26');
+    ok(lastRec('atta-kesari').lot_code === '27OCT26' && lastRec('atta-kesari').best_before === '2027-01-25', 'Fix A: 27oct26 on Kesari is stored as 27OCT26, with that lot\'s best before');
+    await fix('atta-ajwain', 'mnga-261027-01', { bestBefore: '2027-02-01' });
+    ok(lastRec('atta-ajwain').lot_code === '27OCT26' && lastRec('atta-ajwain').best_before === '2027-02-01', 'Fix A: an alias on Ajwain is stored as the lot code 27OCT26; a typed best before is kept');
+    await fix('atta-original', '05NOV26');
+    ok(lastRec('atta-original').lot_code === 'MNGO-261105-01' && lastRec('atta-original').best_before === '2027-02-03', 'Fix A: a calendar pick of 5 Nov on Original lands on MNGO-261105-01');
+    await fix('atta-original', '5nov26');
+    ok(lastRec('atta-original').lot_code === 'MNGO-261105-01', 'Fix A: a one-digit day also finds the lot');
+    let n = st.mv.length, id = await oldReceipt('atta-lite-sugar'); n = st.mv.length;
+    await rejects(inv.receive({ slug: 'atta-lite-sugar', received: 5, lot: '06NOV26', replaces: id, actor: A, isOwner: true }), /^More than one Lite lot was baked on 6 Nov\. Correct it from that lot's page with Fix lot\.$|^More than one .* lot was baked on 6 Nov\. Correct it from that lot's page with Fix lot\.$/, 'Fix A: two lots of one flavour on one bake date are refused');
+    id = await oldReceipt('atta-kesari'); n = st.mv.length;
+    const e = await inv.receive({ slug: 'atta-kesari', received: 5, lot: '30SEP26', replaces: id, actor: A, isOwner: true }).then(() => null, (x) => x);
+    ok(e && /^No lot 30SEP26 for .+\. New stock is entered with Stock, New delivery\.$/.test(e.message) && e.status === 409, 'Fix A: an unknown code is refused with the New delivery message (409) (' + (e && e.message) + ')');
+    ok(st.mv.length === n && !st.mv.some((m) => m.lot_code === '30SEP26') && (await st.lots()).length === 5, 'Fix A: nothing is written on a refusal, no lot made');
+    // a legacy lot that exists only in the ledger still resolves
+    await st.insert([{ item_slug: 'atta-kesari', qty: 4, type: 'RECEIVE', lot_code: '15Oct26', best_before: '2027-01-12' }]);
+    await fix('atta-kesari', '15OCT26');
+    ok(lastRec('atta-kesari').lot_code === '15Oct26', 'Fix A: a ledger-only legacy lot resolves to its existing spelling');
+    // packaging unchanged
+    await inv.receive({ slug: 'packing-tape', received: 12, actor: A });
+    const pid = st.mv.filter((m) => m.item_slug === 'packing-tape' && m.type === 'RECEIVE').pop().id;
+    await inv.receive({ slug: 'packing-tape', received: 9, lot: 'Any Lot 1', replaces: pid, actor: A, isOwner: true });
+    ok(lastRec('packing-tape').lot_code === 'Any Lot 1', 'Fix A: packaging receipts keep the lot as typed');
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

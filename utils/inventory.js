@@ -216,6 +216,24 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     : 'Not enough on hand: ' + short.map((x) => `${x.item.name}: need ${x.q}, have ${x.u.usable}`).join('; ') + '. Count first, or confirm to go below zero.');
   const who = (actor) => ({ actor_email: actor && actor.email || null, actor_name: actor && (actor.name || actor.email) || null });
 
+  // The lot a typed biscuit code means for this flavour: exact, then ignoring case, then an alias (lots.resolveCode, ledger-only legacy lots too);
+  // failing those, a DDMONYY date code means the flavour's single lot baked that day (the calendar pick). Never makes a new lot.
+  async function resolveReceiptLot(item, typed) {
+    const [lotRows, ledger] = await Promise.all([orMissing(Promise.resolve().then(() => store.lots()), []), store.byLot()]);
+    const rows = (lotRows || []).filter((l) => l.item_slug === item.slug);
+    const found = lotRules.resolveCode(rows, (ledger || []).filter((r) => r.item_slug === item.slug), typed, item.slug)[0];
+    if (found) return { code: found.code, bestBefore: found.row && found.row.best_before ? String(found.row.best_before).slice(0, 10) : '' };
+    const m = /^(\d{1,2})([A-Za-z]{3})(\d{2})$/.exec(typed);
+    const mo = m ? MONTHS.findIndex((x) => x.toUpperCase() === m[2].toUpperCase()) : -1;
+    if (mo >= 0) {
+      const bake = '20' + m[3] + '-' + String(mo + 1).padStart(2, '0') + '-' + m[1].padStart(2, '0');
+      const same = rows.filter((l) => l.bake_date && String(l.bake_date).slice(0, 10) === bake);
+      if (same.length === 1) return { code: same[0].lot_code, bestBefore: same[0].best_before ? String(same[0].best_before).slice(0, 10) : '' };
+      if (same.length > 1) throw new StockError(`More than one ${item.name} lot was baked on ${dateWords(bake)}. Correct it from that lot's page with Fix lot.`, 409);
+    }
+    throw new StockError(`No lot ${typed} for ${item.name}. New stock is entered with Stock, New delivery.`, 409);
+  }
+
   // Stock arrived: boxes received, how many of them damaged or not okay, lot, best-before, supplier challan, optional billing.
   // `replaces` = id of an earlier receipt this one corrects: the old line (and the damaged line saved with it) is cancelled
   // and the new one written in the same save, so a refused correction changes nothing.
@@ -246,11 +264,17 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       if (!isOwner && Date.now() - Date.parse(old.created_at) > REVERSE_FREE_MS) throw new StockError('Only the owner can reverse a line older than a day.', 403);
       oldDamaged = await damagedWith(old);
     }
+    // A corrected biscuit receipt lands on the real lot, never on a second spelling of it (Fix A, 9 Nov 2026).
+    let lotStore = lotCode, bbStore = bestBefore;
+    if (item.kind === 'product' && replacing) {
+      const hit = await resolveReceiptLot(item, lotCode);
+      lotStore = hit.code; if (!bbStore && hit.bestBefore) bbStore = hit.bestBefore;
+    }
     if (!confirmDuplicate && !replacing) {
       const recent = await store.recent({ item_slug: slug, type: 'RECEIVE', since: new Date(Date.now() - DUP_WINDOW_MS).toISOString() });
       if (recent.some((r) => r.qty === rec && (r.lot_code || '') === lotCode)) throw new StockError('The same receipt was saved a moment ago. Save again only if it is a second delivery.', 409, { needsConfirm: 'duplicate' });
     }
-    const base = { item_slug: slug, lot_code: lotCode || null, best_before: bestBefore || null, ref: cleanText(ref, 60) || null, ...who(actor) };
+    const base = { item_slug: slug, lot_code: lotStore || null, best_before: bbStore || null, ref: cleanText(ref, 60) || null, ...who(actor) };
     const rows = [];
     if (old) [old, ...oldDamaged].forEach((m) => rows.push({ item_slug: m.item_slug, qty: -m.qty, type: 'REVERSAL', lot_code: m.lot_code, best_before: m.best_before, ref: m.ref, note: 'Corrected receipt', reverses_id: m.id, ...who(actor) }));
     rows.push({ ...base, type: 'RECEIVE', qty: rec, note: cleanText(note, 300) || null, billed_kg: kg, amount_paise: amt == null ? null : Math.round(amt * 100) });
