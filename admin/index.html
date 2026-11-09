@@ -193,6 +193,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     <p class="note" id="moneyNote" hidden></p>
     <div class="flow" id="flow"></div>
     <div class="hint" id="hint"></div>
+    <div class="hint" id="searchNote" hidden></div>
     <div class="chips" id="chips"></div>
     <div class="row"><input id="q" aria-label="Search orders" placeholder="Search name, phone, address, pincode, order or invoice no."><button class="btn ghost small" id="filterBtn" type="button">Filter</button><button class="btn ghost small" id="reload">Refresh</button></div>
     <div class="bar"><span id="count"></span><span class="sp"></span><button class="chip" id="sortFlip" type="button" aria-label="Reverse the order of the list"></button></div>
@@ -453,11 +454,22 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     if (isLate(o)) t += (t ? ' · ' : '') + o.late.days + ' day' + (o.late.days === 1 ? '' : 's') + ' late' + (o.late.basis === 'seven_days' ? ' (7 days since pickup)' : '');
     return t;
   }
+  // While the search box has text the step is ignored (as "all"): a search looks through every step, but a test order stays hidden unless the Test or All view was already chosen.
+  function searchText() { return $('q').value.trim(); }
+  function itemText(o) { return (o.items || []).map(function (i) { return (i.name || '') + ' ' + (i.contents || ''); }).join(' '); }
+  var STEPWORD = { topack: 'To pack', packed: 'Packed', shipped: 'Shipped', delivered: 'Delivered', unpaid: 'Unpaid', cancelled: 'Cancelled', refunded: 'Refunded', test: 'Test' };
+  function rangeWords() {
+    var r = state.range;
+    if (r === 'today') return 'today'; if (r === 'yesterday') return 'yesterday'; if (r === '7') return 'the last 7 days'; if (r === '30') return 'the last 30 days'; if (r === 'month') return 'this month';
+    if (r === 'custom' && (state.from || state.to)) return state.from && state.to ? state.from + ' to ' + state.to : state.from ? 'from ' + state.from : 'up to ' + state.to;
+    return '';
+  }
   function visible() {
-    var q = $('q').value.trim().toLowerCase();
+    var q = searchText().toLowerCase();
     var rows = state.orders.filter(function (o) {
-      var okState = state.filter === 'all' || (state.filter === 'attention' ? (o.needs_attention && o.state !== 'test') : inFilter(o, state.filter));
-      var hay = [o.id, o.name, o.phone, o.invoice_no, o.email, o.address].join(' ').toLowerCase();
+      var okState = q ? (o.state !== 'test' || state.filter === 'test' || state.filter === 'all')
+        : (state.filter === 'all' || (state.filter === 'attention' ? (o.needs_attention && o.state !== 'test') : inFilter(o, state.filter)));
+      var hay = [o.id, o.name, o.phone, o.invoice_no, o.email, o.address, itemText(o)].join(' ').toLowerCase();
       return okState && inRange(o) && (!q || hay.indexOf(q) >= 0)
         && (!state.gift || !!o.gift_note) && (!state.coupon || !!o.coupon)
         && (!state.set || o.items.some(function (i) { return !!i.contents; }));
@@ -474,7 +486,10 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     STEPS.forEach(function (f) { fl.appendChild(h('div', { class: 'step' + (state.filter === f[0] ? ' on' : ''), role: 'button', tabindex: '0', onclick: function () { state.filter = f[0]; saveView(); render(); } }, h('small', {}, 'STEP ' + f[1]), h('b', {}, cnt(f[0])), h('span', {}, f[2]))); });
     var hint = STEPS.filter(function (f) { return f[0] === state.filter; })[0];
     var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
-    $('hint').hidden = !hint; if (hint) $('hint').textContent = hint[3] + (pre && (state.filter === 'topack' || state.filter === 'packed') ? '  PRE-ORDER PERIOD: pack now if you like, but do NOT ship before ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '.' : '');
+    var sq = searchText(), sn = $('searchNote'), stepName = hint ? hint[2] : (FILTERS.filter(function (f) { return f[0] === state.filter; })[0] || [0, 'the list'])[1], rw = rangeWords();
+    sn.hidden = !sq; sn.textContent = '';
+    if (sq) { sn.appendChild(document.createTextNode('Searching all steps for "' + sq + '" · clear the box to go back to ' + stepName + '.')); if (rw) sn.appendChild(h('div', {}, 'Searching ' + rw + ' only: change the date in Filter to look further back.')); }
+    $('hint').hidden = !hint || !!sq; if (hint && !sq) $('hint').textContent = hint[3] + (pre && (state.filter === 'topack' || state.filter === 'packed') ? '  PRE-ORDER PERIOD: pack now if you like, but do NOT ship before ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '.' : '');
     renderNeeds();
     var c = $('chips'); c.textContent = '';
     FILTERS.forEach(function (f) {
@@ -495,9 +510,9 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     [['fGift', 'gift'], ['fCoupon', 'coupon'], ['fSet', 'set']].forEach(function (x) { $(x[0]).classList.toggle('on', !!state[x[1]]); });
     var fb = $('filterBtn'), active = state.sort !== 'new' || state.range !== 'all' || state.gift || state.coupon || state.set; fb.textContent = active ? 'Filter •' : 'Filter'; fb.classList.toggle('on', !!active);
     var list = $('list'); list.textContent = '';
-    if (!rows.length) list.appendChild(h('p', { class: 'muted' }, 'Nothing here.'));
+    if (!rows.length) list.appendChild(h('p', { class: 'muted' }, sq ? 'No order matches "' + sq + '"' + (rw ? ' (searching ' + rw + ' only)' : '') + '.' : 'Nothing here.'));
     // Shipped is two lists in one: parcels Delhivery has not collected yet, then parcels it has. Every other step is a single list.
-    var groups = state.filter === 'shipped'
+    var groups = state.filter === 'shipped' && rows.every(function (o) { return o.state === 'shipped'; })   // a search can bring in other steps: then one plain list
       ? [['await', 'Awaiting pickup', 'Delhivery has not collected these yet: request the pickup, then print the labels.', rows.filter(function (o) { return o.awaiting_pickup; })],
          ['with', 'With courier', 'Collected and on the way.', rows.filter(function (o) { return !o.awaiting_pickup; })]].filter(function (g) { return g[3].length; })
       : [[null, null, null, rows]];
@@ -519,6 +534,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
         h('div', {},
           h('div', { class: 'top' }, h('span', {}, o.id, h('span', { class: 'badge b-' + o.state }, LABEL[o.state] || o.state.toUpperCase()), isLate(o) ? h('span', { class: 'badge b-late' }, 'LATE') : null, o.gift_note ? h('span', { class: 'badge b-gift' }, 'GIFT') : null, o.invoice_missing && o.state !== 'test' ? h('span', { class: 'badge b-cancelled', title: 'No invoice created' }, 'NO INVOICE') : null), h('span', {}, inr(o.total))),
           h('div', { class: 'meta' }, o.name + ' · ' + o.boxes + ' box' + (o.boxes === 1 ? '' : 'es') + ' · ' + when(o.paid_at || o.created_at) + (o.coupon ? ' · ' + o.coupon : '') + (o.source ? ' · from ' + o.source : '') + (o.state === 'unpaid' ? ' · ' + ageText(o.created_at) + ' ago' : '') + (o.refunded > 0 ? ' · refunded ' + inr(o.refunded) + (o.state === 'refunded' ? '' : ' (part)') : '')),
+          sq ? h('div', { class: 'meta' }, 'In: ' + (STEPWORD[o.state] || o.state)) : null,
           dtext ? h('div', { class: 'meta' + (isLate(o) ? ' late' : '') }, dtext) : null,
           ['topack', 'packed', 'shipped'].indexOf(o.state) >= 0 ? h('div', { class: 'meta' }, o.items.map(function (i) { return i.name + ' ×' + i.qty + (i.contents ? ' (' + i.contents + ')' : ''); }).join(', ')) : null,
           quick(o)))));

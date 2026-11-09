@@ -1532,5 +1532,62 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Task 3: the Orders search looks across every step and inside the order contents
+  list.push(async () => {
+    const o = await openAdmin('owner', { width: 375 }); const { q, qa, text, click, set } = o;
+    const cards = () => qa('#list .card'), ids = () => cards().map((c) => (text(c).match(/MNG-[A-Z0-9]+-\d+/) || [''])[0]);
+    const note = () => text(q('#searchNote'));
+    click(o.byText('#flow .step', /To pack/)); await sleep(100);
+    const before = ids();
+    ok(q('#searchNote').hidden, 'no search line while the box is empty');
+    // an order in another step is found, with its step in plain words
+    set(q('#q'), 'HHHH'); await sleep(100);
+    ok(ids().join() === 'MNG-HHHH-1007', 'a search finds a Delivered order while To pack is the step (' + ids().join() + ')');
+    ok(/In: Delivered/.test(text(cards()[0])), 'the card says its step in plain words (' + text(cards()[0]).slice(0, 80) + ')');
+    ok(!q('#searchNote').hidden && /Searching all steps for "HHHH"/.test(note()) && /go back to To pack/.test(note()), 'a line says all steps are searched and which step clearing returns to (' + note() + ')');
+    ok(qa('#flow .step').length === 4 && /To pack/.test(text(q('#flow .step.on'))), 'the step buttons stay, and To pack is still the chosen step');
+    // clearing returns to the step he was on
+    set(q('#q'), ''); await sleep(100);
+    ok(ids().join() === before.join() && q('#searchNote').hidden, 'clearing the box returns to the To pack list');
+    ok(!cards().some((c) => /In: /.test(text(c))), 'cards do not carry the step line when not searching');
+    // contents: Kesari inside a Trio set, and Kesari as a single box
+    set(q('#q'), 'kesari'); await sleep(100);
+    ok(ids().includes('MNG-AAAA-1010') && ids().includes('MNG-FFFF-1010'), 'kesari finds the order with Kesari only inside a set and the one with single Kesari boxes (' + ids().join() + ')');
+    ok(ids().includes('MNG-HHHH-1007') && ids().includes('MNG-REVA-1001'), 'kesari also finds sets in other steps (' + ids().join() + ')');
+    set(q('#q'), 'ajwain'); await sleep(100);
+    ok(ids().includes('MNG-REVB-1002') && !ids().includes('MNG-AAAA-1010'), 'an item name is searched too, and a set without it is not a hit (' + ids().join() + ')');
+    // the existing fields still work, and a letter is enough
+    set(q('#q'), 'collins'); await sleep(100); ok(ids().join() === 'MNG-WITH-1009', 'a customer name still finds the order');
+    set(q('#q'), 'k'); await sleep(100); ok(cards().length > 1, 'one character searches');
+    // no match
+    set(q('#q'), 'zzqq-nothing'); await sleep(100);
+    ok(cards().length === 0 && /No order matches "zzqq-nothing"/.test(text(q('#list'))), 'a miss says no order matches (' + text(q('#list')) + ')');
+    // a date range limits it, and says so
+    set(q('#q'), 'HHHH'); await sleep(50);
+    click(q('#filterBtn')); await sleep(150); set(q('#range'), 'yesterday'); await sleep(100);
+    click(o.byText('#panel button', /^Close$/)); await sleep(100);
+    ok(/Searching yesterday only/.test(note()), 'with a date range on the search line names it (' + note() + ')');
+    set(q('#q'), 'zzqq-nothing'); await sleep(100);
+    ok(/No order matches "zzqq-nothing"/.test(text(q('#list'))) && /yesterday/.test(text(q('#list'))), 'a miss with a range on names the range (' + text(q('#list')) + ')');
+    click(q('#filterBtn')); await sleep(150); set(q('#range'), 'all'); await sleep(100); click(o.byText('#panel button', /^Close$/)); await sleep(100);
+    set(q('#q'), 'HHHH'); await sleep(50);
+    ok(!/yesterday|only/.test(note()), 'no range line when every date is searched (' + note() + ')');
+    // the gift toggle still narrows a search
+    set(q('#q'), 'MNG-'); await sleep(100); const all = cards().length;
+    click(q('#filterBtn')); await sleep(150); click(q('#fGift')); await sleep(100); click(o.byText('#panel button', /^Close$/)); await sleep(100);
+    ok(cards().length > 0 && cards().length < all && cards().every((c) => /GIFT/.test(text(c))), 'the gift toggle still narrows a search (' + cards().length + ' of ' + all + ')');
+    click(q('#filterBtn')); await sleep(150); click(q('#fGift')); await sleep(100); click(o.byText('#panel button', /^Close$/)); await sleep(100);
+    set(q('#q'), '');
+    // test orders stay hidden while searching (the practice admin has none, so the answer is changed to include one)
+    const realFetch = o.win.fetch;
+    o.win.fetch = async (u, opt) => { const r = await realFetch(u, opt); if (!/\/admin\/api\/orders(\?|$)/.test(String(u))) return r; const j = await r.json(); (j.orders || []).forEach((x) => { if (x.id === 'MNG-TEST-1001') x.state = 'test'; }); return { ok: true, status: 200, json: async () => j, text: async () => JSON.stringify(j) }; };
+    click(q('#reload')); await sleep(600);
+    set(q('#q'), 'MNG-TEST'); await sleep(100);
+    ok(cards().length === 0 && /No order matches/.test(text(q('#list'))), 'a test order is not found while searching from a normal step (' + ids().join() + ')');
+    set(q('#q'), '');
+    ok(o.errors.length === 0, 'no page errors in the Orders search (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };
