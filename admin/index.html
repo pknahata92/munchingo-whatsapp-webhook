@@ -136,6 +136,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 .dlerr{color:var(--tx-red);font-weight:600;font-size:14px;margin:10px 0;overflow-wrap:anywhere}.dlerr:empty{display:none}
 .dlnosigbox{background:#FDF0D5;border:1px solid #D9A441;color:#4A3006;border-radius:12px;padding:12px 14px;margin:10px 0}.dlnosig{font-weight:700;margin-bottom:8px}
 .dllot .dlhd{display:flex;gap:6px 8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:4px}
+.lotcode{white-space:nowrap}
 .dlcode{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;overflow-wrap:anywhere}
 .dldates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:8px 0}
 .dldate{background:var(--band);border-radius:10px;padding:6px 10px;min-width:0}.dldate small{display:block;font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:.06em}.dldate b{font-size:14px}
@@ -1556,11 +1557,23 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       return img;
     }));
   }
+  // "15OCT26 · sticker MNGL-261016-01": the admin code, then the sticker code(s) (the lot's MNG-style aliases; none if its own code already is one).
+  // Each code is one unbreakable piece (nowrap), so a narrow phone wraps between codes, never at a hyphen.
+  var STICKER_RE = /^MNG[OKAL]-\d{6}-\d{2}$/;
+  function codePart(l) {
+    var own = h('span', { class: 'lotcode' }, l.code);
+    if (STICKER_RE.test(String(l.code))) return own;
+    var st = (l.aliases || []).filter(function (a) { return STICKER_RE.test(String(a)); });
+    if (!st.length) return own;
+    var out = [own, ' · sticker '];
+    st.forEach(function (a, i) { if (i) out.push(', '); out.push(h('span', { class: 'lotcode' }, a)); });
+    return out;
+  }
   function lotCard(l, extra) {
     var st = l.status === undefined ? null : lotChip(l.status), d = l.daysToStop;
     var stop = d == null ? null : d > 1 ? 'website stops in ' + d + ' days' : d === 1 ? 'website stops tomorrow' : d === 0 ? 'website stops today' : 'off the website since ' + dlWords(l.websiteStop);
     return h('button', { class: 'card lotcard', type: 'button', 'data-code': l.code, 'data-slug': l.slug, onclick: function () { openLot(l.code, l.slug); } },
-      h('div', { class: 'top' }, h('span', { class: 'dlcode' }, l.code), st ? h('span', { class: 'badge ' + st[1] }, st[0]) : null),
+      h('div', { class: 'top' }, h('span', { class: 'dlcode' }, codePart(l)), st ? h('span', { class: 'badge ' + st[1] }, st[0]) : null),
       h('div', { class: 'meta' }, [l.name || DL_NAME[l.slug] || l.slug, extra || (l.onHand != null ? l.onHand + ' on hand' : null), stop].filter(Boolean).join(' · ')));
   }
   function lotChoices(list) {
@@ -1576,8 +1589,14 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       var all = j.lots || [], own = state.role === 'owner';
       var qIn = h('input', { id: 'lotQ', type: 'search', autocomplete: 'off', autocapitalize: 'characters', placeholder: 'Code, sticker code, Krazy Bakers batch or order ID', 'aria-label': 'Search lots' });
       var found = h('div', { id: 'lotFound', 'aria-live': 'polite' });
-      var find = h('button', { class: 'btn small', type: 'button', onclick: function () { lotSearch(qIn.value, found, find, all); } }, 'Find');
+      lotClear(found);
+      var find = h('button', { class: 'btn small', type: 'button', onclick: function () { lotSearch(qIn.value, found, all); } }, 'Find');
       qIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') find.click(); });
+      qIn.addEventListener('input', function () {
+        clearTimeout(lotTimer);
+        if (!dlTrim(qIn.value)) return lotClear(found);
+        lotTimer = setTimeout(function () { lotSearch(qIn.value, found, all); }, 250);
+      });
       var cards = all.map(function (l) {
         if (l.code == null) return h('div', { class: 'card lotcard dim' }, h('div', { class: 'top' }, h('span', {}, l.name)), h('div', { class: 'meta' }, l.onHand + ' on hand · older lines with no lot, shown together, never guessed'));
         return lotCard(l);
@@ -1589,13 +1608,17 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
         h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { openInventory(); } }, 'Back to Stock'))]);
     }, function () { toast('No signal. Try again.', 6000); });
   }
-  // Search (spec 6.8): a code opens its lot page; a code on several flavours asks which; an order ID lists the lots in that order.
-  function lotSearch(q, box, btn, all) {
-    var t = dlTrim(q); box.textContent = '';
-    if (!t) return;
-    btn.disabled = true;
+  // Search as you type (owner, 9 Nov 2026): from one character, after a short pause (about 250 ms), like a regular search box. Enter and Find search at
+  // once. A code that is exactly one lot opens it; part of a code lists lot cards (always a list, even for one card), newest answer wins.
+  var lotSeq = 0, lotTimer = null;
+  function lotClear(box) { lotSeq++; clearTimeout(lotTimer); box.textContent = ''; }
+  function lotSearch(q, box, all) {
+    var t = dlTrim(q); clearTimeout(lotTimer);
+    var my = ++lotSeq;   // an answer that comes back after a newer search (or after the box was cleared) is dropped
+    if (!t) return void (box.textContent = '');
     api('/admin/api/stock/search?q=' + encodeURIComponent(t)).then(function (j) {
-      btn.disabled = false;
+      if (my !== lotSeq) return;
+      box.textContent = '';
       if (!j.ok) return box.appendChild(h('p', { class: 'dlerr' }, j.error || 'Could not search just now.'));
       if (j.lot) return openLot(j.lot.code, j.lot.slug);
       if (j.choose) return box.appendChild(lotChoices(j.choose));
@@ -1603,8 +1626,15 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
         var nm = DL_NAME[x.slug] || x.slug, l = (all || []).filter(function (y) { return y.code === x.code && y.slug === x.slug; })[0];
         return x.code ? lotCard(l || { code: x.code, slug: x.slug, name: nm }, boxesText(x.boxes) + ' in this order') : h('div', { class: 'line' }, h('span', {}, nm + ': ' + boxesText(x.boxes) + ' packed without a lot (Needs attention)'));
       })));
+      var more = h('p', { class: 'muted lotmore' }, 'Showing the first 50: type more to narrow.');
+      if (j.lots) {
+        if (!j.lots.length) return box.appendChild(j.more ? more : h('p', { class: 'muted' }, 'Nothing found for ' + t + '.'));
+        return box.appendChild(h('div', { class: 'lotlist' }, j.lots.map(function (l) {
+          return lotCard(l, l.orderId ? boxesText(l.boxes) + ' in ' + l.orderId + (l.onHand != null ? ' · ' + l.onHand + ' on hand' : '') : undefined);
+        }), j.more ? more : null));
+      }
       box.appendChild(h('p', { class: 'muted' }, 'Nothing found for ' + t + '.'));
-    }, function () { btn.disabled = false; box.appendChild(h('p', { class: 'dlerr' }, 'No signal. Try again.')); });
+    }, function () { if (my === lotSeq) { box.textContent = ''; box.appendChild(h('p', { class: 'dlerr' }, 'No signal. Try again.')); } });
   }
   // Owner: write off every box past its best before (EXPIRED rows). Asks first, naming the lots that look past it on this list.
   function throwExpired(all, btn) {

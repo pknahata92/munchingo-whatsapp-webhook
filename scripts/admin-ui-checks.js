@@ -1454,5 +1454,83 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Lots search as you type (9 Nov 2026): partial answers are lot cards, never auto-opened; the sticker code shows on every lot card
+  list.push(async () => {
+    const o = await openAdmin('owner', { width: 375 });
+    const page = (w) => w.text(w.q('#viewStock .pagehead'));
+    const btn = (w, re) => Array.from(w.q('#viewStock').querySelectorAll('button')).find((b) => re.test(w.text(b)));
+    const toLots = async (w) => { w.q('#viewStock').textContent = ''; w.click(w.byText('#tabs .tab', /^Stock$/)); await until(() => page(w) === 'Stock' && !!btn(w, /^Lots$/), 5000, 'the stock page'); w.click(btn(w, /^Lots$/)); await until(() => page(w) === 'Lots' && w.qa('#viewStock .lotcard').length > 0, 5000, 'the Lots list'); };
+    const found = () => o.qa('#lotFound .lotcard'), foundText = () => o.text(o.q('#lotFound'));
+    const searches = []; const f0 = o.win.fetch; let stub = null;   // stub(q) -> { body, delay } or null to go through
+    o.win.fetch = (u, opt) => {
+      const m = /\/stock\/search\?q=([^&]*)/.exec(String(u));
+      if (m) { const q = decodeURIComponent(m[1]); searches.push(q); const r = stub && stub(q); if (r) return new Promise((res) => setTimeout(() => res({ status: 200, json: async () => r.body }), r.delay || 0)); }
+      return f0(u, opt);
+    };
+    await toLots(o);
+    // the Lots list cards show the sticker code next to the admin code
+    const lc = o.qa('#viewStock .lotcard').find((c) => c.getAttribute('data-code') === '15OCT26' && c.getAttribute('data-slug') === 'atta-lite-sugar');
+    ok(!!lc && /15OCT26 · sticker MNGL-261016-01/.test(o.text(lc)), 'the Lots list card of Sugar-Lite 15OCT26 shows "15OCT26 · sticker MNGL-261016-01" (' + (lc ? o.text(lc) : 'no card') + ')');
+    // typing mngl, one letter at a time: one request after the pause, a list with the Sugar-Lite card and its sticker code
+    searches.length = 0;
+    for (const v of ['m', 'mn', 'mng', 'mngl']) { o.set(o.q('#lotQ'), v); await sleep(40); }
+    ok(searches.length === 0, 'nothing is sent while the keys are still going (' + searches.join(',') + ')');
+    await until(() => found().length > 0, 4000, 'the partial list');
+    ok(searches.length === 1 && searches[0] === 'mngl', 'one request per pause, for what was typed last (' + searches.join(',') + ')');
+    const sl = found().find((c) => c.getAttribute('data-code') === '15OCT26' && c.getAttribute('data-slug') === 'atta-lite-sugar');
+    ok(!!sl && /sticker MNGL-261016-01/.test(o.text(sl)) && /Released/.test(o.text(sl)) && /\d+ on hand/.test(o.text(sl)), 'typing mngl lists the Sugar-Lite lot-1 card with its sticker code, chip and boxes (' + (sl ? o.text(sl) : foundText().slice(0, 120)) + ')');
+    ok(page(o) === 'Lots', 'a partial answer never opens a lot');
+    // one card is still a list
+    o.set(o.q('#lotQ'), 'mngl-26101'); await until(() => found().length === 1 && /MNGL-261016-01/.test(foundText()), 4000, 'a one-card list');
+    await sleep(300);
+    ok(page(o) === 'Lots' && found().length === 1, 'one match is still a list of one card, not an auto-open');
+    // an exact code opens the lot, by typing alone
+    o.set(o.q('#lotQ'), 'MNGK-261016-01'); await until(() => page(o) === '15OCT26', 4000, 'the exact code to open its lot');
+    ok(/Atta Kesari/.test(o.text(o.q('#lotHead'))), 'an exact code opens its lot page');
+    // one character clears; Enter and Find search at once
+    await toLots(o);
+    o.set(o.q('#lotQ'), 'mngl'); await until(() => found().length > 0, 4000, 'the list');
+    o.set(o.q('#lotQ'), 'm'); await until(() => found().length > 1 && /Showing the first 50: type more to narrow\./.test(foundText()), 4000, 'the one-character list');
+    ok(found().length > 1 && searches[searches.length - 1] === 'm', 'one character searches too, like a regular search box (' + found().length + ' cards)');
+    o.set(o.q('#lotQ'), ''); await sleep(40);
+    ok(found().length === 0 && foundText() === '', 'an empty box clears the results');
+    searches.length = 0;
+    o.set(o.q('#lotQ'), 'mngk-26101'); o.q('#lotQ').dispatchEvent(new o.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await until(() => found().length > 0, 1500, 'Enter to search at once');
+    ok(found().some((c) => c.getAttribute('data-slug') === 'atta-kesari'), 'Enter searches at once, without the pause');
+    await sleep(400);
+    ok(searches.length === 1, 'the pause does not search again after Enter (' + searches.join(',') + ')');
+    o.set(o.q('#lotQ'), 'mngo-26101'); o.click(btn(o, /^Find$/)); await until(() => found().some((c) => c.getAttribute('data-slug') === 'atta-original'), 1500, 'Find to search at once');
+    ok(true, 'Find searches at once');
+    // a stale answer never overwrites a newer one
+    const card = (code, extra) => Object.assign({ code, slug: 'atta-original', name: 'Atta Original', status: 'released', onHand: 5, bakeDate: '2026-10-16', websiteStop: null, daysToStop: null, aliases: [], supplierBatch: null }, extra || {});
+    stub = (q) => (q === 'slow' ? { delay: 900, body: { ok: true, lots: [card('STALE-ONE')], more: false } } : q === 'fast' ? { delay: 10, body: { ok: true, lots: [card('FRESH-ONE')], more: false } } : null);
+    o.set(o.q('#lotQ'), 'slow'); await sleep(350);   // the slow request is on its way
+    o.set(o.q('#lotQ'), 'fast'); await until(() => /FRESH-ONE/.test(foundText()), 3000, 'the newer answer');
+    await sleep(1100);
+    ok(/FRESH-ONE/.test(foundText()) && !/STALE-ONE/.test(foundText()), 'an older request finishing late does not overwrite the newer result (' + foundText().slice(0, 80) + ')');
+    // clearing while a request is out: its answer is ignored too
+    o.set(o.q('#lotQ'), 'slow'); await sleep(350); o.set(o.q('#lotQ'), ''); await sleep(1100);
+    ok(foundText() === '', 'an answer that comes back after the box was cleared is dropped (' + foundText().slice(0, 60) + ')');
+    // order hits, sticker codes, the cap line and the empty-but-capped answer
+    stub = (q) => (q === 'orders' ? { body: { ok: true, more: true, lots: [card('MNGO-261016-01', { orderId: 'MNG-AAAA-1010', boxes: 3, aliases: [] }), card('15OCT26', { slug: 'atta-kesari', name: 'Atta Kesari', aliases: ['MNGK-261016-01', 'MNGK-261017-01', 'OLD1'], status: 'hold', onHand: 0 })] } }
+      : q === 'capped' ? { body: { ok: true, lots: [], more: true } } : null);
+    o.set(o.q('#lotQ'), 'orders'); await until(() => found().length === 2, 3000, 'the order-hit cards');
+    const [c1, c2] = found();
+    ok(/3 boxes in MNG-AAAA-1010/.test(o.text(c1)), 'an order-hit card says how many boxes are in the order (' + o.text(c1) + ')');
+    ok(!/sticker/.test(o.text(c1)), 'a lot whose own code is an MNG sticker code shows no "sticker" part (' + o.text(c1) + ')');
+    ok(/15OCT26 · sticker MNGK-261016-01, MNGK-261017-01/.test(o.text(c2)) && !/OLD1/.test(o.text(c2)), 'several sticker codes are joined with ", " (' + o.text(c2) + ')');
+    ok(/On hold/.test(o.text(c2)) && /0 on hand/.test(o.text(c2)), 'the card is marked On hold and says 0 on hand (' + o.text(c2) + ')');
+    ok(/Showing the first 50: type more to narrow\./.test(foundText()) && foundText().indexOf('Showing the first 50') > foundText().indexOf('0 on hand'), 'when more is true the line sits under the cards');
+    o.set(o.q('#lotQ'), 'capped'); await until(() => found().length === 0 && /Showing the first 50/.test(foundText()), 3000, 'the capped empty answer');
+    ok(found().length === 0 && !/Nothing found/.test(foundText()), 'an empty but capped answer says to type more, not "Nothing found"');
+    stub = null;
+    o.set(o.q('#lotQ'), 'zzqq'); await until(() => /Nothing found for zzqq/.test(foundText()), 3000, 'the empty answer');
+    ok(/Nothing found for zzqq/.test(foundText()), 'a search with no hit says "Nothing found"');
+    ok(/\.lotcode\{white-space:nowrap/.test(await (await fetch(BASE + '/admin')).text()), 'long codes do not break at their hyphens (the lotcode rule)');
+    ok(o.errors.length === 0, 'no page errors in the Lots search (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };
