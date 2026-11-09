@@ -1307,12 +1307,33 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     reset(); await L.search('zzzz');
     eq([st.saleCalls.length, st.saleCalls[0] && st.saleCalls[0].n], [1, 0], 'a query that matches no order brings back zero sale rows');
     reset(); await L.search('aaaa');
-    eq(st.saleCalls, [{ q: 'AAAA', n: 1 }], 'only the matching order\'s rows come back (the other order is not read)');
+    eq(st.saleCalls.map((x) => ({ q: x.q, n: x.n })), [{ q: 'AAAA', n: 1 }], 'only the matching order\'s rows come back (the other order is not read)');
     reset(); await L.search('QQ');
-    eq(st.saleCalls, [{ q: 'QQ', n: 2 }], 'a pack and its undo share a ref and both come back, so the undo rule still works');
+    eq(st.saleCalls.map((x) => ({ q: x.q, n: x.n })), [{ q: 'QQ', n: 2 }], 'a pack and its undo share a ref and both come back, so the undo rule still works');
     eq(await L.search('qqqq'), { none: true }, 'the undone order gives no lot');
-    eq((await st.saleRowsMatching('MNGAAAA')).length, 1, 'separators in the stored ref are allowed between the typed letters');
-    eq((await st.saleRowsMatching('2026')).length, 0, 'the time after the @ is never matched');
+    eq((await st.saleRowsMatching('MNGAAAA')).rows.length, 1, 'separators in the stored ref are allowed between the typed letters');
+    eq((await st.saleRowsMatching('2026')).rows.length, 0, 'the time after the @ is never matched');
+  }
+
+  // Typed text never breaks the pattern; a cut-off sale read never looks complete
+  {
+    const { st } = fresh();
+    await st.insertLots([{ item_slug: 'atta-kesari', lot_code: 'MNGK-261105-01', bake_date: '2026-11-05', best_before: '2027-02-03', status: 'released' }]);
+    const L = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    for (const q of ['9WZ6(', '[', '.*', 'a(b', '((', '\\', 'a)b', '+?', '$^', 'mn(g']) {
+      const r = await tryIt(() => L.search(q));
+      ok(r.r && (r.r.none === true || Array.isArray(r.r.lots)), 'typo "' + q + '" returns normally (' + (r.e ? r.e.message : JSON.stringify(r.r)) + ')');
+    }
+    ok(st.saleCalls.length > 0 && st.saleCalls.every((x) => x.pattern === null || /^\^\[\^@\]\*[a-z0-9]+(\[-\/ \]\*[a-z0-9]+)*$/i.test(x.pattern)), 'every pattern sent to the store is letters, digits and the separator class only (' + JSON.stringify(st.saleCalls.map((x) => x.pattern)) + ')');
+    ok(st.saleCalls.some((x) => x.pattern === '^[^@]*9[-/ ]*W[-/ ]*Z[-/ ]*6'), '9WZ6( became 9WZ6');
+    // more sale rows than the cap match: the answer says there is more
+    for (let i = 0; i < 2001; i++) st.mv.push({ id: 100000 + i, item_slug: 'atta-kesari', qty: -1, type: 'SALE', lot_code: 'MNGK-261105-01', ref: 'MNG-X' + String(i).padStart(3, '0') + '-1010@2026-11-06T08:00:00.000Z', created_at: '2026-11-06T08:00:00.000Z' });
+    const big = await st.saleRowsMatching('mng');
+    eq([big.rows.length, big.capped], [2000, true], 'the store reads at most 2000 sale rows and says it was cut');
+    const r = await L.search('mng');
+    ok(r.more === true && Array.isArray(r.lots), 'a search whose sale read hit the cap says more: true (' + JSON.stringify([r.more, r.lots && r.lots.length]) + ')');
+    const small = await L.search('mngk');
+    eq(small.more, false, 'under the cap and under 50 lots: not more');
   }
 
   console.log(pass + ' passed, ' + fail + ' failed');

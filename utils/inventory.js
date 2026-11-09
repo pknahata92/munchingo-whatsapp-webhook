@@ -743,17 +743,19 @@ function supabaseStore() {
     },
     // The website packs and undos whose order ID matches `bare` (the query with - / and spaces taken out), found in the database by a
     // case-insensitive regex that allows separators between letters (a[-/ ]*a ...) and looks only before the "@". Paged, capped at 2000 rows.
-    saleRowsMatching: async (bare) => {
-      const chars = String(bare || '').replace(/[^A-Za-z0-9]/g, '');
-      if (!chars) return [];
+    // Returns { rows, capped }: capped is true when more than `cap` rows matched, so the caller must not present the answer as complete.
+    saleRowsMatching: async (bare, cap = 2000) => {
+      const chars = String(bare || '').replace(/[^A-Za-z0-9]/g, '');   // typed text never reaches the pattern except as letters and digits
+      if (!chars) return { rows: [], capped: false };
       const pattern = '^[^@]*' + chars.split('').join('[-/ ]*');
       const out = [];
-      for (let from = 0; from < 2000; from += 1000) {
-        const page = ok(await c().from('stock_movements').select('ref,item_slug,lot_code,qty,type').in('type', ['SALE', 'SALE_UNDO']).filter('ref', 'imatch', pattern).order('id', { ascending: true }).range(from, from + 999)) || [];
+      for (let from = 0; ; from += 1000) {
+        const to = Math.min(from + 999, cap);   // one row past the cap tells us it was cut
+        const page = ok(await c().from('stock_movements').select('ref,item_slug,lot_code,qty,type').in('type', ['SALE', 'SALE_UNDO']).filter('ref', 'imatch', pattern).order('id', { ascending: true }).range(from, to)) || [];
         out.push(...page);
-        if (page.length < 1000) break;
+        if (page.length < to - from + 1 || out.length > cap) break;
       }
-      return out;
+      return { rows: out.slice(0, cap), capped: out.length > cap };
     },
     movementsByDelivery: async (id) => ok(await c().from('stock_movements').select('*').eq('delivery_id', id)) || [],
     saveDelivery: async ({ d, lots, moves }) => ok(await c().rpc('stock_save_delivery', { d, lots: lots || [], moves: moves || [] })),

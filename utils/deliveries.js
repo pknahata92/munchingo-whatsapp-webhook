@@ -691,7 +691,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     }
     // Orders: the id is the part of the ref before "@". Their lots are the SALE rows not undone (the restoreForOrder rule: ref + flavour + lot);
     // lot-less sales are skipped. A lot already listed by its own code is not listed again for an order.
-    const rows = (await store.saleRowsMatching(n)) || [];   // only the sale rows whose order ID can match, read in the database
+    const { rows, capped } = (await store.saleRowsMatching(n)) || { rows: [], capped: false };   // only the sale rows whose order ID can match, read in the database
     const byOrder = new Map();
     for (const r of rows) {
       const id = orderOfRef(r.ref).orderId;
@@ -711,7 +711,8 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     const rank = (slug) => { const i = FORM_ORDER.indexOf(slug); return i < 0 ? FORM_ORDER.length : i; };
     out.sort((a, b) => rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0)
       || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) || (String(a.orderId || '') < String(b.orderId || '') ? -1 : String(a.orderId || '') > String(b.orderId || '') ? 1 : 0));
-    return out.length ? { lots: out.slice(0, PARTIAL_CAP), more: out.length > PARTIAL_CAP } : { none: true };
+    // capped: more sale rows matched than the store reads, so the order hits may be missing; never look complete (same as the 50 cap)
+    return out.length || capped ? { lots: out.slice(0, PARTIAL_CAP), more: out.length > PARTIAL_CAP || capped } : { none: true };
   }
 
   async function search(q) {
