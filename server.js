@@ -345,7 +345,6 @@ app.get('/internal/daily-digest', async (req, res) => {
   }
 
   try {
-    const { getOrdersPaidSince, getInvoicesByOrderIds } = require('./utils/database');
     const { sendDailyDigestEmail } = require('./utils/mailer');
 
     // The 8:00 AM email summarises the whole previous day in IST (00:00 to 24:00), so every order
@@ -362,18 +361,21 @@ app.get('/internal/daily-digest', async (req, res) => {
     }
     const since = new Date(Date.parse(dayIst + 'T00:00:00Z') - IST);
     const until = new Date(since.getTime() + 86400000);
-    const orders = await getOrdersPaidSince(since.toISOString(), until.toISOString());
-    const invoicesByOrder = await getInvoicesByOrderIds(orders.map((o) => o.order_id));
-    const { getCreditNotesBetween } = require('./utils/database');
-    const creditNotes = await getCreditNotesBetween(since.toISOString(), until.toISOString());
-
     const dayLabel = new Date(Date.parse(dayIst + 'T12:00:00Z')).toLocaleDateString('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    let orders;
     try {
-      let suggestions = [];
-      try { suggestions = await require('./utils/database').listSuggestionsBetween(since.toISOString(), until.toISOString()); } catch (e) { console.error('[DIGEST] suggestions not read:', e.message); }
-      let stockLines = null;
-      try { stockLines = await require('./utils/deliveries').instance().digestLines(todayIst); } catch (e) { console.error('[DIGEST] stock lines not read:', e.message); }
-      await sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder, creditNotes, suggestions, stockLines });
+      // Orders PAID that day (invoice time), never ones only edited that day, plus every open order (utils/dailySummary.js).
+      const database = require('./utils/database');
+      const day = await require('./utils/dailySummary').gatherDay({
+        since: since.toISOString(), until: until.toISOString(), todayIst,
+        deps: {
+          getPaidOrdersUpdatedSince: database.getPaidOrdersUpdatedSince, getInvoicesByOrderIds: database.getInvoicesForSummary,
+          getCreditNotesBetween: database.getCreditNotesBetween, listSuggestionsBetween: database.listSuggestionsBetween,
+          stockLines: (d) => require('./utils/deliveries').instance().digestLines(d), listOrders: () => require('./utils/adminActions').listOrders(),
+        },
+      });
+      orders = day.orders;
+      await sendDailyDigestEmail({ dayLabel, ...day });
     } catch (sendErr) {
       if (!force) await releaseDigestDay(dayIst); // let the next trigger retry
       throw sendErr;

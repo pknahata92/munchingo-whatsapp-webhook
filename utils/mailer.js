@@ -406,15 +406,15 @@ function csvCell(v) {
 }
 
 // 8:00 AM summary of the previous day: totals, pack list, every order, plus a CSV for accounting.
-async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, creditNotes = [], suggestions = [], stockLines = null }) {
+async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, creditNotes = [], suggestions = [], stockLines = null, todo }) {
   const t = require('./emailTemplates');
   const { contentsOf } = require('./orderText');
   const revenue = orders.reduce((n, o) => n + Number(o.total || 0), 0);
   const payload = {
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [process.env.NOTIFY_EMAIL],
-    subject: (orders.length ? `Munchingo ${dayLabel}: ${orders.length} order${orders.length === 1 ? '' : 's'}, Rs.${revenue}` : `Munchingo ${dayLabel}: no orders`) + (creditNotes.length ? ` (${creditNotes.length} refund${creditNotes.length === 1 ? '' : 's'})` : ''),
-    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder, creditNotes, suggestions, stockLines }),
+    subject: (orders.length ? `Munchingo ${dayLabel}: ${orders.length} order${orders.length === 1 ? '' : 's'}, Rs.${revenue}` : `Munchingo ${dayLabel}: no orders`) + (creditNotes.length ? ` (${creditNotes.length} refund${creditNotes.length === 1 ? '' : 's'})` : '') + require('./dailySummary').subjectTail(todo),
+    html: t.dailySummaryHtml({ dayLabel, orders, invoicesByOrder, creditNotes, suggestions, stockLines, todo }),
   };
   if (orders.length) {
     const head = ['order_id', 'paid_at_ist', 'name', 'phone', 'email', 'items', 'boxes', 'gift_note', 'coupon', 'discount', 'total', 'invoice_no', 'taxable', 'cgst', 'sgst', 'igst', 'payment_id', 'ship_to'];
@@ -423,7 +423,7 @@ async function sendDailyDigestEmail({ orders, dayLabel, invoicesByOrder = {}, cr
       const i = invoicesByOrder[o.order_id] || {};
       const items = (o.items || []).map((it) => `${it.productName} x${it.quantity}${contentsOf(it) ? ' (' + contentsOf(it) + ')' : ''}`).join('; ');
       const boxes = (o.items || []).reduce((n, it) => n + (Number(it.quantity) || 0) * boxesIn(it), 0);
-      return [o.order_id, new Date(o.updated_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), o.customer_name, '+' + o.customer_phone, o.customer_email || '', items, boxes, o.gift_note || '', o.coupon_code || '', o.discount_amount || 0, o.total, i.invoice_no || '', (i.taxable_paise || 0) / 100, (i.cgst_paise || 0) / 100, (i.sgst_paise || 0) / 100, (i.igst_paise || 0) / 100, o.payment_id || '', (o.delivery_address && o.delivery_address.raw) || ''];
+      return [o.order_id, new Date(o.paid_at || o.updated_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), o.customer_name, '+' + o.customer_phone, o.customer_email || '', items, boxes, o.gift_note || '', o.coupon_code || '', o.discount_amount || 0, o.total, i.invoice_no || '', (i.taxable_paise || 0) / 100, (i.cgst_paise || 0) / 100, (i.sgst_paise || 0) / 100, (i.igst_paise || 0) / 100, o.payment_id || '', (o.delivery_address && o.delivery_address.raw) || ''];
     });
     const csv = [head, ...rows].map((r) => r.map(csvCell).join(',')).join('\n');
     payload.attachments = [{ filename: `munchingo-orders-${dayLabel.replace(/[^A-Za-z0-9]+/g, '-')}.csv`, content: Buffer.from('\uFEFF' + csv, 'utf8').toString('base64') }];

@@ -95,5 +95,24 @@ const MSG = 'We’re delivering in Delhi NCR only.';
   ok(sent.some((t) => /across India/.test(t)), 'reopened: shipping info says across India again');
   delete process.env.DELIVERY_NATIONWIDE;
 
+  // The order wording follows the same switch (Prashant approved, 9 Nov 2026)
+  sent.length = 0;
+  await h.sendOrderInstructions('919876543210');
+  ok(sent.some((t) => t.includes('Delivering in Delhi NCR for now 📍')) && !sent.some((t) => /across India/.test(t)), 'bot how-to-order: Delhi NCR, not across India');
+  process.env.DELIVERY_NATIONWIDE = '1'; sent.length = 0;
+  await h.sendOrderInstructions('919876543210');
+  ok(sent.some((t) => t.includes('Delivery across India')), 'reopened: how-to-order says across India again');
+  delete process.env.DELIVERY_NATIONWIDE;
+  const tpl = require('../utils/emailTemplates');
+  const order = { order_id: 'MNG-AB12-0911', customer_name: 'Riya Kapoor', total: 518, created_at: new Date().toISOString(), items: [{ slug: 'atta-original', productName: 'Atta Original', quantity: 2, item_price: 259 }] };
+  let mail = tpl.customerConfirmationHtml({ order, invoice: null });
+  ok(mail.includes('On its way to you in Delhi NCR. We&rsquo;ll update you on WhatsApp.'), 'order email step 2: on its way to you in Delhi NCR');
+  ok(mail.includes('deliver it straight to their doorstep, anywhere in Delhi NCR.'), 'pass-it-on box: anywhere in Delhi NCR');
+  ok(!/across India|anywhere in India/.test(mail), 'order email: no India-wide promise while NCR-only is on');
+  process.env.DELIVERY_NATIONWIDE = '1';
+  mail = tpl.customerConfirmationHtml({ order, invoice: null });
+  ok(mail.includes('Shipped across India.') && mail.includes('anywhere in India.'), 'reopened: the emails say India again');
+  delete process.env.DELIVERY_NATIONWIDE;
+
   console.log(`delivery-area-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

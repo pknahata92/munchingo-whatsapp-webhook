@@ -187,7 +187,7 @@ async function sendOrderInstructions(to) {
       `4️⃣ We'll confirm your order and share payment & delivery details\n\n` +
       `💳 All orders are pre-paid: UPI (Google Pay, PhonePe, Paytm), debit or credit card, or net banking, through a secure link.\n\n` +
       `Minimum order: ${MIN_BOXES} boxes for delivery. Free shipping from ₹${FREE_FROM} (3 boxes), ₹${SHIPPING_FEE} below that.\n` +
-      `Delivery across India 🇮🇳`,
+      (deliveryArea.nationwide() ? `Delivery across India 🇮🇳` : `Delivering in Delhi NCR for now 📍`),   // follows DELIVERY_NATIONWIDE (Prashant 9 Nov)
     [
       { id: 'btn_products', title: '🛒 Browse Products' },
       { id: 'btn_contact',  title: '📞 Talk to Us' },

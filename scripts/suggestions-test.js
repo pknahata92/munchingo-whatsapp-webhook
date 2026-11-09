@@ -107,7 +107,8 @@ function fakes(startMs) {
   ok(/2 suggestions? or feedback/i.test(html) && /Make a jaggery one &amp; more/.test(html) && /Riya &lt;b&gt;/.test(html), 'the daily summary lists yesterday\'s suggestions, escaped');
   ok(!/suggestion/i.test(t.dailySummaryHtml({ dayLabel: 'x', orders: [] })), 'no suggestions: no section');
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  ok(/listSuggestionsBetween\(/.test(srv) && /sendDailyDigestEmail\(\{[^}]*suggestions/.test(srv), 'the 8:00 job passes yesterday\'s suggestions to the summary');
+  // The 8:00 job gathers the day in utils/dailySummary.js (gatherDay reads the suggestions; scripts/daily-summary-test.js checks it).
+  ok(/listSuggestionsBetween: database\.listSuggestionsBetween/.test(srv) && /sendDailyDigestEmail\(\{ dayLabel, \.\.\.day \}\)/.test(srv), 'the 8:00 job passes yesterday\'s suggestions to the summary');
   console.log(`suggestions-test: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); console.log(`suggestions-test: ${pass} passed, ${fail} failed`); process.exit(1); });
