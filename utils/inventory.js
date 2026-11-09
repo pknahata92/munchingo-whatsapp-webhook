@@ -786,13 +786,13 @@ function supabaseStore() {
       }
       return out;
     },
-    // The website packs and undos whose order ID matches `bare` (the query with - / and spaces taken out), found in the database by a
-    // case-insensitive regex that allows separators between letters (a[-/ ]*a ...) and looks only before the "@". Paged, capped at 2000 rows.
+    // The website packs and undos whose order ID contains `idPart` (the query as upper-case letters, digits and hyphens: separators already
+    // made one hyphen, hyphens kept), found in the database by a case-insensitive regex that looks only before the "@". Paged, capped at 2000 rows.
     // Returns { rows, capped }: capped is true when more than `cap` rows matched, so the caller must not present the answer as complete.
-    saleRowsMatching: async (bare, cap = 2000) => {
-      const chars = String(bare || '').replace(/[^A-Za-z0-9]/g, '');   // typed text never reaches the pattern except as letters and digits
-      if (!chars) return { rows: [], capped: false };
-      const pattern = '^[^@]*' + chars.split('').join('[-/ ]*');
+    saleRowsMatching: async (idPart, cap = 2000) => {
+      const text = String(idPart || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');   // typed text never reaches the pattern except as letters, digits and hyphens
+      if (!text.replace(/-/g, '')) return { rows: [], capped: false };
+      const pattern = '^[^@]*' + text;   // a hyphen outside brackets is literal in a Postgres regex
       const out = [];
       for (let from = 0; ; from += 1000) {
         const to = Math.min(from + 999, cap);   // one row past the cap tells us it was cut

@@ -1256,7 +1256,7 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     eq(all.lots.map((c) => [c.code, c.status, c.onHand]).filter((x) => ['MNGO-261027-01', 'MNGA-261101-01', 'MNGA-260920-01', 'MNGK-261105-01'].includes(x[0])), [['MNGO-261027-01', 'void', 0], ['MNGK-261105-01', 'hold', 7], ['MNGA-261101-01', 'rejected', 0], ['MNGA-260920-01', 'hold', 0]], 'void, held, rejected and empty lots are listed and marked');
     eq(all.lots.find((c) => c.code === 'MNGK-261105-01').supplierBatch, 'KB/OCT26/01', 'card carries the supplier batch');
     // partial order ID: lots reached only through the order, with that order's boxes
-    for (const q of ['aaaa', 'mngaaaa', 'AAAA-1010', 'g-aaaa-1']) eq(codes(await L.search(q)), ['kesari:MNGK-261105-01#MNG-AAAA-1010x3', 'lite-sugar:15OCT26#MNG-AAAA-1010x1'], 'partial order ID "' + q + '" lists its lots with the order and its boxes');
+    for (const q of ['aaaa', 'mng aaaa', 'AAAA-1010', 'g-aaaa-1']) eq(codes(await L.search(q)), ['kesari:MNGK-261105-01#MNG-AAAA-1010x3', 'lite-sugar:15OCT26#MNG-AAAA-1010x1'], 'partial order ID "' + q + '" lists its lots with the order and its boxes');
     eq(await L.search('bbbb'), { none: true }, 'an order whose packing was undone has no lots');
     eq(await L.search('cccc'), { none: true }, 'a lot-less sale gives no lot');
     // 1 character
@@ -1335,8 +1335,57 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     reset(); const q2 = await L.search('QQ');
     eq([st.saleCalls.length, q2.more], [0, true], 'under 3 letters or digits the order-ID read is skipped and the answer says more: true');
     eq(await L.search('qqqq'), { none: true }, 'the undone order gives no lot');
-    eq((await st.saleRowsMatching('MNGAAAA')).rows.length, 1, 'separators in the stored ref are allowed between the typed letters');
+    eq([(await st.saleRowsMatching('MNG-AAAA')).rows.length, (await st.saleRowsMatching('MNGAAAA')).rows.length], [1, 0], 'order IDs keep their hyphens: MNG-AAAA matches, MNGAAAA does not');
     eq((await st.saleRowsMatching('2026')).rows.length, 0, 'the time after the @ is never matched');
+  }
+
+  // Order IDs match with their hyphens kept (9 Nov 2026, live check): "mngl" must not list lots only because an order MNG-LOSD-2010 drew from them
+  {
+    const { st } = fresh();
+    const SLP = 'atta-lite-sugar', T = '2026-11-06T08:00:00.000Z';
+    await st.insertLots([
+      { item_slug: 'atta-original', lot_code: '15OCT26', bake_date: '2026-10-16', best_before: '2027-01-14', status: 'released' },
+      { item_slug: 'atta-kesari', lot_code: '15OCT26', bake_date: '2026-10-16', best_before: '2027-01-14', status: 'released' },
+      { item_slug: 'atta-ajwain', lot_code: '15OCT26', bake_date: '2026-10-16', best_before: '2027-01-14', status: 'released' },
+      { item_slug: SLP, lot_code: '15OCT26', aliases: ['MNGL-261016-01'], bake_date: '2026-10-16', best_before: '2027-01-14', status: 'released' },
+      { item_slug: SLP, lot_code: 'MNGL-261101-01', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'released' },
+      { item_slug: 'atta-kesari', lot_code: 'MNGK-261105-01', bake_date: '2026-11-05', best_before: '2027-02-03', status: 'released' }]);
+    const sale = (o, slug, code, q) => ({ item_slug: slug, qty: -q, type: 'SALE', lot_code: code, best_before: '2027-01-14', ref: o + '@' + T });
+    await st.insert([
+      ...['atta-original', 'atta-kesari', 'atta-ajwain'].map((s2) => sale('MNG-LOSD-2010', s2, '15OCT26', 1)),
+      sale('MNG-9WZ6-2910', 'atta-kesari', 'MNGK-261105-01', 2)]);
+    const L = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    const codes = (r) => (r.lots || []).map((c) => c.slug.replace('atta-', '') + ':' + c.code + (c.orderId ? '#' + c.orderId : ''));
+    const r = await L.search('mngl');
+    eq(codes(r), ['lite-sugar:MNGL-261101-01', 'lite-sugar:15OCT26'], 'mngl lists only the Sugar-Lite lots: the MNG-LOSD-2010 order does not match');
+    ok(!codes(r).some((c) => c.includes('MNG-LOSD-2010')), 'no card is there because of order MNG-LOSD-2010');
+    eq(codes(await L.search('9wz6')), ['kesari:MNGK-261105-01#MNG-9WZ6-2910'], '9wz6 finds the order\'s lot');
+    for (const q of ['9WZ6-29', 'mng-9wz6', 'mng 9wz6', 'mng/9wz6']) eq(codes(await L.search(q)), ['kesari:MNGK-261105-01#MNG-9WZ6-2910'], '"' + q + '" finds the order\'s lot');
+    eq(await L.search('9wz62910'), { none: true }, 'the ID typed without its hyphen does not match');
+    eq(codes(await L.search('mngk')).includes('kesari:MNGK-261105-01'), true, 'mngk still finds the lot by code');
+    // starts-with ranking for an order: at the start of the ID or right after a hyphen, never inside a part
+    const sorted = async (q) => { const x = await L.search(q); return x.lots; };
+    await st.insertLots([{ item_slug: 'atta-original', lot_code: 'ZZ9WZ6X', bake_date: '2026-10-01', best_before: '2027-01-01', status: 'released' }]);
+    await st.insertLots([{ item_slug: 'atta-original', lot_code: 'ZZWZ6Y', bake_date: '2026-10-01', best_before: '2027-01-01', status: 'released' }]);
+    // 9wz6: the order card (starts a part) ranks before the contains-only lot ZZ9WZ6X even though Original sorts before Kesari
+    eq(codes({ lots: await sorted('9wz6') }), ['kesari:MNGK-261105-01#MNG-9WZ6-2910', 'original:ZZ9WZ6X'], 'an order card ranks in the starts-with group for 9wz6');
+    eq(codes({ lots: await sorted('2910') }), ['kesari:MNGK-261105-01#MNG-9WZ6-2910'], 'an order card for 2910 (a part after a hyphen)');
+    await st.insertLots([{ item_slug: 'atta-original', lot_code: 'QQ2910Z', bake_date: '2026-10-01', best_before: '2027-01-01', status: 'released' }]);
+    eq(codes({ lots: await sorted('2910') }), ['kesari:MNGK-261105-01#MNG-9WZ6-2910', 'original:QQ2910Z'], 'an order card ranks in the starts-with group for 2910');
+    await st.insertLots([{ item_slug: 'atta-original', lot_code: 'QQWZ6Z', bake_date: '2026-10-01', best_before: '2027-01-01', status: 'released' }]);
+    eq(codes({ lots: await sorted('wz6') }), ['original:QQWZ6Z', 'original:ZZ9WZ6X', 'original:ZZWZ6Y', 'kesari:MNGK-261105-01#MNG-9WZ6-2910'], 'an order card does not rank first for wz6 (it is inside a part); it comes after the Original lots by flavour order only')
+    // mng and mng-: the shared prefix reads no orders and does not force more
+    st.saleCalls.length = 0;
+    for (const q of ['mng', 'MNG-', 'mng-']) { const x = await L.search(q); eq([st.saleCalls.length, x.more], [0, false], '"' + q + '" makes no order read and is not more'); }
+    st.saleCalls.length = 0;
+    await L.search('mng-9'); ok(st.saleCalls.length === 1, 'mng-9 reads orders');
+    for (const q of ['9WZ6(', 'mng- 9wz6 ', '[9wz6]', '.*9wz6', '--9wz6--', '9wz6/ -']) await L.search(q);
+    ok(st.saleCalls.every((x) => x.pattern === null || /^\^\[\^@\]\*[A-Z0-9-]+$/.test(x.pattern)), 'the pattern holds only A-Z, 0-9 and hyphen after ^[^@]* (' + JSON.stringify(st.saleCalls.map((x) => x.pattern)) + ')');
+    ok(st.saleCalls.some((x) => x.pattern === '^[^@]*MNG-9WZ6'), 'mng- 9wz6 became MNG-9WZ6');
+    // the store itself keeps hyphens and does not strip them
+    eq([(await st.saleRowsMatching('MNG-9WZ6')).rows.length, (await st.saleRowsMatching('MNG9WZ6')).rows.length, (await st.saleRowsMatching('2026')).rows.length], [1, 0, 0], 'the store: MNG-9WZ6 matches, MNG9WZ6 does not, the time after @ is never matched');
+    // the same two regexes in Postgres terms (JS equivalent; [^@] and a literal hyphen behave the same in both)
+    ok(new RegExp('^[^@]*9WZ6-29', 'i').test('MNG-9WZ6-2910@x') && !new RegExp('^[^@]*MNGL', 'i').test('MNG-LOSD-2010@x'), 'regex check: 9WZ6-29 hits MNG-9WZ6-2910, MNGL misses MNG-LOSD-2010');
   }
 
   // Typed text never breaks the pattern; a cut-off sale read never looks complete
@@ -1348,13 +1397,13 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
       const r = await tryIt(() => L.search(q));
       ok(r.r && (r.r.none === true || Array.isArray(r.r.lots)), 'typo "' + q + '" returns normally (' + (r.e ? r.e.message : JSON.stringify(r.r)) + ')');
     }
-    ok(st.saleCalls.length > 0 && st.saleCalls.every((x) => x.pattern === null || /^\^\[\^@\]\*[a-z0-9]+(\[-\/ \]\*[a-z0-9]+)*$/i.test(x.pattern)), 'every pattern sent to the store is letters, digits and the separator class only (' + JSON.stringify(st.saleCalls.map((x) => x.pattern)) + ')');
-    ok(st.saleCalls.some((x) => x.pattern === '^[^@]*9[-/ ]*W[-/ ]*Z[-/ ]*6'), '9WZ6( became 9WZ6');
+    ok(st.saleCalls.length > 0 && st.saleCalls.every((x) => x.pattern === null || /^\^\[\^@\]\*[A-Z0-9-]+$/.test(x.pattern)), 'every pattern sent to the store is upper-case letters, digits and hyphens only (' + JSON.stringify(st.saleCalls.map((x) => x.pattern)) + ')');
+    ok(st.saleCalls.some((x) => x.pattern === '^[^@]*9WZ6'), '9WZ6( became 9WZ6');
     // more sale rows than the cap match: the answer says there is more
     for (let i = 0; i < 2001; i++) st.mv.push({ id: 100000 + i, item_slug: 'atta-kesari', qty: -1, type: 'SALE', lot_code: 'MNGK-261105-01', ref: 'MNG-X' + String(i).padStart(3, '0') + '-1010@2026-11-06T08:00:00.000Z', created_at: '2026-11-06T08:00:00.000Z' });
     const big = await st.saleRowsMatching('mng');
     eq([big.rows.length, big.capped], [2000, true], 'the store reads at most 2000 sale rows and says it was cut');
-    const r = await L.search('mng');
+    const r = await L.search('mng-x');
     ok(r.more === true && Array.isArray(r.lots), 'a search whose sale read hit the cap says more: true (' + JSON.stringify([r.more, r.lots && r.lots.length]) + ')');
     const small = await L.search('mngk');
     eq(small.more, false, 'under the cap and under 50 lots: not more');

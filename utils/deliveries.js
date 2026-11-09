@@ -666,8 +666,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
   const PARTIAL_CAP = 50;
   const bare = (v) => up(v).replace(/[-/\s]/g, '');   // "MNGL-261016-01", "KB/OCT26/01" and "kb oct26 01" all become one plain run
 
-  // Part of a code (owner, 9 Nov 2026). Matches a lot's own code, any alias, its supplier batch, or an order ID, as plain upper-case text
-  // and again with - / and spaces taken out of both sides. Every status and empty lots are included. Only reads.
+  // Part of a code (owner, 9 Nov 2026). Matches a lot's own code, any alias or its supplier batch as plain upper-case text and again with
+  // - / and spaces taken out of both sides. An order ID is matched as upper-case text with its hyphens KEPT (typing "mngl" must not find
+  // MNG-LOSD-2010); the query's separators become one hyphen. Every status and empty lots are included. Only reads.
   // The cards of every lot, built from one snapshot w (listLots(w) does not read the store again).
   async function lotCards(w) {
     const list = await listLots(w, { skipNoLot: true });   // one card's numbers per lot (status, on hand, bake date, website stop), legacy lots included
@@ -690,6 +691,12 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       for (let i = 0; i < t.length; i++) { if (i && !/[-/\s]/.test(t[i - 1])) continue; const rest = t.slice(i); if (rest.startsWith(c) || bare(rest).startsWith(n)) return true; }
       return false;
     };
+    // The order-ID form of the query: upper case, letters and digits only, every run of - / and spaces one "-", no leading or trailing "-".
+    // Only these characters ever reach the database pattern.
+    const o = c.replace(/[^A-Z0-9\-/\s]/g, '').replace(/[-/\s]+/g, '-').replace(/^-+|-+$/g, '');
+    const hasOrder = (v) => v != null && v !== '' && up(v).includes(o);
+    // "starts" for an order: at the start of the ID or right after a hyphen in it (raw text, never stripped)
+    const startsOrder = (v) => { const t = up(v); for (let i = 0; i < t.length; i++) { if (i && t[i - 1] !== '-') continue; if (t.startsWith(o, i)) return true; } return false; };
     const first = new Set();   // the cards that match at a start; they list before the contains-only ones
     const { cards, rowOf, card } = await lotCards(w);
     const out = [], direct = new Set();
@@ -704,16 +711,18 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     // Orders: the id is the part of the ref before "@". Their lots are the SALE rows not undone (the restoreForOrder rule: ref + flavour + lot);
     // lot-less sales are skipped. A lot already listed by its own code is not listed again for an order.
     // Under 3 letters or digits the order read is skipped (a short query would read thousands of sale rows per keystroke), and the answer says more: true.
-    const short = c.replace(/[^A-Z0-9]/g, '').length < 3;
+    // "MNG" or "MNG-" alone is only the prefix every order shares: no order is read for it, and that alone does not say more.
+    const short = o.replace(/-/g, '').length < 3;
+    const prefixOnly = !short && o === 'MNG';
     let rows = [], capped = false;
-    if (!short) {
+    if (!short && !prefixOnly) {
       // a failed order read (database timeout) must not fail the whole search: the lots still answer, and the answer says there is more
-      try { ({ rows, capped } = (await store.saleRowsMatching(n)) || { rows: [], capped: false }); } catch (e) { rows = []; capped = true; console.warn('[STOCK] order search read failed: ' + (e && e.message || e)); }
+      try { ({ rows, capped } = (await store.saleRowsMatching(o)) || { rows: [], capped: false }); } catch (e) { rows = []; capped = true; console.warn('[STOCK] order search read failed: ' + (e && e.message || e)); }
     }   // only the sale rows whose order ID can match, read in the database
     const byOrder = new Map();
     for (const r of rows) {
       const id = orderOfRef(r.ref).orderId;
-      if (!has(id)) continue;
+      if (!hasOrder(id)) continue;
       (byOrder.get(id) || byOrder.set(id, []).get(id)).push(r);
     }
     for (const [orderId, sales] of byOrder) {
@@ -724,7 +733,7 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
         const own = w.index.get(`${r.item_slug}|${r.lot_code}`), k = `${r.item_slug}|${own ? own.lot_code : r.lot_code}`;
         g.set(k, (g.get(k) || 0) - r.qty);
       }
-      for (const [k, boxes] of g) if (!direct.has(k) && cards.has(k)) { const oc = card(cards.get(k), { orderId, boxes }); out.push(oc); if (starts(orderId)) first.add(oc); }
+      for (const [k, boxes] of g) if (!direct.has(k) && cards.has(k)) { const oc = card(cards.get(k), { orderId, boxes }); out.push(oc); if (startsOrder(orderId)) first.add(oc); }
     }
     const rank = (slug) => { const i = FORM_ORDER.indexOf(slug); return i < 0 ? FORM_ORDER.length : i; };
     out.sort((a, b) => (first.has(a) ? 0 : 1) - (first.has(b) ? 0 : 1) || rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0)
