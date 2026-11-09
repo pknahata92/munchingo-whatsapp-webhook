@@ -2,6 +2,9 @@
 // The stall tally page (munchingo-website/stall.html, served at munchingo.com/stall). One entry per CUSTOMER: tap the packs
 // into a basket, then Paid UPI / Paid Cash, so each entry matches one UPI payment. Tiles in the flavor colors; both
 // hampers ask for their flavor mix. Saved on the device per IST day (basket too), CSV export, older single-tap data kept.
+// 1 Nov 2026: prices 250/250/300/300, a tiered discount box on loose boxes only (hampers never count), no margin or fee shown.
+// 6 Nov 2026: customers can see the iPad, so every dashboard card starts hidden; the gear ticks each one on for this iPad. Contribution
+// uses box costs typed on the iPad, so no cost is ever in the public script.
 //   npm install --no-save jsdom@24   then   node scripts/stall-page-test.js
 let JSDOM, ResourceLoader;
 try { ({ JSDOM, ResourceLoader } = require('jsdom')); } catch (e) { console.log('jsdom is not installed: run  npm install --no-save jsdom@24'); process.exit(1); }
@@ -58,7 +61,7 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
     const sw = fs.readFileSync(path.join(SITE, 'stall-sw.js'), 'utf8');
     ok(sw.includes('/js/stall.js?v=' + v) && new RegExp("CACHE = 'munchingo-stall-v" + v + "'").test(sw), 'the offline copy caches this version under its own name'); }
   ok(/25 Oct/.test(text(q(d, '#st-day'))), 'shows today (IST)');
-  for (const [id, label, price] of [['original', 'Original', 200], ['ajwain', 'Ajwain', 200], ['kesari', 'Kesari', 250], ['lite', 'Sugar-Lite', 250], ['h3', 'Hamper of 3', 799], ['h4', 'Hamper of 4', 999]]) {
+  for (const [id, label, price] of [['original', 'Original', 250], ['ajwain', 'Ajwain', 250], ['kesari', 'Kesari', 300], ['lite', 'Sugar-Lite', 300], ['h3', 'Hamper of 3', 799], ['h4', 'Hamper of 4', 999]]) {
     const b = q(d, `button[data-item="${id}"]`);
     ok(b && new RegExp(label).test(text(b)) && new RegExp('₹' + price).test(text(b)), `button ${label} ₹${price}`);
   }
@@ -71,20 +74,20 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   // ── a customer: basket first, nothing recorded until paid ──
   ok(q(d, '#st-paid-upi').disabled && q(d, '#st-paid-cash').disabled, 'Paid buttons are off while the basket is empty');
   tap('kesari'); tap('original');
-  ok(d.querySelectorAll('#st-basket li').length === 2 && num(d, 'st-basket-total') === 450, 'basket shows 2 packs, ₹450');
-  ok(/450/.test(text(q(d, '#st-paid-upi'))) && !q(d, '#st-paid-upi').disabled, 'Paid UPI shows the basket total');
+  ok(d.querySelectorAll('#st-basket li').length === 2 && num(d, 'st-basket-total') === 550, 'basket shows 2 packs, ₹550');
+  ok(/550/.test(text(q(d, '#st-paid-upi'))) && !q(d, '#st-paid-upi').disabled, 'Paid UPI shows the basket total');
   ok(num(d, 'st-total') === 0 && num(d, 'st-sales') === 0, 'nothing counted before payment');
   click(w, q(d, '#st-paid-upi'));
-  ok(num(d, 'st-total') === 450 && num(d, 'st-upi') === 450 && num(d, 'st-sales') === 1 && d.querySelectorAll('#st-basket li').length === 0, 'Paid UPI records ONE customer for ₹450 and empties the basket');
+  ok(num(d, 'st-total') === 550 && num(d, 'st-upi') === 550 && num(d, 'st-sales') === 1 && d.querySelectorAll('#st-basket li').length === 0, 'Paid UPI records ONE customer for ₹550 (no discount unless tapped) and empties the basket');
 
   // basket edits: remove a line, clear
   tap('ajwain'); tap('lite');
   click(w, q(d, '#st-basket li button[data-remove]'));   // remove the Ajwain
-  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 250, 'a pack can be taken out of the basket');
+  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 300, 'a pack can be taken out of the basket');
   click(w, q(d, '#st-paid-cash'));
-  ok(num(d, 'st-cash') === 250 && num(d, 'st-sales') === 2, 'Paid Cash: second customer ₹250');
+  ok(num(d, 'st-cash') === 300 && num(d, 'st-sales') === 2, 'Paid Cash: second customer ₹300');
   tap('original'); click(w, q(d, '#st-clear'));
-  ok(d.querySelectorAll('#st-basket li').length === 0 && num(d, 'st-total') === 700, 'Clear empties the basket without recording');
+  ok(d.querySelectorAll('#st-basket li').length === 0 && num(d, 'st-total') === 850, 'Clear empties the basket without recording');
 
   // ── hamper of 3: choose 3 ──
   tap('h3');
@@ -95,7 +98,7 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   ok(text(q(d, '#st-mix-count')) === '3 / 3' && !q(d, '#st-mix-ok').disabled, 'a 4th pack is ignored for a hamper of 3');
   click(w, q(d, '#st-mix-ok'));
   tap('kesari');
-  ok(num(d, 'st-basket-total') === 1049, 'basket: hamper of 3 + a Kesari = ₹1,049');
+  ok(num(d, 'st-basket-total') === 1099, 'basket: hamper of 3 + a Kesari = ₹1,099');
   click(w, q(d, '#st-paid-cash'));
 
   // ── hamper of 4: also asks; "One of each" shortcut; any mix of 4 ──
@@ -110,19 +113,19 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   ok(/2× Original, 2× Kesari/.test(text(q(d, '#st-basket'))), 'a 2+2 hamper of 4 is listed by its mix: ' + text(q(d, '#st-basket')));
   click(w, q(d, '#st-paid-upi'));
 
-  ok(num(d, 'st-total') === 3747 && num(d, 'st-upi') === 2448 && num(d, 'st-cash') === 1299, `money: 3747 / UPI 2448 / cash 1299 (got ${num(d, 'st-total')}/${num(d, 'st-upi')}/${num(d, 'st-cash')})`);
+  ok(num(d, 'st-total') === 3947 && num(d, 'st-upi') === 2548 && num(d, 'st-cash') === 1399, `money: 3947 / UPI 2548 / cash 1399 (got ${num(d, 'st-total')}/${num(d, 'st-upi')}/${num(d, 'st-cash')})`);
   ok(num(d, 'st-sales') === 5, '5 customers');
   ok(num(d, 'st-n-original') === 4 && num(d, 'st-n-ajwain') === 2 && num(d, 'st-n-kesari') === 7 && num(d, 'st-n-lite') === 2, `packs by flavor 4/2/7/2 (got ${num(d, 'st-n-original')}/${num(d, 'st-n-ajwain')}/${num(d, 'st-n-kesari')}/${num(d, 'st-n-lite')})`);
-  ok(num(d, 'st-contrib') === 1312, 'contribution ≈ ₹1,312 (got ' + num(d, 'st-contrib') + ')');
-  ok(num(d, 'st-avg') === 749, 'average per customer ₹749 (got ' + num(d, 'st-avg') + ')');
+  ok(!q(d, '#st-fee') && !/stall fee|margin/i.test(text(d.body)), 'no margin or stall fee anywhere on the page (customers can see the iPad)');
+  ok(num(d, 'st-avg') === 789, 'average per customer ₹789 (got ' + num(d, 'st-avg') + ')');
 
   // undo + delete whole customers
   click(w, q(d, '#st-undo'));
-  ok(num(d, 'st-total') === 2748 && num(d, 'st-n-kesari') === 5 && num(d, 'st-sales') === 4, 'Undo removes the last customer');
+  ok(num(d, 'st-total') === 2948 && num(d, 'st-n-kesari') === 5 && num(d, 'st-sales') === 4, 'Undo removes the last customer');
   const rows = d.querySelectorAll('#st-log li');
   ok(rows.length === 4 && /#4/.test(text(rows[0])) && /#1/.test(text(rows[3])), 'recent customers, newest first, numbered');
   click(w, rows[3].querySelector('button[data-del]'));
-  ok(num(d, 'st-total') === 2298 && num(d, 'st-n-original') === 1 && num(d, 'st-sales') === 3, 'a customer can be deleted');
+  ok(num(d, 'st-total') === 2398 && num(d, 'st-n-original') === 1 && num(d, 'st-sales') === 3, 'a customer can be deleted');
 
   // opening stock -> left
   const inp = q(d, '#st-open-kesari'); inp.value = '20'; inp.dispatchEvent(new w.Event('change', { bubbles: true }));
@@ -130,16 +133,53 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
 
   // CSV: one row per pack line, with the customer number so a basket matches one UPI payment
   const lines = w.StallTally.csv().trim().split('\n');
-  ok(lines[0] === 'date,time,customer,item,original,ajwain,kesari,sugar_lite,price,payment,customer_total,buyer_name,buyer_phone,marketing_ok', 'CSV header: ' + lines[0]);
-  ok(lines.length === 5 && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Hamper of 3,0,1,2,0,799,cash,1049,,,$/.test(l)) && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Kesari,0,0,1,0,250,cash,1049,,,$/.test(l)), 'CSV rows: ' + lines.slice(1).join(' / '));
+  ok(lines[0] === 'date,time,customer,item,original,ajwain,kesari,sugar_lite,price,payment,customer_total,buyer_name,buyer_phone,marketing_ok,list_price,offer_off', 'CSV header: ' + lines[0]);
+  ok(lines.length === 5 && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Hamper of 3,0,1,2,0,799,cash,1099,,,,799,0$/.test(l)) && lines.some((l) => /^2026-10-25,\d\d:\d\d,3,Kesari,0,0,1,0,300,cash,1099,,,,300,0$/.test(l)), 'CSV rows: ' + lines.slice(1).join(' / '));
 
   // a basket in progress survives a reload
   tap('ajwain');
   p.close();
   p = await open(store, '2026-10-25T09:00:00Z'); ({ w, d } = p);
-  ok(num(d, 'st-total') === 2298 && q(d, '#st-open-kesari').value === '20', 'reload keeps the day and opening stock');
-  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 200, 'reload keeps the basket in progress');
+  ok(num(d, 'st-total') === 2398 && q(d, '#st-open-kesari').value === '20', 'reload keeps the day and opening stock');
+  ok(d.querySelectorAll('#st-basket li').length === 1 && num(d, 'st-basket-total') === 250, 'reload keeps the basket in progress');
   p.close();
+
+  // ── discount box: tiers on loose boxes only, tapped by the seller ──
+  {
+    const st = memStorage();
+    p = await open(st, '2026-11-01T06:00:00Z'); ({ w, d } = p);
+    const tap2 = (item) => click(w, q(d, `button[data-item="${item}"]`));
+    const tier = (off) => q(d, `#st-disc-opts button[data-off="${off}"]`);
+    ok(d.querySelectorAll('#st-disc-opts button').length === 3 && /₹50 off/.test(text(tier(50))) && /₹500\+/.test(text(tier(50))) && /₹100 off/.test(text(tier(100))) && /₹1,000\+/.test(text(tier(100))) && /₹250 off/.test(text(tier(250))) && /₹2,000\+/.test(text(tier(250))),
+      'three tiers: ₹50 off at ₹500+, ₹100 off at ₹1,000+, ₹250 off at ₹2,000+');
+    tap2('original');
+    ok(tier(50).disabled && tier(100).disabled && tier(250).disabled && /₹250 more unlocks ₹50 off/.test(text(q(d, '#st-disc-note'))), 'below ₹500 nothing unlocks; the note says how much more: ' + text(q(d, '#st-disc-note')));
+    tap2('kesari');
+    ok(!tier(50).disabled && tier(100).disabled, '₹550 of loose boxes unlocks ₹50 only');
+    ok(num(d, 'st-basket-total') === 550, 'no discount until the seller taps one');
+    click(w, tier(50));
+    ok(tier(50).classList.contains('on') && num(d, 'st-basket-total') === 500 && /500/.test(text(q(d, '#st-paid-upi'))), 'tapping ₹50 off: basket and Paid show ₹500');
+    tap2('h4'); click(w, q(d, '#st-mix-each')); click(w, q(d, '#st-mix-ok'));
+    ok(tier(100).disabled && num(d, 'st-basket-total') === 1499, 'a hamper does not count toward a tier and is not discounted (550 + 999 − 50 = 1,499)');
+    click(w, q(d, '#st-basket li button[data-remove="1"]'));   // take out the Kesari: loose falls to ₹250
+    ok(num(d, 'st-basket-total') === 1249 && !d.querySelector('#st-disc-opts button.on'), 'dropping below the tier removes the discount (250 + 999)');
+    click(w, q(d, '#st-clear'));
+    tap2('original'); tap2('ajwain'); tap2('kesari'); tap2('lite');
+    click(w, tier(100));
+    ok(num(d, 'st-basket-total') === 1000, 'one of each loose (₹1,100) with ₹100 off = ₹1,000');
+    click(w, tier(100));
+    ok(num(d, 'st-basket-total') === 1100, 'tapping the chosen tier again takes it off');
+    click(w, tier(100));
+    click(w, q(d, '#st-paid-upi'));
+    ok(num(d, 'st-total') === 1000 && num(d, 'st-upi') === 1000, 'the day records ₹1,000 received');
+    ok(!d.querySelector('#st-disc-opts button.on') && num(d, 'st-basket-total') === 0, 'the discount resets for the next customer');
+    ok(/₹100 off/.test(text(q(d, '#st-log li'))), 'recent customers show the discount: ' + text(q(d, '#st-log li')));
+    const day = JSON.parse(st.getItem('munchingo-stall-v1')).days['2026-11-01'], o = day.orders[0];
+    ok(o.offer === 100 && o.lines.reduce((a, l) => a + l.price, 0) === 1000 && o.lines.every((l) => l.list && l.price < l.list), 'saved lines carry what was charged (sum ₹1,000, the server total) and their list prices: ' + JSON.stringify(o.lines.map((l) => [l.list, l.price])));
+    const rows2 = w.StallTally.csv().trim().split('\n').slice(1);
+    ok(rows2.length === 4 && rows2.every((r) => /,upi,1000,,,,\d+,100$/.test(r)) && rows2.some((r) => /,Kesari,0,0,1,0,\d+,upi,1000,,,,300,100$/.test(r)), 'CSV: charged price, list price and ₹100 off on each line: ' + rows2.join(' / '));
+    p.close();
+  }
 
   // older single-tap data (before this change) still counts
   const old = memStorage({ 'munchingo-stall-v1': JSON.stringify({ days: { '2026-10-24': { sales: [{ id: 'a', t: Date.parse('2026-10-24T07:00:00Z'), item: 'kesari', name: 'Kesari', price: 250, hamper: false, mix: { kesari: 1 }, pay: 'upi' }], opening: {} } } }) });
@@ -154,6 +194,54 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
   ok(!q(d, '#st-warn').hidden && /not being saved/i.test(text(q(d, '#st-warn'))), 'warns when the device cannot save');
   p.close();
 
+
+  // ── private dashboard: nothing about the day's money shows until the owner ticks it (6 Nov 2026) ──
+  {
+    const src = fs.readFileSync(path.join(SITE, 'js/stall.js'), 'utf8');
+    ok(!/cost:\s*\d/.test(src) && !/\b(119|133|156|137|154|183)\b/.test(src), 'no box cost is written in the public script');
+    const st = memStorage();
+    let v = await open(st, '2026-11-06T12:00:00Z');
+    let { w: w3, d: d3 } = v;
+    const shown = (name) => { const el = q(d3, `[data-card="${name}"]`); return !!el && !el.hidden && !el.closest('[hidden]'); };
+    const cards = ['today', 'contrib', 'packs', 'log', 'days'];
+    const setView = (name, on) => { const c = q(d3, `input[data-view="${name}"]`); c.checked = on; c.dispatchEvent(new w3.Event('change', { bubbles: true })); };
+    const setCost = (id, val) => { const c = q(d3, '#st-cost-' + id); c.value = val; c.dispatchEvent(new w3.Event('change', { bubbles: true })); };
+    ok(cards.every((c) => !shown(c)), 'a fresh iPad shows no sales, packs, customers or earlier days');
+    ok(q(d3, 'main').classList.contains('solo'), 'with nothing ticked the selling area takes the whole width');
+    ok(q(d3, '#st-view').hidden, 'the customise panel starts closed');
+    click(w3, q(d3, 'button[data-item="kesari"]'));
+    ok(/₹300/.test(text(q(d3, '#st-basket-total'))), 'the customer still sees their own basket total');
+    click(w3, q(d3, '#st-paid-upi'));
+    ok(cards.every((c) => !shown(c)), 'a sale does not bring anything back');
+    click(w3, q(d3, '#st-view-open'));
+    ok(!q(d3, '#st-view').hidden, 'the gear opens the panel');
+    ok(cards.every((c) => q(d3, `input[data-view="${c}"]`)), 'every card has its own tick box');
+    setView('today', true);
+    ok(shown('today') && !shown('packs') && !q(d3, 'main').classList.contains('solo'), 'ticking Total sales shows only that card');
+    ok(num(d3, 'st-total') === 300, 'and it is correct');
+    click(w3, q(d3, '#st-view-close'));
+    ok(q(d3, '#st-view').hidden, 'Done closes the panel');
+    setView('contrib', true);
+    ok(shown('contrib') && /box costs/i.test(text(q(d3, '[data-card="contrib"]'))) && !/₹/.test(text(q(d3, '#st-contrib'))), 'contribution without costs asks for them, never guesses');
+    [['original', 137], ['ajwain', 137], ['kesari', 154], ['lite', 183], ['h3', 45], ['h4', 55]].forEach(([k, c]) => setCost(k, c));
+    ok(text(q(d3, '#st-contrib')) === '₹132', 'contribution: ₹300 less 5% GST less ₹154 box = ₹132 (got ' + text(q(d3, '#st-contrib')) + ')');
+    click(w3, q(d3, 'button[data-item="h3"]'));
+    ['original', 'ajwain', 'kesari'].forEach((f) => click(w3, q(d3, `button[data-plus="${f}"]`)));
+    click(w3, q(d3, '#st-mix-ok')); click(w3, q(d3, '#st-paid-cash'));
+    ok(text(q(d3, '#st-contrib')) === '₹420', 'a hamper counts its boxes and outer box: 131.71 + 760.95 - 428 - 45 = ₹420 (got ' + text(q(d3, '#st-contrib')) + ')');
+    ok(!st.getItem('munchingo-stall-v1').includes('"h3":45'), 'costs are not in the day data that goes to the server');
+    v.close();
+    v = await open(st, '2026-11-06T13:00:00Z'); ({ w: w3, d: d3 } = v);
+    ok(shown('today') && shown('contrib') && !shown('packs'), 'the choice survives a reload');
+    ok(text(q(d3, '#st-contrib')) === '₹420', 'and so do the costs');
+    click(w3, q(d3, '#st-view-open')); click(w3, q(d3, '#st-view-hide'));
+    ok(cards.every((c) => !shown(c)) && q(d3, '#st-view').hidden && !q(d3, `input[data-view="today"]`).checked, 'Hide all puts everything away in one tap');
+    v.close();
+    const blocked = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }, removeItem() {} };
+    v = await open(blocked, '2026-11-06T13:00:00Z'); ({ w: w3, d: d3 } = v);
+    ok(cards.every((c) => !shown(c)), 'storage blocked: everything stays hidden');
+    v.close();
+  }
 
   // ── buyer details (only with the marketing tick) and saving to the server ──
   {
@@ -197,7 +285,7 @@ const num = (d, id) => Number((text(q(d, '#' + id)) || '').replace(/[^\d-]/g, ''
     ok(!lastBody().orders[3].buyer, 'ticked but a bad number: not kept');
     // CSV carries the buyer only when kept
     const csv2 = w2.StallTally.csv().trim().split('\n');
-    ok(csv2.some((l) => /,Ravi Kumar|"Ravi Kumar",9811122233,yes$/.test(l)) && csv2.filter((l) => /,yes$/.test(l)).length === 1, 'CSV: only the ticked buyer, with the marketing_ok flag');
+    ok(csv2.some((l) => /"Ravi Kumar",9811122233,yes,\d+,0$/.test(l)) && csv2.filter((l) => /,yes,\d+,\d+$/.test(l)).length === 1, 'CSV: only the ticked buyer, with the marketing_ok flag');
     ok(/Saved to server/.test(text(q(d2, '#st-sync'))), 'status shows saved once the server accepts');
     dom.window.close();
 
