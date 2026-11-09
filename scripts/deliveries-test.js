@@ -1211,6 +1211,80 @@ const input = (o) => ({ id: 'rcpt-' + (++n), billNo: 'A000300', arrivedOn: '2026
     await rejects(dl.release({ code: 'MNGL-261016-01', slug: SL, tasted: true, weightG: 260 }, A), /put on hold by the owner/, 'fold: and after Fix lot staff still cannot release it', 403);
   }
 
+  // ---- Partial-text search (owner, 9 Nov 2026): part of a code finds the lot; the exact answers stay as they were ----
+  {
+    const { st } = fresh();
+    const SLP = 'atta-lite-sugar';
+    const T = '2026-11-06T08:00:00.000Z';
+    await st.insertLots([
+      { item_slug: SLP, lot_code: '15OCT26', aliases: ['MNGL-261016-01', '15Oct26'], bake_date: '2026-10-16', best_before: '2027-01-14', status: 'released' },   // backfill-style
+      { item_slug: 'atta-ajwain', lot_code: 'MNGA-261027-01', bake_date: '2026-10-27', best_before: '2027-01-25', status: 'released' },
+      { item_slug: 'atta-ajwain', lot_code: 'MNGA-261101-01', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'rejected' },
+      { item_slug: 'atta-ajwain', lot_code: 'MNGA-260920-01', bake_date: '2026-09-20', best_before: '2026-12-19', status: 'hold' },
+      { item_slug: 'atta-kesari', lot_code: 'MNGK-261105-01', bake_date: '2026-11-05', best_before: '2027-02-03', status: 'hold', supplier_batch: 'KB/OCT26/01' },
+      { item_slug: 'atta-original', lot_code: 'MNGO-261101-01', bake_date: '2026-11-01', best_before: '2027-01-30', status: 'released', supplier_batch: 'kb/oct26/01' },
+      { item_slug: 'atta-original', lot_code: 'MNGO-261027-01', bake_date: '2026-10-27', best_before: '2027-01-25', status: 'void' },
+      { item_slug: 'atta-original', lot_code: 'MNGO-UNDATED', status: 'released' }]);
+    const rec = (slug, code, qty, bb) => ({ item_slug: slug, qty, type: 'RECEIVE', lot_code: code, best_before: bb });
+    const sale = (o, slug, code, q, type) => ({ item_slug: slug, qty: type === 'SALE_UNDO' ? q : -q, type: type || 'SALE', lot_code: code, best_before: '2027-01-30', ref: o + '@' + T });
+    await st.insert([rec(SLP, '15OCT26', 20, '2027-01-14'), rec('atta-kesari', 'MNGK-261105-01', 10, '2027-02-03'), rec('atta-ajwain', 'MNGA-261027-01', 5, '2027-01-25'), rec('atta-original', 'MNGO-261101-01', 8, '2027-01-30'),
+      sale('MNG-AAAA-1010', 'atta-kesari', 'MNGK-261105-01', 3), sale('MNG-AAAA-1010', SLP, '15Oct26', 1),
+      sale('MNG-BBBB-1010', 'atta-ajwain', 'MNGA-261027-01', 2), sale('MNG-BBBB-1010', 'atta-ajwain', 'MNGA-261027-01', 2, 'SALE_UNDO'),   // packed, then undone
+      sale('MNG-CCCC-1010', 'atta-original', null, 1)]);                                                                                      // lot-less: skipped
+    const L = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    const snap = async () => JSON.stringify({ mv: st.mv, lots: await st.lots() });
+    const before = await snap();
+    const codes = (r) => (r.lots || []).map((c) => c.slug.replace('atta-', '') + ':' + c.code + (c.orderId ? '#' + c.orderId + 'x' + c.boxes : ''));
+
+    // the owner's two searches
+    for (const q of ['mngl', '261016', 'MNGL-2610', '  mngl261016  ']) {
+      const r = await L.search(q);
+      eq([codes(r), r.more], [['lite-sugar:15OCT26'], false], 'partial "' + q + '" finds Sugar-Lite lot 1 through its alias');
+    }
+    const lite = (await L.search('mngl')).lots[0];
+    eq(lite, { code: '15OCT26', slug: SLP, name: 'Atta Sugar-Lite', status: 'released', onHand: 19, bakeDate: '2026-10-16', websiteStop: lite.websiteStop, daysToStop: lite.daysToStop, aliases: ['MNGL-261016-01', '15Oct26'], supplierBatch: null }, 'card fields');
+    ok(lite.websiteStop && Number.isInteger(lite.daysToStop), 'card has the website stop and days to it');
+    eq(codes(await L.search('mnga261027')), ['ajwain:MNGA-261027-01'], 'separator-stripped: mnga261027');
+    eq(codes(await L.search('MNGA/261027')), ['ajwain:MNGA-261027-01'], 'a slash in the query is ignored too');
+    eq(codes(await L.search('kboct26')).sort(), ['kesari:MNGK-261105-01', 'original:MNGO-261101-01'], 'supplier batch found as kboct26');
+    eq(codes(await L.search('kb oct26')), ['original:MNGO-261101-01', 'kesari:MNGK-261105-01'], 'spaces ignored');
+    // every status, empty and sold-out lots
+    const all = await L.search('mng');
+    eq(codes(all), ['original:MNGO-261101-01', 'original:MNGO-261027-01', 'original:MNGO-UNDATED', 'kesari:MNGK-261105-01', 'ajwain:MNGA-261101-01', 'ajwain:MNGA-261027-01', 'ajwain:MNGA-260920-01', SLP.replace('atta-', '') + ':15OCT26'], 'sorted by flavour (Original, Kesari, Ajwain, Sugar-Lite), bake date newest first, undated last');
+    eq(all.lots.map((c) => [c.code, c.status, c.onHand]).filter((x) => ['MNGO-261027-01', 'MNGA-261101-01', 'MNGA-260920-01', 'MNGK-261105-01'].includes(x[0])), [['MNGO-261027-01', 'void', 0], ['MNGK-261105-01', 'hold', 7], ['MNGA-261101-01', 'rejected', 0], ['MNGA-260920-01', 'hold', 0]], 'void, held, rejected and empty lots are listed and marked');
+    eq(all.lots.find((c) => c.code === 'MNGK-261105-01').supplierBatch, 'KB/OCT26/01', 'card carries the supplier batch');
+    // partial order ID: lots reached only through the order, with that order's boxes
+    for (const q of ['aaaa', 'mngaaaa', 'AAAA-1010', 'g-aaaa-1']) eq(codes(await L.search(q)), ['kesari:MNGK-261105-01#MNG-AAAA-1010x3', 'lite-sugar:15OCT26#MNG-AAAA-1010x1'], 'partial order ID "' + q + '" lists its lots with the order and its boxes');
+    eq(await L.search('bbbb'), { none: true }, 'an order whose packing was undone has no lots');
+    eq(await L.search('cccc'), { none: true }, 'a lot-less sale gives no lot');
+    // 1 character
+    eq(await L.search('m'), { none: true }, '1 character gives no partial list');
+    eq(await L.search('2'), { none: true }, '1 digit gives no partial list');
+    eq(await L.search('zz'), { none: true }, 'no partial match');
+    // exact answers unchanged
+    eq(await L.search('MNGK-261105-01'), { lot: { code: 'MNGK-261105-01', slug: 'atta-kesari' } }, 'exact code');
+    eq(await L.search('mngk-261105-01'), { lot: { code: 'MNGK-261105-01', slug: 'atta-kesari' } }, 'exact code, any case');
+    eq(await L.search('MNGL-261016-01'), { lot: { code: '15OCT26', slug: SLP } }, 'exact alias');
+    eq(await L.search('MNG-AAAA-1010'), { orderLots: [{ slug: 'atta-kesari', code: 'MNGK-261105-01', boxes: 3 }, { slug: SLP, code: '15OCT26', boxes: 1 }] }, 'exact order ID');
+    const two = await L.search('kb/oct26/01');
+    eq([codes(two), two.more], [['original:MNGO-261101-01', 'kesari:MNGK-261105-01'], false], 'an exact supplier batch on two flavours gives the { lots } list');
+    await st.updateLot('atta-original', 'MNGO-261101-01', { supplier_batch: 'KB/OCT26/09' });
+    eq(await L.search('kb/oct26/01'), { lot: { code: 'MNGK-261105-01', slug: 'atta-kesari' } }, 'an exact supplier batch on one lot opens it');
+    await st.updateLot('atta-original', 'MNGO-261101-01', { supplier_batch: 'kb/oct26/01' });
+    eq(await L.search('   '), { none: true }, 'blank');
+    eq(await snap(), before, 'search writes nothing');
+  }
+  {
+    const { st } = fresh();
+    await st.insertLots(Array.from({ length: 60 }, (_, i) => ({ item_slug: 'atta-original', lot_code: 'CAP-' + String(i + 1).padStart(3, '0'), status: 'released' })));
+    const L = makeDeliveries(st, { now: () => NOW, db: { getOrdersByIds: async () => [] } });
+    const r = await L.search('cap-');
+    eq([r.lots.length, r.more, r.lots[0].code, r.lots[49].code], [50, true, 'CAP-001', 'CAP-050'], 'the list stops at 50 and says there is more');
+    const r2 = await L.search('cap-05');
+    eq([r2.lots.length, r2.more], [10, false], 'fewer than 50: no more');
+    eq(await L.search('CAP-007'), { lot: { code: 'CAP-007', slug: 'atta-original' } }, 'a whole code stays exact even though it is also a substring');
+  }
+
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

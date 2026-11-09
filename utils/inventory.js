@@ -741,6 +741,16 @@ function supabaseStore() {
       }
       return out;
     },
+    // Every website pack and undo (only the columns search needs), paged by id so the 1000-row cap never hides an order. Read-only.
+    saleRows: async () => {
+      const out = [];
+      for (let from = 0; ; from += 1000) {
+        const page = ok(await c().from('stock_movements').select('ref,item_slug,lot_code,qty,type').in('type', ['SALE', 'SALE_UNDO']).order('id', { ascending: true }).range(from, from + 999)) || [];
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      return out;
+    },
     movementsByDelivery: async (id) => ok(await c().from('stock_movements').select('*').eq('delivery_id', id)) || [],
     saveDelivery: async ({ d, lots, moves }) => ok(await c().rpc('stock_save_delivery', { d, lots: lots || [], moves: moves || [] })),
   };

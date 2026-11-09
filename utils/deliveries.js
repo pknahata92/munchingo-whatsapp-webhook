@@ -661,6 +661,53 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     };
   }
 
+  // The order the flavours are asked for everywhere in the admin (the receiving form): Original, Kesari, Ajwain, Sugar-Lite.
+  const FORM_ORDER = ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'];
+  const PARTIAL_CAP = 50;
+  const bare = (v) => up(v).replace(/[-/\s]/g, '');   // "MNGL-261016-01", "KB/OCT26/01" and "kb oct26 01" all become one plain run
+
+  // Part of a code (owner, 9 Nov 2026). Matches a lot's own code, any alias, its supplier batch, or an order ID, as plain upper-case text
+  // and again with - / and spaces taken out of both sides. Every status and empty lots are included. Only reads.
+  async function partial(w, c, n) {
+    const has = (v) => v != null && v !== '' && (up(v).includes(c) || bare(v).includes(n));
+    const list = await listLots();   // one card's numbers per lot (status, on hand, bake date, website stop), legacy lots included
+    const cards = new Map(list.filter((l) => l.code).map((l) => [`${l.slug}|${l.code}`, l]));
+    const rowOf = (slug, code) => w.lotRows.find((l) => l.item_slug === slug && l.lot_code === code) || null;
+    const card = (l, extra) => {
+      const r = rowOf(l.slug, l.code);
+      return { code: l.code, slug: l.slug, name: l.name, status: l.status, onHand: l.onHand, bakeDate: l.bakeDate, websiteStop: l.websiteStop, daysToStop: l.daysToStop,
+        aliases: r ? (r.aliases || []) : [], supplierBatch: r ? r.supplier_batch || null : null, ...(extra || {}) };
+    };
+    const out = [], direct = new Set();
+    for (const l of cards.values()) {
+      const r = rowOf(l.slug, l.code);
+      if (has(l.code) || (r && ((r.aliases || []).some(has) || has(r.supplier_batch)))) { direct.add(`${l.slug}|${l.code}`); out.push(card(l)); }
+    }
+    // Orders: the id is the part of the ref before "@". Their lots are the SALE rows not undone (the restoreForOrder rule: ref + flavour + lot);
+    // lot-less sales are skipped. A lot already listed by its own code is not listed again for an order.
+    const rows = (await store.saleRows()) || [];
+    const byOrder = new Map();
+    for (const r of rows) {
+      const id = orderOfRef(r.ref).orderId;
+      if (!has(id)) continue;
+      (byOrder.get(id) || byOrder.set(id, []).get(id)).push(r);
+    }
+    for (const [orderId, sales] of byOrder) {
+      const undone = new Set(sales.filter((r) => r.type === 'SALE_UNDO').map(saleKey));
+      const g = new Map();
+      for (const r of sales) {
+        if (r.type !== 'SALE' || r.lot_code == null || undone.has(saleKey(r))) continue;
+        const own = w.index.get(`${r.item_slug}|${r.lot_code}`), k = `${r.item_slug}|${own ? own.lot_code : r.lot_code}`;
+        g.set(k, (g.get(k) || 0) - r.qty);
+      }
+      for (const [k, boxes] of g) if (!direct.has(k) && cards.has(k)) out.push(card(cards.get(k), { orderId, boxes }));
+    }
+    const rank = (slug) => { const i = FORM_ORDER.indexOf(slug); return i < 0 ? FORM_ORDER.length : i; };
+    out.sort((a, b) => rank(a.slug) - rank(b.slug) || (a.bakeDate && b.bakeDate ? (a.bakeDate < b.bakeDate ? 1 : a.bakeDate > b.bakeDate ? -1 : 0) : a.bakeDate ? -1 : b.bakeDate ? 1 : 0)
+      || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) || (String(a.orderId || '') < String(b.orderId || '') ? -1 : String(a.orderId || '') > String(b.orderId || '') ? 1 : 0));
+    return out.length ? { lots: out.slice(0, PARTIAL_CAP), more: out.length > PARTIAL_CAP } : { none: true };
+  }
+
   async function search(q) {
     const c = up(q);
     if (!c) return { none: true };
@@ -671,7 +718,12 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
     let found = candidates(w, q, null);
     if (found.length) return answer(found);
     found = w.lotRows.filter((l) => l.supplier_batch && up(l.supplier_batch) === c).map((l) => ({ slug: l.item_slug, code: l.lot_code }));
-    if (found.length) return answer(found);
+    if (found.length === 1) return answer(found);
+    if (found.length > 1) {   // one supplier batch on several flavours: a list of lots, not a choice
+      const cards = await partial(w, c, bare(c));
+      const mine = new Set(found.map((f) => `${f.slug}|${f.code}`));
+      return { lots: (cards.lots || []).filter((x) => mine.has(`${x.slug}|${x.code}`) && !x.orderId), more: false };
+    }
     if (ORDER_ID.test(c)) {
       const sales = (await store.salesOf(c)) || [];
       const undone = new Set(sales.filter((r) => r.type === 'SALE_UNDO').map(saleKey));
@@ -686,7 +738,9 @@ function makeDeliveries(store, { now = () => Date.now(), db = null, mailer = nul
       }
       if (g.size) return { orderLots: [...g.values()].sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : String(a.code || '') < String(b.code || '') ? -1 : 1)) };
     }
-    return { none: true };
+    const n = bare(c);
+    if (c.length < 2 || n.length < 2) return { none: true };   // one character is too loose to mean anything
+    return partial(w, c, n);
   }
 
   // The recall list: one line per order. A gift order carries the recipient in the recipient columns; the buyer columns stay the buyer.
