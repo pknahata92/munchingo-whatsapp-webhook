@@ -1589,5 +1589,47 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     o.close();
   });
 
+  // Task 3 fix round 1: nothing bulk while searching, and a bulk action only ever uses ticked orders that are visible and in this step
+  list.push(async () => {
+    const o = await openAdmin('owner', { width: 375, preOrderUntil: Date.now() + 5 * 86400000 }); const { q, qa, text, click, set } = o;
+    const cards = () => qa('#list .card'), ids = () => cards().map((c) => (text(c).match(/MNG-[A-Z0-9]+-\d+/) || [''])[0]);
+    click(o.byText('#flow .step', /To pack/)); await sleep(100);
+    ok(/PRE-ORDER PERIOD/.test(text(q('#hint'))), 'the practice launch is in the future: the pre-order warning shows on To pack');
+    const toPackIds = ids(); ok(toPackIds.length > 1, 'there are several To pack orders');
+    ok(qa('#list .card input[type=checkbox]').length === toPackIds.length && !!o.byText('#bulk button', /Print pick list/), 'before searching: tick boxes and bulk buttons are there');
+    // tick one To pack order, then search for an order in another step
+    click(qa('#list .card input[type=checkbox]')[0]); await sleep(60);
+    ok(/Print pick list \(1\)/.test(text(q('#bulk'))), 'one tick counts as 1');
+    set(q('#q'), 'HHHH'); await sleep(100);
+    ok(qa('#list .card input[type=checkbox]').length === 0, 'no tick boxes while searching');
+    ok(qa('#bulk button, #bulk .chip').length === 0 && /Clear the search to act on several orders/.test(text(q('#bulk'))), 'no bulk button while searching, one plain line instead (' + text(q('#bulk')) + ')');
+    ok(/PRE-ORDER PERIOD/.test(text(q('#searchNote'))), 'the pre-order warning shows while searching on To pack');
+    ok(!!o.byText('#list .card', /MNG-HHHH-1007/) && !!q('#list .card .qa, #list .card') , 'the result card is still there and opens normally');
+    // searching an order that is in the Packed step, then moving to Packed with a stale tick
+    set(q('#q'), ''); await sleep(100);
+    click(o.byText('#flow .step', /Packed/)); await sleep(100); const PK = ids()[0]; click(o.byText('#flow .step', /To pack/)); await sleep(100);
+    ok(!!PK, 'the practice data has a Packed order (' + PK + ')');
+    set(q('#q'), PK); await sleep(100);
+    ok(ids().join() === PK && !!o.byText('#list .card', /In: Packed/) , 'a Packed order (' + ids().join() + ' / ' + text(cards()[0] || q('#list')).slice(0, 90) + ') is found from To pack');
+    set(q('#q'), ''); await sleep(100);
+    ok(/Print pick list \(1\)/.test(text(q('#bulk'))), 'clearing the search brings back the tick that was made in this step');
+    click(o.byText('#flow .step', /Packed/)); await sleep(100);
+    ok(!/\(1\)/.test(text(q('#bulk'))) && /Create Delhivery shipments \(\d+\)/.test(text(q('#bulk'))) && !/Create Delhivery shipments \(1\)/.test(text(q('#bulk')).replace(/Select all \d+/, '')) || qa('#list .card').length === 1, 'a To pack tick is not counted against the Packed step (' + text(q('#bulk')) + ')');
+    ok(!/Clear \(/.test(text(q('#bulk'))), 'no "Clear (n)" for a tick that belongs to another step');
+    click(o.byText('#flow .step', /To pack/)); await sleep(100);
+    // Print pick list with nothing ticked: only To pack orders
+    click(o.byText('#bulk button', /Clear \(/)); await sleep(60);
+    let html = ''; o.win.open = () => ({ document: { open() {}, write: (t) => { html += t; }, close() {} }, focus() {}, print() {}, close() {} });
+    click(o.byText('#bulk button', /^Print pick list$/)); await until(() => /What this list covers/.test(html), 4000, 'the pick list');
+    const covered = (((html.match(/What this list covers[\s\S]*?Left out/) || [''])[0]).match(/MNG-[A-Z0-9]+-\d+/g) || []);
+    ok(html.length > 0 && !covered.includes(PK) && toPackIds.every((id) => covered.includes(id)), 'Print pick list with nothing ticked covers the To pack orders and no Packed one (' + html.length + ' chars)');
+    // a search never leaks into the print list
+    set(q('#q'), PK); await sleep(100); html = '';
+    ok(!o.byText('#bulk button', /Print/), 'no print button while a search spans steps');
+    set(q('#q'), '');
+    ok(o.errors.length === 0, 'no page errors (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   return list;
 };

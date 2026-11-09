@@ -488,7 +488,8 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
     var pre = state.dispatchFrom && Date.now() < state.dispatchFrom;
     var sq = searchText(), sn = $('searchNote'), stepName = hint ? hint[2] : (FILTERS.filter(function (f) { return f[0] === state.filter; })[0] || [0, 'the list'])[1], rw = rangeWords();
     sn.hidden = !sq; sn.textContent = '';
-    if (sq) { sn.appendChild(document.createTextNode('Searching all steps for "' + sq + '" · clear the box to go back to ' + stepName + '.')); if (rw) sn.appendChild(h('div', {}, 'Searching ' + rw + ' only: change the date in Filter to look further back.')); }
+    if (sq) { sn.appendChild(document.createTextNode('Searching all steps for "' + sq + '" · clear the box to go back to ' + stepName + '.')); if (pre && (state.filter === 'topack' || state.filter === 'packed')) sn.appendChild(h('div', { class: 'preorder' }, 'PRE-ORDER PERIOD: pack now if you like, but do NOT ship before ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '.'));
+      if (rw) sn.appendChild(h('div', {}, 'Searching ' + rw + ' only: change the date in Filter to look further back.')); }
     $('hint').hidden = !hint || !!sq; if (hint && !sq) $('hint').textContent = hint[3] + (pre && (state.filter === 'topack' || state.filter === 'packed') ? '  PRE-ORDER PERIOD: pack now if you like, but do NOT ship before ' + new Date(state.dispatchFrom).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'long' }) + '.' : '');
     renderNeeds();
     var c = $('chips'); c.textContent = '';
@@ -527,7 +528,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
         if (dk !== lastDay) { lastDay = dk; var t = tally[dk]; list.appendChild(h('div', { class: 'dayhead' }, h('b', {}, dayLabel(o.paid_at || o.created_at)), ' ', h('span', {}, t.n + ' order' + (t.n === 1 ? '' : 's') + ' · ' + t.b + ' box' + (t.b === 1 ? '' : 'es')))); }
       }
       var pickable = o.state === 'topack' || o.state === 'packed' || o.state === 'shipped';
-      var box = pickable ? h('input', { type: 'checkbox', 'aria-label': 'Select ' + o.id, onclick: function (e) { e.stopPropagation(); if (e.target.checked) state.sel[o.id] = 1; else delete state.sel[o.id]; bulkBar(); } }) : null;
+      var box = pickable && !sq ? h('input', { type: 'checkbox', 'aria-label': 'Select ' + o.id, onclick: function (e) { e.stopPropagation(); if (e.target.checked) state.sel[o.id] = 1; else delete state.sel[o.id]; bulkBar(); } }) : null;
       if (box && state.sel[o.id]) box.checked = true;
       var dtext = deliveryText(o);
       list.appendChild(h('div', { class: 'card' + (isLate(o) ? ' late' : ''), onclick: function () { openOrder(o.id); } }, h('div', { class: 'pick' }, box,
@@ -563,8 +564,9 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
 
   // ── bulk actions: pick list, packing slips, mark packed ──
-  function selectedIds() { return Object.keys(state.sel).filter(function (id) { return state.orders.some(function (o) { return o.id === id; }); }); }
-  function printableIds() { var s = selectedIds(); return s.length ? s : visible().filter(function (o) { return o.state === 'topack' || o.state === 'packed'; }).map(function (o) { return o.id; }); }
+  // Only ticked orders that are on screen AND in the current step count, so a tick left from earlier (another step, or hidden by a search) can never act. While searching nothing counts.
+  function selectedIds() { if (searchText()) return []; return visible().filter(function (o) { return state.sel[o.id] && o.state === state.filter; }).map(function (o) { return o.id; }); }
+  function printableIds() { var s = selectedIds(); return s.length ? s : searchText() ? [] : visible().filter(function (o) { return o.state === state.filter && (o.state === 'topack' || o.state === 'packed'); }).map(function (o) { return o.id; }); }
   function labelable(o) { return o.state === 'shipped' && /delhivery/i.test(o.carrier || '') && /^[0-9]{8,20}$/.test(String(o.awb || '').trim()); }
   // Packed step: create the Delhivery shipments for every ticked order, one after another.
   function packedBar(b) {
@@ -632,6 +634,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
   function bulkBar() {
     var b = $('bulk'); b.textContent = '';
+    if (searchText()) { b.hidden = false; b.appendChild(h('div', { class: 'muted', style: 'flex:1 1 100%' }, 'Clear the search to act on several orders')); return; }
     if (state.filter === 'shipped') return labelBar(b);
     if (state.filter === 'packed') return packedBar(b);
     var vis = visible().filter(function (o) { return o.state === 'topack'; });

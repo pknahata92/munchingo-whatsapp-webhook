@@ -32,13 +32,14 @@ async function tokenFor(email) {
 }
 
 // Opens the admin page as `role`, already signed in. `size` is the window width in px (default phone).
-async function openAdmin(role, { width = 390, guide = false, hash = '' } = {}) {
+async function openAdmin(role, { width = 390, guide = false, hash = '', preOrderUntil = 0 } = {}) {
   const token = await tokenFor(role === 'owner' ? 'owner@example.com' : 'staff@example.com');
   const errors = []; const vc = new VirtualConsole(); vc.on('jsdomError', (e) => errors.push(String(e.message || e))); vc.on('error', (e) => errors.push(String(e)));
   const dom = await JSDOM.fromURL(BASE + '/admin' + hash, {
     runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true, virtualConsole: vc,
     beforeParse(win) {
       win.fetch = (u, o) => fetch(new URL(u, BASE), o);
+      if (preOrderUntil) { const real = win.fetch; win.fetch = async (u, o) => { const r = await real(u, o); if (!/\/admin\/api\/me(\?|$)/.test(String(u))) return r; const j = await r.json(); j.dispatchFrom = new Date(preOrderUntil).toISOString(); return { ok: true, status: 200, json: async () => j, text: async () => JSON.stringify(j) }; }; }   // a test can make it the pre-order period
       win.confirm = () => true; win.prompt = (m, d) => (d == null ? '' : String(d)); win.alert = () => {};
       win.innerWidth = width; win.URL.createObjectURL = () => 'blob:test'; win.URL.revokeObjectURL = () => {};
       win.localStorage.setItem('mngAdminToken', token);
