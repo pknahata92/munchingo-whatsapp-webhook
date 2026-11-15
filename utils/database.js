@@ -541,10 +541,24 @@ async function listMarketingContacts() {
   if (error) throw new Error(error.message);
   return data || [];
 }
-async function listMarketingSends() {   // small table (one row per broadcast message); broadcast.js filters by status, date and template
-  const { data, error } = await db().from('marketing_sends').select('phone, template, status, error, sent_at, campaign, wa_message_id');
-  if (error) throw new Error(error.message);
-  return data || [];
+/** The marketing send log (one row per marketing message). Paged in id order, so the 1000-row cap never hides a send from the cap
+ *  or already_sent checks (utils/marketingCap.js). { sinceIso, template } (utils/broadcast.js): every row of that template at any
+ *  time (already_sent has no time limit) plus every row of any template since sinceIso (the cap and the cool-off count every
+ *  template). Either alone filters on just that. No argument: every row (utils/reorders.js). Tests: scripts/marketing-sends-paging-test.js */
+async function listMarketingSends({ sinceIso, template } = {}) {
+  const quote = (v) => `"${String(v).replace(/(["\\])/g, '\\$1')}"`;
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    let q = db().from('marketing_sends').select('phone, template, status, error, sent_at, campaign, wa_message_id');
+    if (sinceIso && template) q = q.or(`template.eq.${quote(template)},sent_at.gte.${quote(sinceIso)}`);
+    else if (sinceIso) q = q.gte('sent_at', sinceIso);
+    else if (template) q = q.eq('template', template);
+    const { data, error } = await q.order('id', { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
 }
 /** WhatsApp reported a broadcast message as failed after accepting it: mark its log row failed (it can be sent again). */
 async function markMarketingSendFailed(waMessageId, error) {
