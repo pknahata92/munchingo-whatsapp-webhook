@@ -71,6 +71,8 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     const a = d.querySelector('a[href="' + WA + '?text=JOIN"]');
     ok(a && norm(a.textContent) === 'Get fresh-batch news on WhatsApp', 'order-confirmed has the JOIN button (got: ' + (a && norm(a.textContent)) + ')');
     ok(a && d.getElementById('confirm-success').contains(a), 'the JOIN button sits inside the paid state only');
+    ok(a && /\boutline\b/.test(a.className) && !/\bsolid\b/.test(a.className), 'the JOIN button is the secondary (outline) style');
+    ok(a && a.parentNode.classList.contains('confirm-ctas'), 'the JOIN button sits in the existing .confirm-ctas block');
     ok(!d.getElementById('confirm-fallback').contains(a) && !d.getElementById('confirm-notfound').contains(a), 'the JOIN button is not in the unpaid states');
     w.close();
   }
@@ -86,6 +88,20 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     ok(a && norm(a.textContent) === 'Tell me when you deliver to ' + c.want, 'outside answer shows "Tell me when you deliver to ' + c.want + '" (got: ' + (a && norm(a.textContent)) + ')');
     ok(a && a.getAttribute('href') === WA + '?text=' + encodeURIComponent('NOTIFY - ' + c.want), 'notify link goes to wa.me with NOTIFY - ' + c.want + ' (got: ' + (a && a.getAttribute('href')) + ')');
     ok(/Delhi NCR only/.test(msg.textContent), 'the backend message is still shown');
+    w.close();
+  }
+  // a hostile city name is escaped in the text and encoded in the href
+  for (const city of ['<img src=x onerror=alert(1)>', 'Ja"ipur']) {
+    const dom = page('atta-original.html', 'atta-original.html', (U) => /\/api\/pincode\//.test(U)
+      ? json({ ok: true, pin: '302001', valid: true, serviceable: false, outside: true, city, message: 'We’re delivering in Delhi NCR only.' }) : null);
+    const w = dom.window, d = w.document; await wait(1200);
+    const inp = d.querySelector('.pc-in'), msg = d.querySelector('.pc-msg');
+    inp.value = '302001'; inp.dispatchEvent(new w.Event('input', { bubbles: true })); await wait(500);
+    const a = msg.querySelector('a');
+    ok(!msg.querySelector('img') && !d.querySelector('img[src="x"]'), 'hostile city ' + city + ': no <img> element is created');
+    ok(a && a.textContent === 'Tell me when you deliver to ' + city, 'hostile city ' + city + ': link text is the city as plain text (got: ' + (a && a.textContent) + ')');
+    ok(a && a.getAttribute('href') === WA + '?text=' + encodeURIComponent('NOTIFY - ' + city), 'hostile city ' + city + ': href is encodeURIComponent-encoded (got: ' + (a && a.getAttribute('href')) + ')');
+    ok(a && !/["<>]/.test(a.getAttribute('href')), 'hostile city ' + city + ': no raw quote or angle bracket in the href');
     w.close();
   }
   // an in-area answer has no notify link
