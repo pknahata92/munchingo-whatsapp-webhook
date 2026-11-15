@@ -150,5 +150,84 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     ok(/No Maida Biscuits/.test(new JSDOM(fs.readFileSync(path.join(SITE, 'maida-free-cookies-guide.html'), 'utf8')).window.document.title), 'guide title has "No Maida Biscuits"');
   }
 
+  // 5. palm-oil label guide (task B3): the page, the guide link, the sitemap, Organization and WebSite schema
+  {
+    const read = (f) => fs.readFileSync(path.join(SITE, f), 'utf8');
+    const TITLE = 'How to Spot Palm Oil on a Biscuit Label | Munchingo';
+    const DESC = 'Turn the pack over. Ingredients are listed from most to least by weight, so the first three tell you what you are mostly eating.';
+    const PARAS = [
+      'Turn the pack over. The front of a box is designed; the ingredient list is not. Ingredients are listed from most to least by weight, so the first three tell you what you are mostly eating.',
+      'Step 1: Find the fat. In most biscuits it is the second or third ingredient, right after the flour and often before or after the sugar.',
+      'Step 2: Read its name. These words mean palm or a fat made from it: palm oil, palmolein, edible vegetable oil (palm), vegetable fat, hydrogenated vegetable oil, vanaspati, interesterified vegetable fat. If the list only says "vegetable oil" or "vegetable fat", look for the oil\'s name in brackets.',
+      'Step 3: Read the flour too. "Refined wheat flour" is maida. "Whole wheat flour" is atta.',
+      'What is in ours: whole wheat flour and pure desi ghee. No maida, no palm oil. Baked in Bikaner.',
+      'Questions people ask',
+      'Is "edible vegetable oil" palm oil? It can be. It is a family of oils, so look for the name of the oil in brackets after it.',
+      'What does "refined wheat flour" mean? That is maida, the white flour most biscuits start with.',
+      'Why desi ghee? For taste. Desi ghee is what an atta biscuit made at home tastes of.',
+      'Does no palm oil make a biscuit good for you? It is still a biscuit, with sugar and ghee. "No palm oil" tells you what is in the pack. It is not a health promise.',
+      'See all four Flavors.',
+    ];
+    const F = 'how-to-spot-palm-oil.html';
+    ok(fs.existsSync(path.join(SITE, F)), F + ' exists');
+    if (fs.existsSync(path.join(SITE, F))) {
+      const html = read(F), d = new JSDOM(html).window.document;
+      const meta = (sel) => { const e = d.querySelector(sel); return e && e.getAttribute('content'); };
+      ok(d.title === TITLE, 'palm page title is the ruled text (got: ' + d.title + ')');
+      ok(meta('meta[name="description"]') === DESC && meta('meta[property="og:description"]') === DESC && meta('meta[name="twitter:description"]') === DESC, 'palm page description, og and twitter descriptions are the ruled text');
+      ok(meta('meta[property="og:title"]') === TITLE && meta('meta[name="twitter:title"]') === TITLE, 'palm page og:title and twitter:title match the title');
+      ok(d.querySelector('link[rel="canonical"]') && d.querySelector('link[rel="canonical"]').getAttribute('href') === 'https://munchingo.com/how-to-spot-palm-oil', 'palm page canonical is https://munchingo.com/how-to-spot-palm-oil');
+      const h1s = d.querySelectorAll('h1');
+      ok(h1s.length === 1 && norm(h1s[0].textContent) === 'How to spot palm oil on a biscuit label', 'palm page has one H1 with the approved words');
+      const art = d.querySelector('article') || d.body, text = norm(art.textContent);
+      const pageText = norm(d.body.textContent);
+      PARAS.forEach((p) => ok(pageText.includes(p), 'palm page shows approved text: ' + p.slice(0, 50)));
+      const qs = [...d.querySelectorAll('h2,h3,h4,summary,dt')].map((e) => norm(e.textContent));
+      ['Is "edible vegetable oil" palm oil?', 'What does "refined wheat flour" mean?', 'Why desi ghee?', 'Does no palm oil make a biscuit good for you?'].forEach((q) => ok(qs.includes(q), 'palm page question is a visible heading: ' + q));
+      const hrefs = [...art.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+      const seeAll = [...art.querySelectorAll('a')].find((a) => norm(a.textContent) === 'See all four Flavors.');
+      ok(seeAll && seeAll.getAttribute('href') === 'shop.html', 'palm page: "See all four Flavors." links to shop.html');
+      ok(hrefs.includes('shop.html'), 'palm page links to shop.html');
+      [['atta-original.html', 'Atta Original'], ['atta-kesari.html', 'Atta Kesari'], ['atta-ajwain.html', 'Atta Ajwain'], ['atta-lite-sugar.html', 'Atta Sugar-Lite']].forEach(([h, n]) => {
+        const a = [...art.querySelectorAll('a')].find((x) => x.getAttribute('href') === h);
+        ok(a && norm(a.textContent) === n, 'palm page links ' + h + ' with the text ' + n + ' (got: ' + (a && norm(a.textContent)) + ')');
+      });
+      ok(!/\b(Britannia|Parle|Sunfeast|Haldiram|Bikanervala|McVitie)\b/i.test(html), 'palm page names no competitor brand');
+      ok(!/100\s*%/.test(html) && !/\bhealthy\b/i.test(html), 'palm page has no "100%" and no "healthy"');
+      ok(!/Faridabad/i.test(html) && !/gift box/i.test(html), 'palm page has no Faridabad and no "gift box"');
+      ok(!/FAQPage/.test(html), 'palm page has no FAQPage markup (R33)');
+      // same shell as the guide: the same stylesheet and script versions
+      const g = read('maida-free-cookies-guide.html');
+      ['css/style.css?v=', 'js/cart.js?v=', 'js/prices.js?v=', 'js/minicart.js?v='].forEach((k) => {
+        const m = (h) => { const i = h.indexOf(k); return i < 0 ? null : h.slice(i, h.indexOf('"', i)); };
+        ok(m(html) && m(html) === m(g), 'palm page uses the same ' + k + ' version as the guide');
+      });
+    }
+    // the guide links to it, once, with the exact anchor text
+    {
+      const d = new JSDOM(read('maida-free-cookies-guide.html')).window.document;
+      const links = [...d.querySelectorAll('article a')].filter((a) => /how-to-spot-palm-oil/.test(a.getAttribute('href')));
+      ok(links.length === 1 && norm(links[0].textContent) === 'How to spot palm oil on a biscuit label', 'the guide has one link to the palm-oil page with the exact anchor text');
+    }
+    // the sitemap lists it
+    ok(/<loc>https:\/\/munchingo\.com\/how-to-spot-palm-oil<\/loc>/.test(read('sitemap.xml')), 'sitemap.xml lists the palm-oil page');
+    // index.html: exactly one Organization and one WebSite, no address, no SearchAction
+    {
+      const html = read('index.html'), d = new JSDOM(html).window.document;
+      const blocks = [...d.querySelectorAll('script[type="application/ld+json"]')].map((s) => JSON.parse(s.textContent));
+      const nodes = []; const walk = (o) => { if (Array.isArray(o)) o.forEach(walk); else if (o && typeof o === 'object') { if (o['@type']) nodes.push(o); if (o['@graph']) walk(o['@graph']); } };
+      blocks.forEach(walk);
+      const orgs = nodes.filter((n) => n['@type'] === 'Organization'), sites = nodes.filter((n) => n['@type'] === 'WebSite');
+      ok(orgs.length === 1, 'index.html has exactly one Organization (got ' + orgs.length + ')');
+      ok(sites.length === 1, 'index.html has exactly one WebSite (got ' + sites.length + ')');
+      const o = orgs[0] || {}, s = sites[0] || {};
+      ok(o.name === 'Munchingo' && o.url === 'https://munchingo.com/', 'Organization has name Munchingo and url https://munchingo.com/');
+      ok(o.logo === 'https://munchingo.com/images/logo-gold-v2.png', 'Organization logo is the site logo image');
+      ok(JSON.stringify(o.sameAs) === JSON.stringify(['https://www.instagram.com/munchingo.india']), 'Organization sameAs is the Instagram URL the site links');
+      ok(!('address' in o) && !('telephone' in o) && !/Faridabad/i.test(JSON.stringify(blocks)), 'Organization has no address, no phone, no Faridabad');
+      ok(s.name === 'Munchingo' && s.url === 'https://munchingo.com/' && !('potentialAction' in s), 'WebSite has name and url only, no SearchAction');
+    }
+  }
+
   console.log(`website-growth-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
