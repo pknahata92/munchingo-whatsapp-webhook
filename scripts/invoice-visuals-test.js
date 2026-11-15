@@ -1,6 +1,6 @@
 'use strict';
 // Invoice visuals (16 Nov 2026): the ₹ sign, a thumbnail per line, a photo strip when it fits on page 1, and a truthful
-// Shipping line. Every GST field and figure stays as it was. Renders real PDFs and reads them back with pdfjs-dist.
+// shipping that appears only as the charged row checkout saved. Every GST field and figure stays as it was. Renders real PDFs and reads them back with pdfjs-dist.
 //   node scripts/invoice-visuals-test.js
 const fs = require('fs');
 const path = require('path');
@@ -164,7 +164,7 @@ const inv = (order, no = 'MUN/26-27/0001') => buildInvoice(order, { invoiceNo: n
   const sText = textOf(sPdf), sLines = linesOf(sPdf.pages[0], 320);
   ok(sText.includes('₹'), 'sample invoice text carries ₹');
   ok(!sText.includes('Rs.'), 'sample invoice text has no "Rs."');
-  for (const l of ['Items total (incl. GST) ₹1,076.00', 'Discount (FOUNDING10) - ₹100.00', 'Taxable value ₹929.53', 'IGST @ 5% ₹46.47', 'Shipping Free', 'Total paid ₹976.00']) {
+  for (const l of ['Items total (incl. GST) ₹1,076.00', 'Discount (FOUNDING10) - ₹100.00', 'Taxable value ₹929.53', 'IGST @ 5% ₹46.47', 'Total paid ₹976.00']) {
     ok(sLines.includes(l), `sample totals line "${l}" (got: ${sLines.filter((x) => x.startsWith(l.split(' ')[0])).join(' / ')})`);
   }
   // Every ₹ is flush with its digits (no gap, no overlap) and on the same baseline.
@@ -184,18 +184,36 @@ const inv = (order, no = 'MUN/26-27/0001') => buildInvoice(order, { invoiceNo: n
   }
   const iInv = inv(intraSample, 'MUN/26-27/0002');
   ok(iInv.cgstPaise === 2323 && iInv.sgstPaise === 2324 && iInv.taxablePaise === 92953, 'intra maths unchanged (CGST 23.23, SGST 23.24)');
-  const iLines = linesOf((await readPdf(await renderInvoicePdf(iInv))).pages[0], 320);
+  const iPdfText = await readPdf(await renderInvoicePdf(iInv));
+  const iLines = linesOf(iPdfText.pages[0], 320);
   for (const l of ['CGST @ 2.5% ₹23.23', 'SGST @ 2.5% ₹23.24', 'Taxable value ₹929.53', 'Total paid ₹976.00']) ok(iLines.includes(l), `intra totals line "${l}"`);
   ok(sBuf.length < 1000000, `sample PDF under 1,000,000 bytes (${sBuf.length})`);
 
-  // 4. Shipping is truthful: the ₹49 line shows its own amount and never "Free"; an order without one shows Free.
+  // 4. Shipping appears only when it is charged, and only as the row checkout saved on the order (Prashant, 16 Nov 2026:
+  // "The shipping should be mentioned only if it's charged. It should directly come from checkout."; routes/checkout.js adds
+  // shippingItem(fee)). With that row the items table shows "Shipping charges … <saved amount>" and the totals block has no
+  // Shipping line (a second ₹49.00 there read as an extra charge). Without it the page never says "Shipping" or "Free".
+  const totalsLabel = (pdf, s) => pdf.pages[0].texts.filter((t) => t.str === s && t.x0 >= 320);
   const shInv = inv(shipOrder, 'MUN/26-27/0003');
   ok(shInv.totalPaise === 56700 && shInv.taxablePaise + shInv.igstPaise === 56700, 'shipping order maths: total ₹567.00 = taxable + IGST');
   const shPdf = await readPdf(await renderInvoicePdf(shInv));
   const shLines = linesOf(shPdf.pages[0], 320);
-  ok(shLines.includes('Shipping ₹49.00'), `shipping order reads "Shipping ₹49.00" (got: ${shLines.filter((x) => x.startsWith('Shipping')).join(' / ')})`);
+  ok(totalsLabel(shPdf, 'Shipping').length === 0, `shipping order: no "Shipping" label in the totals block (got: ${shLines.filter((x) => x.startsWith('Shipping')).join(' / ')})`);
+  ok(linesOf(shPdf.pages[0]).includes('2 Shipping charges 1905 1 ₹46.67 ₹2.33 ₹49.00'), `shipping order: the items table has the saved ₹49.00 shipping row (got: ${linesOf(shPdf.pages[0]).filter((x) => x.includes('Shipping')).join(' / ')})`);
+  for (const l of ['Items total (incl. GST) ₹567.00', 'Taxable value ₹540.00', 'IGST @ 5% ₹27.00', 'Total paid ₹567.00']) ok(shLines.includes(l), `shipping order totals line "${l}"`);
   ok(!textOf(shPdf).includes('Free'), 'shipping order never prints "Free"');
-  ok(shLines.includes('Total paid ₹567.00'), 'shipping order total paid ₹567.00');
+  // A fee other than 49 proves the amount is read from the saved row, not a constant.
+  const ship59 = { ...shipOrder, order_id: 'MNG-SHIP-59', items: [single('atta-original', 'Atta Original', 259, 2), shipping.shippingItem(59)], total: 577 };
+  const s59Pdf = await readPdf(await renderInvoicePdf(inv(ship59, 'MUN/26-27/0004')));
+  const s59Row = linesOf(s59Pdf.pages[0]).filter((x) => x.includes('Shipping'));
+  ok(s59Row.length === 1 && /^2 Shipping charges 1905 1 ₹[0-9.]+ ₹[0-9.]+ ₹59\.00$/.test(s59Row[0]), `₹59 fee: the one Shipping text is the saved row ending ₹59.00 (got: ${s59Row.join(' / ')})`);
+  ok(!textOf(s59Pdf).includes('49.00') && totalsLabel(s59Pdf, 'Shipping').length === 0 && linesOf(s59Pdf.pages[0], 320).includes('Total paid ₹577.00'), '₹59 fee: no ₹49.00 anywhere, no totals Shipping line, Total paid ₹577.00');
+  // No shipping row: neither word anywhere on the page.
+  ok(!textOf(sPdf).includes('Shipping') && !textOf(sPdf).includes('Free'), `free-shipping order: no "Shipping" and no "Free" anywhere (got: ${linesOf(sPdf.pages[0]).filter((x) => /Shipping|Free/.test(x)).join(' / ')})`);
+  ok(!textOf(iPdfText).includes('Shipping') && !textOf(iPdfText).includes('Free'), 'free-shipping intra order: no "Shipping" and no "Free" anywhere');
+  // invoice.js never computes or hard-codes the fee.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'utils', 'invoice.js'), 'utf8');
+  ok(!/SHIPPING_FEE|shippingFor|FREE_FROM|\b49\b/.test(src), 'utils/invoice.js holds no shipping fee, threshold or fee rule');
 
   // 5. Pictures: a thumbnail per line with a known slug, lined up with its row; a strip only when it fits; one page; no overlaps.
   async function layout(order, label) {

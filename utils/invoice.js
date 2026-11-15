@@ -365,10 +365,9 @@ function renderInvoicePdf(inv) {
     } else {
       line(`IGST @ ${inv.gstRate}%`, inv.igstPaise);
     }
-    // Truthful shipping: an order carrying the shipping line shows that line's own amount (already inside the items total
-    // and the tax above); only an order without one says Free.
-    const shippingLines = inv.items.filter((i) => i.isShipping);
-    line('Shipping', shippingLines.length ? shippingLines.reduce((s, i) => s + i.netPaise, 0) : 'Free');
+    // No Shipping line in the totals (Prashant, 16 Nov 2026: "The shipping should be mentioned only if it's charged. It should
+    // directly come from checkout."). A charged fee is the "Shipping charges" row checkout saved on the order, shown in the items
+    // table and already inside the items total and the tax above; an order without that row says nothing about shipping.
     doc.moveTo(lab, y).lineTo(R, y).strokeColor(C.terra).lineWidth(1).stroke(); y += 6;
     line('Total paid', inv.totalPaise, true);
 
