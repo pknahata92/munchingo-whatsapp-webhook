@@ -6,14 +6,13 @@
 //   send -> needs expect=<the dry-run count>, so nothing goes out that was not counted first
 // OWNER_PHONE is on every send, first, as the live check (Prashant, 8 Nov). sources=stall,fair limits it to people who
 // signed up at those places (contacts.first_source / last_source), e.g. a review ask only to people who bought.
+// Rules (cap, cool-off, retry once, template + campaign, quiet hours) are in utils/marketingCap.js.
 // Every real send is logged in marketing_sends (marketing_sends_migration.sql): nobody gets the same template twice even
 // if the job is re-run, and nobody gets more than CAP marketing messages in 30 days (the sign-up promise: "a few a month").
 // Tests: scripts/broadcast-test.js
 
-const CAP = 3, CAP_DAYS = 30, GAP_MS = 1100;
-// Meta: after error 131049 (per-user marketing limit) do not resend to that person for at least 24 hours, or the block
-// deepens. We wait 48, across all marketing templates.
-const COOL_OFF_MS = 48 * 3_600_000;
+const { CAP, CAP_DAYS, slotFor, isQuietHours } = require('./marketingCap');   // the cap, cool-off, retry-once and duplicate rules live there
+const GAP_MS = 1100;
 const SKIP_NAMES = /kaamke/i;   // Prashant's own test sign-up (3 Nov)
 const MODES = ['dry', 'test', 'send'];
 
@@ -62,20 +61,18 @@ function firstName(name) {
   return /^[a-z][a-z'-]*$/i.test(w) ? w[0].toUpperCase() + w.slice(1).toLowerCase() : 'there';
 }
 
-async function audience(template, sources, exclude = []) {
+async function audience(template, sources, exclude = [], campaign = null) {
   const { db, now, ownerPhone } = D();
-  const since = new Date(now() - CAP_DAYS * 86_400_000).toISOString();
-  const [contacts, sends] = await Promise.all([db.listMarketingContacts(), db.listMarketingSends({ sinceIso: since, template })]);
-  const sent = sends.filter((s) => s.status === 'sent');
-  const coolSince = new Date(now() - COOL_OFF_MS).toISOString();
-  const cooling = new Set(sends.filter((s) => s.status === 'failed' && /^131049\b/.test(String(s.error || '')) && s.sent_at >= coolSince).map((s) => digits(s.phone)));
-  const done = new Set(sent.filter((s) => s.template === template).map((s) => digits(s.phone)));
-  const recent = {};
-  for (const s of sent) if (s.sent_at >= since) recent[digits(s.phone)] = (recent[digits(s.phone)] || 0) + 1;
+  const nowMs = now();
+  const [contacts, sends] = await Promise.all([db.listMarketingContacts(), db.listMarketingSends({ sinceIso: new Date(nowMs - CAP_DAYS * 86_400_000).toISOString(), template })]);
+  const byPhone = new Map();
+  for (const s of sends) { const k = digits(s.phone); if (!byPhone.has(k)) byPhone.set(k, []); byPhone.get(k).push(s); }
+  const gate = (p) => slotFor({ phone: p, sends: byPhone.get(p) || [], nowMs, template, campaign });
   const owner = ownerPhone();
-  const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0, cooling_off: 0 };
+  const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0, cooling_off: 0, blocked_twice: 0 };
   const seen = new Set([owner]);
-  if (owner) { if (done.has(owner)) out.already_sent++; else if (cooling.has(owner)) out.cooling_off++; else out.list.push({ phone: owner, first: 'Prashant' }); }
+  const verdict = (p) => { const v = gate(p); if (v !== 'ok') out[v]++; return v === 'ok'; };
+  if (owner && verdict(owner)) out.list.push({ phone: owner, first: 'Prashant' });
   const has = (c, list) => list.some((x) => [c.first_source, c.last_source].some((v) => String(v || '').startsWith(x)));
   const fromSource = (c) => (!sources.length || has(c, sources)) && !(exclude.length && has(c, exclude));
   for (const c of contacts) {
@@ -83,16 +80,13 @@ async function audience(template, sources, exclude = []) {
     if (c.consent_marketing !== true || !p || seen.has(p) || !fromSource(c)) continue;
     seen.add(p);
     if (SKIP_NAMES.test(c.name || '')) { out.skipped++; continue; }
-    if (done.has(p)) { out.already_sent++; continue; }
-    if (cooling.has(p)) { out.cooling_off++; continue; }
-    if ((recent[p] || 0) >= CAP) { out.over_cap++; continue; }
-    out.list.push({ phone: p, first: firstName(c.name) });
+    if (verdict(p)) out.list.push({ phone: p, first: firstName(c.name) });
   }
   return out;
 }
 
 /** { template, lang, mode, video | image, expect, sources, exclude } -> counts only, never phone numbers. */
-async function run({ template, lang = 'en', mode = 'dry', video = '', image = '', expect, sources = '', exclude = '' } = {}) {
+async function run({ template, lang = 'en', mode = 'dry', video = '', image = '', expect, sources = '', exclude = '', campaign = '' } = {}) {
   if (!/^[a-z0-9_]{1,512}$/.test(String(template || ''))) return { ok: false, error: 'template must be the approved template name (lowercase letters, numbers, _).' };
   if (!MODES.includes(mode)) return { ok: false, error: `mode must be one of ${MODES.join(', ')}.` };
   if (video && !/^https:\/\/\S+$/.test(video)) return { ok: false, error: 'video must be an https link to an .mp4.' };
@@ -100,12 +94,15 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   if (video && image) return { ok: false, error: 'a template has one header: send a video or an image, not both.' };
   if (!/^[a-z0-9:,\- ]*$/i.test(String(sources))) return { ok: false, error: 'sources must look like stall,fair or stall:2026-11-06.' };
   if (!/^[a-z0-9:,\- ]*$/i.test(String(exclude))) return { ok: false, error: 'exclude must look like stall,fair.' };
+  if (!/^[a-z0-9_]{0,64}$/.test(String(campaign || ''))) return { ok: false, error: 'campaign must be lowercase letters, numbers, _ (for example batch_261120).' };
+  if (mode === 'send' && isQuietHours(D().now())) return { ok: false, mode, error: 'Quiet hours (21:00-09:00 IST): send after 9 AM.' };
   const list = (v) => String(v).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   const src = list(sources), exc = list(exclude);
   const { db, wa, wait, ownerPhone } = D();
   const header = video ? { type: 'video', link: video } : image ? { type: 'image', link: image } : null;
-  const a = await audience(template, src, exc);
-  const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, cooling_off: a.cooling_off, to_send: a.list.length, recent: recent.slice() };
+  const camp = String(campaign || '') || null;
+  const a = await audience(template, src, exc, camp);
+  const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, cooling_off: a.cooling_off, blocked_twice: a.blocked_twice, to_send: a.list.length, recent: recent.slice() };
 
   if (mode === 'dry') return { ok: true, mode, template, ...counts };
 
@@ -124,7 +121,7 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
     let status = 'sent', error = null, waId = null;
     try { waId = remember(await wa.sendTemplateWithHeader(p.phone, template, lang, header, [p.first]), template); sent++; }
     catch (e) { status = 'failed'; error = metaError(e).slice(0, 300); failed++; }
-    try { await db.insertMarketingSend({ phone: p.phone, template, status, error, wa_message_id: waId }); }
+    try { await db.insertMarketingSend({ phone: p.phone, template, campaign: camp, status, error, wa_message_id: waId }); }
     catch (e) { console.error('[BROADCAST] could not log a send:', e.message); }
     await wait(GAP_MS);
   }

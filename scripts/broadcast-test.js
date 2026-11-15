@@ -9,7 +9,7 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
 const b = require('../utils/broadcast');
 const DAY = 86_400_000, NOW = Date.parse('2026-11-08T12:00:00Z');
 
-function world({ contacts, sends = [], failFor = [] }) {
+function world({ contacts, sends = [], failFor = [], at = NOW }) {
   const sent = [], logged = [], markedFailed = [];
   b.setDeps({
     db: {
@@ -19,7 +19,7 @@ function world({ contacts, sends = [], failFor = [] }) {
       markMarketingSendFailed: async (waId, error) => { markedFailed.push({ waId, error }); const r = sends.find((x) => x.wa_message_id === waId); if (r) { r.status = 'failed'; r.error = error; } },
     },
     wa: { sendTemplateWithHeader: async (to, name, lang, header, params) => { if (failFor.includes(to)) throw new Error('bad number'); sent.push({ to, name, lang, header, params }); return { messages: [{ id: to === '919999900000' ? 'wamid' : 'wamid-' + to }] }; } },
-    now: () => NOW, wait: async () => {}, ownerPhone: () => '919999900000',
+    now: () => at, wait: async () => {}, ownerPhone: () => '919999900000',
   });
   return { sent, logged, sends, markedFailed };
 }
@@ -146,6 +146,35 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   r = await b.run({ template: T, mode: 'dry', exclude: 'stall,fair' });
   ok(r.to_send === 2, 'exclude=stall,fair leaves the sign-up who never bought plus the owner, and drops a sign-up who later bought at a stall (got ' + r.to_send + ')');
   ok(!(await b.run({ template: T, mode: 'dry', exclude: 'x; drop' })).ok, 'an exclude list with odd characters is refused');
+
+
+  // quiet hours (15 Nov 2026): no marketing send 21:00-09:00 IST; dry and test may run any time
+  w = world({ contacts: [C('919000000001', 'Asha')], at: Date.parse('2026-11-20T16:00:00Z') });   // 21:30 IST
+  r = await b.run({ template: T, mode: 'send', expect: 2 });
+  ok(!r.ok && r.error === 'Quiet hours (21:00-09:00 IST): send after 9 AM.' && w.sent.length === 0, 'send at 21:30 IST is refused and sends nothing (got ' + JSON.stringify(r) + ')');
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.ok, 'dry runs in quiet hours');
+  r = await b.run({ template: T, mode: 'test' });
+  ok(r.ok && w.sent.length === 1, 'test runs in quiet hours');
+
+  // campaign: logged on every row; same template with a new campaign is allowed again
+  w = world({ contacts: [C('919000000001', 'Asha')] });
+  r = await b.run({ template: T, mode: 'send', campaign: 'batch_261120', expect: 2 });
+  ok(r.ok && w.logged.length === 2 && w.logged.every((l) => l.campaign === 'batch_261120'), 'every logged row carries the campaign');
+  r = await b.run({ template: T, mode: 'dry', campaign: 'batch_261120' });
+  ok(r.to_send === 0 && r.already_sent === 2, 'same template + campaign: nobody twice');
+  r = await b.run({ template: T, mode: 'dry', campaign: 'batch_261127' });
+  ok(r.to_send === 2 && r.already_sent === 0, 'same template, new campaign: allowed');
+  w = world({ contacts: [C('919000000001', 'Asha')] });
+  await b.run({ template: T, mode: 'send', expect: 2 });
+  ok(w.logged.every((l) => l.campaign === null), 'no campaign logs null (legacy)');
+  ok(!(await b.run({ template: T, mode: 'dry', campaign: 'Bad Campaign!' })).ok, 'a campaign with odd characters is refused');
+
+  // retry at most once after 131049: two failures for the same template + campaign block the person
+  const h131 = (h) => ({ phone: '919000000001', template: T, campaign: null, status: 'failed', error: '131049 x', sent_at: new Date(NOW - h * 3_600_000).toISOString() });
+  w = world({ contacts: [C('919000000001', 'Asha')], sends: [h131(100), h131(80)] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.blocked_twice === 1 && r.to_send === 1 && r.cooling_off === 0, 'blocked_twice has its own count (got ' + JSON.stringify(r) + ')');
 
   // wiring
   const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
