@@ -160,7 +160,7 @@ function summaryTable({ items, totalRupees, discountRupees = 0, couponCode = nul
       ${rows}
       ${discountRupees ? `<tr><td colspan="3" style="padding:10px 0 0;font-family:${FONT};font-size:13px;color:${C.ink2};">Discount${couponCode ? ` (${esc(couponCode)})` : ''}</td><td style="padding:10px 0 0;font-family:${FONT};font-size:13px;color:#2F7A4B;text-align:right;">&minus; ${inr(discountRupees)}</td></tr>` : ''}
       <tr><td colspan="3" style="padding:14px 0 2px;font-family:${FONT};font-size:16px;font-weight:700;color:${C.ink};">Total paid</td><td style="padding:14px 0 2px;font-family:${FONT};font-size:18px;font-weight:700;color:${C.ink};text-align:right;">${inr(totalRupees)}</td></tr>
-      ${gstAmount != null ? `<tr><td colspan="4" style="padding:0;font-family:${FONT};font-size:11.5px;color:#8A7765;">Includes GST (5%): ${inrPaise(gstAmount)}${items.some(require('./shipping').isShippingItem) ? '' : ' &middot; Free shipping'}</td></tr>` : ''}
+      ${gstAmount != null ? `<tr><td colspan="4" style="padding:0;font-family:${FONT};font-size:11.5px;color:#8A7765;">Includes GST (5%): ${inrPaise(gstAmount)}</td></tr>` : ''}
     </table>`;
 }
 

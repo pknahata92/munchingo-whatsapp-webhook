@@ -54,7 +54,15 @@ ok(typeof T.thumbFor === 'function' && T.thumbFor(orig) === 'https://munchingo.c
 const withShip = T.customerConfirmationHtml({ order: { ...order, items: [orig, shipping.shippingItem(49)], total: 567 }, invoice: { cgstPaise: 1, sgstPaise: 1, igstPaise: 0, invoiceNo: 'I1' } });
 const noShip = T.customerConfirmationHtml({ order, invoice: { cgstPaise: 1, sgstPaise: 1, igstPaise: 0, invoiceNo: 'I1' } });
 ok(!withShip.includes('Free shipping') && withShip.includes('Shipping charges'), 'order with shipping line: shipping row, no "Free shipping"');
-ok(noShip.includes('Free shipping'), 'order without shipping line says "Free shipping"');
+const noShipGst = (noShip.match(/Includes GST \(5%\)[^<]*/) || [''])[0];
+ok(noShipGst.startsWith('Includes GST (5%): ') && !/shipping/i.test(noShipGst), 'order without shipping line: GST line has no shipping words');
+const ship59 = T.summaryTable({ items: [orig, shipping.shippingItem(59)], totalRupees: 577, gstAmount: 100 });
+ok(/Shipping charges[\s\S]*?&#8377;59</.test(ship59), 'shipping row shows the saved fee (Rs 59), read from the order');
+ok(!ship59.includes('Free shipping'), 'shipping row at Rs 59: no "Free shipping" text');
+const gstOnly = T.summaryTable({ items: [orig], totalRupees: 518, gstAmount: 100 });
+const gstLine = (gstOnly.match(/Includes GST \(5%\)[^<]*/) || [''])[0];
+ok(gstLine === 'Includes GST (5%): &#8377;1.00', 'no shipping row: GST line is exactly "Includes GST (5%): ₹1.00"');
+ok(!/shipping/i.test(gstOnly), 'no shipping row: summary table has no shipping words at all');
 
 // image base override read at render time
 process.env.EMAIL_IMAGE_BASE = 'file:///tmp/imgs/';
