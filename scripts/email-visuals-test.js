@@ -1,0 +1,65 @@
+// Customer emails: one real photo per email, line thumbnails, truthful shipping.
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'x';
+process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'x';
+delete process.env.EMAIL_IMAGE_BASE;
+const T = require('../utils/emailTemplates');
+const shipping = require('../utils/shipping');
+
+let fail = 0;
+const ok = (c, msg) => { if (!c) { fail++; console.log('FAIL ' + msg); } else console.log('ok   ' + msg); };
+const count = (s, sub) => s.split(sub).length - 1;
+
+const orig = { productName: 'Atta Original', quantity: 2, item_price: 259, slug: 'atta-original' };
+const order = { order_id: 'MUN-1', customer_name: 'Asha Rao', items: [orig], total: 518, created_at: new Date().toISOString() };
+const hero = (k) => `https://munchingo.com/images/email-hero-${k}.jpg`;
+
+ok(T.HEROES && ['confirmed', 'packed', 'shipped', 'delivered', 'review', 'range'].every((k) => T.HEROES[k] && T.HEROES[k].src === hero(k) && T.HEROES[k].alt), 'HEROES has six entries with src and alt');
+
+const cases = {
+  confirmed: T.customerConfirmationHtml({ order }),
+  packed: T.packedHtml({ order }),
+  shipped: T.shippedHtml({ order, carrier: 'Delhivery', awb: '123', trackUrl: 'https://x.test/t' }),
+  delivered: T.deliveredHtml({ order }),
+  review: T.reviewRequestHtml({ order, url: 'https://x.test/r' }),
+  range: T.paymentReminderHtml({ customerName: 'Asha', orderId: 'MUN-1', items: [orig], total: 518, paymentUrl: 'https://x.test/p' }),
+  range2: T.subscriptionRenewalHtml({ customerName: 'Asha', orderId: 'MUN-1', items: [orig], discountPct: 10, total: 466, paymentUrl: 'https://x.test/p' }),
+};
+for (const [k, html] of Object.entries(cases)) {
+  const key = k === 'range2' ? 'range' : k;
+  ok(count(html, hero(key)) === 1, `${k} email has its hero exactly once`);
+}
+const refund = T.refundHtml({ customerName: 'Asha', orderId: 'MUN-1', amount: 100, isFull: false });
+ok(!refund.includes('email-hero-') && !/\/images\/email-/.test(refund), 'refund has no hero and no product image');
+ok(!T.ownerPaidHtml({ order, invoice: null }).includes('email-hero-'), 'ownerPaidHtml has no hero');
+ok(!T.dailySummaryHtml({ dayLabel: 'Today', orders: [] }).includes('email-hero-'), 'dailySummaryHtml has no hero');
+
+// hero sits directly under the header, before the title
+const c = cases.confirmed;
+ok(c.indexOf(hero('confirmed')) > c.indexOf('logo-gold-v2.png') && c.indexOf(hero('confirmed')) < c.indexOf('font-size:31px'), 'hero is under the logo and above the title');
+ok(/<img src="[^"]*email-hero-confirmed\.jpg" width="600" alt="[^"]+" style="display:block;width:100%;height:auto;border:0;">/.test(c), 'hero markup: width 600, full width, no border');
+
+// thumbnails
+const sum = (items, extra = {}) => T.summaryTable({ items, totalRupees: 518, ...extra });
+const s1 = sum([orig]);
+ok(s1.includes('<img') && s1.includes('email-original.jpg') && s1.includes('width="56"') && s1.includes('alt="Atta Original"') && s1.includes('border-radius:8px'), 'Original line has a 56px thumbnail');
+ok(sum([{ productName: 'Full Range Set', quantity: 1, item_price: 999, slug: 'full-range-set' }]).includes('email-set.jpg'), 'a Set line uses email-set.jpg');
+ok(!sum([shipping.shippingItem(49)]).includes('<img'), 'a shipping line has no image');
+let noSlug; try { noSlug = sum([{ productName: 'Old thing', quantity: 1, item_price: 100 }]); } catch (e) { noSlug = null; }
+ok(noSlug !== null && !noSlug.includes('<img'), 'an item with no slug renders without an image');
+let legacy; try { legacy = sum([{ product_retailer_id: 'abc123', quantity: 1, item_price: 100, slug: 'not-a-real-slug' }]); } catch (e) { legacy = null; }
+ok(legacy !== null && !legacy.includes('<img'), 'an unknown slug renders without an image');
+ok(typeof T.thumbFor === 'function' && T.thumbFor(orig) === 'https://munchingo.com/images/email-original.jpg' && T.thumbFor({ slug: 'zzz' }) === null && T.thumbFor(shipping.shippingItem(49)) === null, 'thumbFor returns url or null');
+
+// truthful shipping
+const withShip = T.customerConfirmationHtml({ order: { ...order, items: [orig, shipping.shippingItem(49)], total: 567 }, invoice: { cgstPaise: 1, sgstPaise: 1, igstPaise: 0, invoiceNo: 'I1' } });
+const noShip = T.customerConfirmationHtml({ order, invoice: { cgstPaise: 1, sgstPaise: 1, igstPaise: 0, invoiceNo: 'I1' } });
+ok(!withShip.includes('Free shipping') && withShip.includes('Shipping charges'), 'order with shipping line: shipping row, no "Free shipping"');
+ok(noShip.includes('Free shipping'), 'order without shipping line says "Free shipping"');
+
+// image base override read at render time
+process.env.EMAIL_IMAGE_BASE = 'file:///tmp/imgs/';
+ok(T.customerConfirmationHtml({ order }).includes('file:///tmp/imgs/email-hero-confirmed.jpg'), 'EMAIL_IMAGE_BASE overrides the image base at render time');
+delete process.env.EMAIL_IMAGE_BASE;
+
+console.log(fail ? `\n${fail} FAILED` : '\nall passed');
+process.exit(fail ? 1 : 0);

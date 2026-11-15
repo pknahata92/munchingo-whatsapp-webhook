@@ -19,6 +19,28 @@ const FLAVOURS = [
   { slug: 'atta-ajwain', name: 'Atta Ajwain', tag: 'Spiced & less sweet', img: 'email-ajwain.jpg' },
   { slug: 'atta-lite-sugar', name: 'Atta Sugar-Lite', tag: 'No added sugar', img: 'email-lite.jpg' },
 ];
+// Where the email pictures live. Read at render time so a test or preview can point at local files (EMAIL_IMAGE_BASE).
+const IMG = () => process.env.EMAIL_IMAGE_BASE || `${SITE}/images/`;
+
+// One real photo under the header of each customer email. src is computed when read, so EMAIL_IMAGE_BASE applies.
+const heroOf = (key, alt) => ({ get src() { return `${IMG()}email-hero-${key}.jpg`; }, alt });
+const HEROES = {
+  confirmed: heroOf('confirmed', 'Munchingo biscuits being packed into a box, ready to ship'),
+  packed: heroOf('packed', 'A Munchingo box packed and sealed, ready for the courier'),
+  shipped: heroOf('shipped', 'A Munchingo box on its way to your door'),
+  delivered: heroOf('delivered', 'A Munchingo box opened at home with biscuits ready to eat'),
+  review: heroOf('review', 'Munchingo biscuits with a cup of tea'),
+  range: heroOf('range', 'Munchingo biscuits in a bowl with the four packs'),
+};
+
+// Thumbnail for an order line: the pack photo, the set photo for a Set, or null (shipping line, unknown or legacy item).
+function thumbFor(item) {
+  if (!item || !item.slug || require('./shipping').isShippingItem(item)) return null;
+  const f = FLAVOURS.find((x) => x.slug === item.slug);
+  if (f) return `${IMG()}${f.img}`;
+  if (require('./catalog').boxesForSlug(item.slug) > 1) return `${IMG()}email-set.jpg`;
+  return null;
+}
 
 function esc(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -65,7 +87,7 @@ function browseBlock(boughtSlugs = [], heading = 'Which one is next?') {
   const tiles = ordered.slice(0, 4).map((f) => `
         <td width="50%" valign="top" style="padding:7px;">
           <a href="${SITE}/${f.slug}.html" style="text-decoration:none;display:block;border:1px solid ${C.line};border-radius:14px;background:${C.paper};overflow:hidden;">
-            <img src="${SITE}/images/${f.img}" width="240" alt="${esc(f.name)}" style="display:block;width:100%;height:auto;border:0;">
+            <img src="${IMG()}${f.img}" width="240" alt="${esc(f.name)}" style="display:block;width:100%;height:auto;border:0;">
             <div style="padding:12px 14px 14px;font-family:${FONT};text-align:left;">
               <div style="font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:${C.terra};">${esc(f.tag)}</div>
               <div style="font-size:15px;font-weight:600;color:${C.ink};margin:3px 0 2px;">${esc(f.name)}</div>
@@ -85,7 +107,7 @@ function browseBlock(boughtSlugs = [], heading = 'Which one is next?') {
 }
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
-function shell({ preheader = '', title, subtitle = '', body, promo = 'full', boughtSlugs = [], browseHeading }) {
+function shell({ preheader = '', title, subtitle = '', body, promo = 'full', boughtSlugs = [], browseHeading, hero }) {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:${C.band};">
@@ -93,8 +115,9 @@ function shell({ preheader = '', title, subtitle = '', body, promo = 'full', bou
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.band};"><tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background:${C.cream};border-radius:18px;overflow:hidden;">
   <tr><td style="background:${C.navy};padding:22px 28px;text-align:center;">
-    <a href="${SITE}" style="text-decoration:none;"><img src="${SITE}/images/logo-gold-v2.png" height="46" alt="Munchingo" style="height:46px;width:auto;border:0;"></a>
+    <a href="${SITE}" style="text-decoration:none;"><img src="${IMG()}logo-gold-v2.png" height="46" alt="Munchingo" style="height:46px;width:auto;border:0;"></a>
   </td></tr>
+  ${hero ? `<tr><td style="padding:0;font-size:0;line-height:0;"><img src="${hero.src}" width="600" alt="${esc(hero.alt)}" style="display:block;width:100%;height:auto;border:0;"></td></tr>` : ''}
   <tr><td style="padding:34px 28px 6px;text-align:center;">
     <div style="font-family:Georgia,'Times New Roman',serif;font-size:31px;line-height:1.15;color:${C.ink};">${title}</div>
     ${subtitle ? `<div style="font-family:${FONT};font-size:15px;line-height:1.6;color:${C.ink2};margin:12px auto 0;max-width:430px;">${subtitle}</div>` : ''}
@@ -117,9 +140,17 @@ function shell({ preheader = '', title, subtitle = '', body, promo = 'full', bou
 }
 
 // ── Order summary table (shared) ──────────────────────────────────────────────
+function thumbCell(it) {
+  const src = thumbFor(it);
+  const edge = `border-bottom:1px solid ${C.line};`;
+  if (!src) return `<td width="68" style="width:68px;padding:11px 0;${edge}"></td>`;
+  return `<td width="68" style="width:68px;padding:11px 12px 11px 0;${edge}vertical-align:middle;"><img src="${src}" width="56" alt="${esc(it.productName || it.name || 'Munchingo')}" style="display:block;width:56px;height:auto;border:0;border-radius:8px;"></td>`;
+}
+
 function summaryTable({ items, totalRupees, discountRupees = 0, couponCode = null, gstAmount }) {
   const rows = items.map((it) => `
       <tr>
+        ${thumbCell(it)}
         <td style="padding:11px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink};">${esc(it.productName || it.name || it.product_retailer_id)}${it.unit && !contentsOf(it) ? `<span style="color:${C.ink2};"> &middot; ${esc(it.unit)}</span>` : ''}${contentsOf(it) ? `<div style="font-size:12px;color:${C.ink2};margin-top:2px;">${esc(contentsOf(it))}</div>` : ''}</td>
         <td style="padding:11px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink2};text-align:center;">&times;${it.quantity}</td>
         <td style="padding:11px 0;border-bottom:1px solid ${C.line};font-family:${FONT};font-size:14px;color:${C.ink};text-align:right;">${inr((it.item_price ?? 0) * it.quantity)}</td>
@@ -127,9 +158,9 @@ function summaryTable({ items, totalRupees, discountRupees = 0, couponCode = nul
   return `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       ${rows}
-      ${discountRupees ? `<tr><td colspan="2" style="padding:10px 0 0;font-family:${FONT};font-size:13px;color:${C.ink2};">Discount${couponCode ? ` (${esc(couponCode)})` : ''}</td><td style="padding:10px 0 0;font-family:${FONT};font-size:13px;color:#2F7A4B;text-align:right;">&minus; ${inr(discountRupees)}</td></tr>` : ''}
-      <tr><td colspan="2" style="padding:14px 0 2px;font-family:${FONT};font-size:16px;font-weight:700;color:${C.ink};">Total paid</td><td style="padding:14px 0 2px;font-family:${FONT};font-size:18px;font-weight:700;color:${C.ink};text-align:right;">${inr(totalRupees)}</td></tr>
-      ${gstAmount != null ? `<tr><td colspan="3" style="padding:0;font-family:${FONT};font-size:11.5px;color:#8A7765;">Includes GST (5%): ${inrPaise(gstAmount)} &middot; Free shipping</td></tr>` : ''}
+      ${discountRupees ? `<tr><td colspan="3" style="padding:10px 0 0;font-family:${FONT};font-size:13px;color:${C.ink2};">Discount${couponCode ? ` (${esc(couponCode)})` : ''}</td><td style="padding:10px 0 0;font-family:${FONT};font-size:13px;color:#2F7A4B;text-align:right;">&minus; ${inr(discountRupees)}</td></tr>` : ''}
+      <tr><td colspan="3" style="padding:14px 0 2px;font-family:${FONT};font-size:16px;font-weight:700;color:${C.ink};">Total paid</td><td style="padding:14px 0 2px;font-family:${FONT};font-size:18px;font-weight:700;color:${C.ink};text-align:right;">${inr(totalRupees)}</td></tr>
+      ${gstAmount != null ? `<tr><td colspan="4" style="padding:0;font-family:${FONT};font-size:11.5px;color:#8A7765;">Includes GST (5%): ${inrPaise(gstAmount)}${items.some(require('./shipping').isShippingItem) ? '' : ' &middot; Free shipping'}</td></tr>` : ''}
     </table>`;
 }
 
@@ -184,6 +215,7 @@ function customerConfirmationHtml({ order, invoice }) {
       : 'Your payment is confirmed. We&rsquo;ll pack your order by hand and message you on WhatsApp the moment it ships.',
     body,
     promo: 'full',
+    hero: HEROES.confirmed,
     boughtSlugs: bought,
     browseHeading: bought.length ? 'Curious about the others?' : 'Which one is next?',
   });
@@ -205,6 +237,7 @@ function subscriptionRenewalHtml({ customerName, orderId, items, discountPct, to
     subtitle: 'Same cookies you love, fresh from the oven. One tap to confirm and we&rsquo;ll pack it.',
     body,
     promo: 'full',
+    hero: HEROES.range,
     boughtSlugs: (items || []).map((i) => i.slug).filter(Boolean),
     browseHeading: 'Fancy something new this month?',
   });
@@ -227,6 +260,7 @@ function paymentReminderHtml({ customerName, orderId, items, total, paymentUrl, 
     subtitle: 'One step left: complete the payment and we will take it from there.',
     body,
     promo: 'none',
+    hero: HEROES.range,
     boughtSlugs: (items || []).map((i) => i.slug).filter(Boolean),
   });
 }
@@ -244,8 +278,7 @@ function refundHtml({ customerName, orderId, amount, isFull }) {
     title: `Your refund is on its way, ${esc(first)}.`,
     subtitle: 'Sorry we couldn&rsquo;t get this one right. We&rsquo;d love another chance.',
     body,
-    promo: 'light',
-    browseHeading: 'Come back hungry',
+    promo: 'none',
   });
 }
 
@@ -294,21 +327,21 @@ function shippedHtml({ order, carrier, awb, trackUrl }) {
     preheader: byHand ? 'Your Munchingo box is on its way, by hand.' : `Your Munchingo box has shipped${awb && !isLink ? ' (tracking ' + awb + ')' : ''}.`,
     title: `Your box is on its way, ${esc(first)}.`,
     subtitle: byHand ? 'Baked in Bikaner and being brought to your door by hand.' : 'Baked in Bikaner and now travelling to your doorstep.',
-    body, promo: 'light', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean), browseHeading: 'While you wait',
+    body, promo: 'light', hero: HEROES.shipped, boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean), browseHeading: 'While you wait',
   });
 }
 
 // ── Customer: your box is packed / delivered ─────────────────────────────────
-function statusHtml({ order, title, subtitle, line, preheader }) {
+function statusHtml({ order, title, subtitle, line, preheader, hero }) {
   const body = card(`
     <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:10px;">Order ${esc(order.order_id)}</div>
     <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">${line}</div>`);
-  return shell({ preheader, title, subtitle, body, promo: 'light', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean), browseHeading: 'While you wait' });
+  return shell({ preheader, title, subtitle, body, promo: 'light', hero, boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean), browseHeading: 'While you wait' });
 }
 function packedHtml({ order }) {
   const first = String(order.customer_name || 'there').trim().split(/\s+/)[0];
   return statusHtml({
-    order, preheader: 'Your Munchingo box is packed and ready for the courier.',
+    order, hero: HEROES.packed, preheader: 'Your Munchingo box is packed and ready for the courier.',
     title: `Your box is packed, ${esc(first)}.`, subtitle: 'Baked in Bikaner and ready for the courier.',
     line: 'Your box is <b>packed and ready for the courier</b>. We will email you again, with your tracking link, as soon as the courier has collected it.',
   });
@@ -316,7 +349,7 @@ function packedHtml({ order }) {
 function deliveredHtml({ order }) {
   const first = String(order.customer_name || 'there').trim().split(/\s+/)[0];
   return statusHtml({
-    order, preheader: 'Your Munchingo box has been delivered.',
+    order, hero: HEROES.delivered, preheader: 'Your Munchingo box has been delivered.',
     title: `Your box has arrived, ${esc(first)}.`, subtitle: 'We hope you enjoy every bite.',
     line: 'Your box has been <b>delivered</b>. If anything arrived damaged, wrong or stale, reply to this email with a photo within 48 hours and we will make it right.',
   });
@@ -331,7 +364,7 @@ function reviewRequestHtml({ order, url, founders }) {
   const body = card(`
     <div style="font-family:${FONT};font-size:14px;line-height:1.8;color:${C.ink};">${line}</div>
     <div style="text-align:center;padding:22px 0 4px;">${button(url, 'Rate your box')}</div>`);
-  return shell({ preheader: 'How were the cookies? Rate each Flavor in about 20 seconds.', title: `How was your box, ${esc(first)}?`, subtitle: 'Honest is more useful to us than nice.', body, promo: 'none', boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean) });
+  return shell({ preheader: 'How were the cookies? Rate each Flavor in about 20 seconds.', title: `How was your box, ${esc(first)}?`, subtitle: 'Honest is more useful to us than nice.', body, promo: 'none', hero: HEROES.review, boughtSlugs: (order.items || []).map((i) => i.slug).filter(Boolean) });
 }
 
 // ── Owner: refund processed (with credit note) ───────────────────────────────
@@ -424,4 +457,4 @@ function dailySummaryHtml({ dayLabel, orders, invoicesByOrder = {}, creditNotes 
   </table></td></tr></table></body></html>`;
 }
 
-module.exports = { reviewRequestHtml, paymentReminderHtml, shippedHtml, packedHtml, deliveredHtml, ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS };
+module.exports = { reviewRequestHtml, paymentReminderHtml, shippedHtml, packedHtml, deliveredHtml, ownerRefundHtml, customerConfirmationHtml, subscriptionRenewalHtml, refundHtml, ownerPaidHtml, dailySummaryHtml, shell, FLAVOURS, HEROES, thumbFor, summaryTable };
