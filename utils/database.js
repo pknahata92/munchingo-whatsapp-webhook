@@ -260,12 +260,13 @@ async function listOrdersSince(sinceIso, limit = 500) {
 }
 
 // Suggestions from WhatsApp (utils/suggestions.js).
-async function setSuggestionWait(phone, at) {
-  const { error } = await db().from('suggestion_waits').upsert({ phone, asked_at: at }, { onConflict: 'phone' });
+// kind: 'suggestion' (default) or a journey wait; orderId ties a wait to an order (growth_journey_migration.sql).
+async function setSuggestionWait(phone, at, kind = 'suggestion', orderId = null) {
+  const { error } = await db().from('suggestion_waits').upsert({ phone, asked_at: at, kind, order_id: orderId }, { onConflict: 'phone' });
   if (error) throw new Error(error.message);
 }
-async function getSuggestionWait(phone) {
-  const { data, error } = await db().from('suggestion_waits').select('*').eq('phone', phone).maybeSingle();
+async function getSuggestionWait(phone) {   // { phone, asked_at, kind, order_id } or null
+  const { data, error } = await db().from('suggestion_waits').select('phone, asked_at, kind, order_id').eq('phone', phone).maybeSingle();
   if (error) throw new Error(error.message);
   return data || null;
 }
@@ -516,14 +517,19 @@ async function updateContact(phone, fields) {
   if (error) throw new Error(error.message);
   return data;
 }
+/** Note when a contact last wrote to us. Updates an existing row only; never creates a contact. */
+async function touchInbound(phone, atIso) {
+  const { error } = await db().from('contacts').update({ last_inbound_at: atIso }).eq('phone', phone);
+  if (error) throw new Error(error.message);
+}
 // Broadcasts (utils/broadcast.js): who said yes, and the log of marketing sends (marketing_sends_migration.sql).
 async function listMarketingContacts() {
-  const { data, error } = await db().from('contacts').select('phone, name, first_source, last_source, consent_marketing').eq('consent_marketing', true);
+  const { data, error } = await db().from('contacts').select('phone, name, first_source, last_source, consent_marketing, consent_reminder, last_inbound_at, consent_at, consent_text, journey_declined_at, last_complaint_at').eq('consent_marketing', true);
   if (error) throw new Error(error.message);
   return data || [];
 }
 async function listMarketingSends() {   // small table (one row per broadcast message); broadcast.js filters by status, date and template
-  const { data, error } = await db().from('marketing_sends').select('phone, template, status, error, sent_at');
+  const { data, error } = await db().from('marketing_sends').select('phone, template, status, error, sent_at, campaign, wa_message_id');
   if (error) throw new Error(error.message);
   return data || [];
 }
@@ -542,6 +548,18 @@ async function listRecentMarketingSends(last10, sinceIso) {
 async function insertMarketingSend(row) {
   const { error } = await db().from('marketing_sends').insert(row);
   if (error) throw new Error(error.message);
+}
+/** Stall sales since a time that are linked to a phone number (buyer ticked the marketing box); deleted rows left out. */
+async function listStallOrdersWithPhone(sinceIso) {
+  const { data, error } = await db().from('stall_orders').select('contact_phone, day, sold_at, lines').not('contact_phone', 'is', null).is('deleted_at', null).gte('sold_at', sinceIso).order('sold_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+/** Phones (customer_phone) of subscriptions that are active. */
+async function listActiveSubscriptionPhones() {
+  const { data, error } = await db().from('subscriptions').select('customer_phone').eq('status', 'active');
+  if (error) throw new Error(error.message);
+  return (data || []).map((r) => r.customer_phone).filter(Boolean);
 }
 async function listFoundingTasters() {
   const { data, error } = await db().from('founding_tasters').select('*').order('added_at', { ascending: true });
@@ -724,7 +742,7 @@ module.exports = {
   getOrdersByIds,
   client, offersReady, listSpendTiers, insertSpendTier, updateSpendTier, deleteSpendTier, listCouponOrderTotals,
   couponColumnsReady, listCoupons, listCouponRedemptions, getCoupon, insertCoupon, updateCouponRow, countCouponRedemptions, deleteCouponRow,
-  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, listRecentOrderEvents, getOrdersPackedAt, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, listRecentMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
+  listPrices, setPrice, getAdminUser, listAdminUsers, upsertAdminUser, logOrderEvent, listOrderEvents, listOrderEventsByName, listRecentOrderEvents, getOrdersPackedAt, claimOrderEvent, insertReview, getReviewByOrder, listReviews, updateReview, listFoundingTasters, setFoundingTasters, getContact, insertContact, updateContact, listMarketingContacts, listMarketingSends, touchInbound, listStallOrdersWithPhone, listActiveSubscriptionPhones, listRecentMarketingSends, insertMarketingSend, markMarketingSendFailed, listDeliveredOrders, setKnownToUs, updateOrderIf, getOrdersInTransit, setExpectedDelivery, listOrdersSince, listStock, setStock, getCouponUsage,
   listRecentOrders,
   getCreditNotesByOrderIds,
   updateOrderFields,
