@@ -179,7 +179,7 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
     const jm = require('../utils/journeyMedia');
     ok(jm.MEDIA_BASE === 'https://munchingo.com/media/' && jm.checkinImage() === 'https://munchingo.com/media/checkin.jpg', 'journeyMedia: base and check-in picture');
     ok(jm.reorderImage('atta-kesari').endsWith('reorder-atta-kesari.jpg') && jm.reorderImage(null).endsWith('reorder-all.jpg'), 'journeyMedia: reorder picture per slug, or all');
-    { const keep = process.env.JOURNEY_UNLOCK_VIDEO_URL; delete process.env.JOURNEY_UNLOCK_VIDEO_URL; ok(jm.unlockVideo() === null, 'unlock video is null when not set'); process.env.JOURNEY_UNLOCK_VIDEO_URL = 'https://x/y.mp4'; ok(jm.unlockVideo() === 'https://x/y.mp4', 'unlock video from env'); if (keep === undefined) delete process.env.JOURNEY_UNLOCK_VIDEO_URL; else process.env.JOURNEY_UNLOCK_VIDEO_URL = keep; }
+    { const keep = process.env.JOURNEY_UNLOCK_VIDEO_URL; delete process.env.JOURNEY_UNLOCK_VIDEO_URL; ok(jm.unlockVideo() === null, 'unlock video is null when not set'); process.env.JOURNEY_UNLOCK_VIDEO_URL = '   '; ok(jm.unlockVideo() === null, 'unlock video: blank is null'); process.env.JOURNEY_UNLOCK_VIDEO_URL = ' https://x/y.mp4 '; ok(jm.unlockVideo() === 'https://x/y.mp4', 'unlock video: trimmed'); process.env.JOURNEY_UNLOCK_VIDEO_URL = 'https://x/y.mp4'; ok(jm.unlockVideo() === 'https://x/y.mp4', 'unlock video from env'); if (keep === undefined) delete process.env.JOURNEY_UNLOCK_VIDEO_URL; else process.env.JOURNEY_UNLOCK_VIDEO_URL = keep; }
     buttons.length = 0; logged.length = 0;
     store = [j3Order('MNG-AAAA-2222', { items: [{ slug: 'full-range-set', quantity: 1 }] })];
     await r.sweepRequests();

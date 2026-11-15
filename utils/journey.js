@@ -139,7 +139,7 @@ async function sendPlain(phone, parts) {
  *  the clip is refused: the plain messages, exactly as without the video. */
 async function replyLoved(phone, parts) {
   const { wa } = D();
-  const url = String(process.env.JOURNEY_UNLOCK_VIDEO_URL || '').trim();
+  const url = require('./journeyMedia').unlockVideo();
   if (url) {
     const body = parts.map((p) => p.text).join('\n\n');
     const buttons = parts[parts.length - 1].buttons;

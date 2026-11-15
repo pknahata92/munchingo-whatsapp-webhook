@@ -5,6 +5,7 @@ const MEDIA_BASE = 'https://munchingo.com/media/';
 
 const checkinImage = () => MEDIA_BASE + 'checkin.jpg';
 const reorderImage = (slug) => MEDIA_BASE + (slug ? `reorder-${slug}.jpg` : 'reorder-all.jpg');
-const unlockVideo = () => process.env.JOURNEY_UNLOCK_VIDEO_URL || null;
+// Trimmed; unset or blank means no video (one source of truth for every caller).
+const unlockVideo = () => String(process.env.JOURNEY_UNLOCK_VIDEO_URL || '').trim() || null;
 
 module.exports = { MEDIA_BASE, checkinImage, reorderImage, unlockVideo };
