@@ -36,7 +36,7 @@ r = cart.cartLink({ orders: [O({ 'atta-original': 3, 'atta-kesari': 1 })], inSto
 eq(r.path, 'cart?add=atta-kesari:2,atta-ajwain&' + UTM('c'), 'favourite sold out: the next Flavor from that order that is in stock');
 r = cart.cartLink({ orders: [O({ 'atta-original': 2 })], inStock: new Set(['atta-ajwain']), campaign: 'c', medium: 'journey' });
 eq(r.favSlug, null, 'nothing from the last order in stock: favSlug is null (so "your usual" would not be true)');
-eq(r.path, 'cart?add=atta-ajwain&' + UTM('c'), 'and the cart holds only the untried Flavor');
+eq(r.path, 'cart?add=atta-ajwain:2&' + UTM('c'), 'and the cart holds only the untried Flavor, topped up to 2 boxes (R30)');
 
 // ── no untried Flavor in stock: the last order again ──
 r = cart.cartLink({ orders: [O({ 'atta-original': 2, 'atta-kesari': 1, 'atta-ajwain': 1, 'atta-lite-sugar': 1 })], inStock: ALL, campaign: 'j6_reorder', medium: 'broadcast' });
@@ -57,13 +57,32 @@ eq(r.path, 'cart?add=atta-original:2&' + UTM('c'), 'a Set only in an OLDER order
 r = cart.cartLink({ orders: [O({}, [{ slug: 'full-range-set', quantity: 1 }])], inStock: new Set(), campaign: 'c', medium: 'journey' });
 eq(r.path, 'shop?' + UTM('c'), 'a Set with nothing in stock: the shop');
 r = cart.cartLink({ orders: [O({ 'atta-original': 1 }, [{ slug: 'shipping', quantity: 1 }])], inStock: new Set(['atta-original']), campaign: 'c', medium: 'journey' });
-eq(r.path, 'cart?add=atta-original:1&' + UTM('c'), 'the shipping line is not a box and not a Set');
+eq(r.path, 'cart?add=atta-original:2&' + UTM('c'), 'the shipping line is not a box and not a Set (the 1 box is topped up to 2, R30)');
 
 // ── odd inputs ──
 r = cart.cartLink({ orders: [O({}, [{ product_retailer_id: 'w2w5ynf2m5', quantity: 2 }])], inStock: ALL, campaign: 'c', medium: 'journey' });
 eq(r.path, 'cart?add=atta-kesari:2,atta-original&' + UTM('c'), 'a WhatsApp catalog line (retailer id, no slug) counts as its Flavor');
 eq(cart.cartLink({ orders: [], inStock: ALL, campaign: 'c', medium: 'journey' }).path, 'shop?' + UTM('c'), 'no orders: the shop');
 eq(cart.cartLink({ orders: undefined, inStock: undefined, campaign: 'c', medium: 'journey' }).path, 'shop?' + UTM('c'), 'missing inputs never throw');
+
+const same = (a, b, m) => eq(JSON.stringify(a), JSON.stringify(b), m);   // eq is ===; arrays compare as JSON
+// ── R30: every reorder cart is at least 2 boxes (the site's minimum); the favourite (first in-stock slug in the cart) is topped up ──
+r = cart.cartLink({ orders: [O({ 'atta-original': 1, 'atta-kesari': 1 }), O({ 'atta-ajwain': 1, 'atta-lite-sugar': 1 })], inStock: new Set(['atta-original', 'atta-ajwain', 'atta-lite-sugar']), campaign: 'j6_reorder', medium: 'journey' });
+eq(r.path, 'cart?add=atta-original:2&' + UTM('j6_reorder'), 'R30: 1 Original + 1 Kesari, Kesari sold out: atta-original:2, never a 1-box cart');
+same([r.trySlug, r.favSlug], [null, 'atta-original'], 'R30: the top-up changes neither the try nor the favourite');
+const boxesIn = (path) => (String(path).match(/add=([^&]*)/) || [, ''])[1].split(',').filter(Boolean).reduce((n, p) => n + (Number(p.split(':')[1]) || 1), 0);
+const SETS = [[], ['atta-original'], ['atta-kesari'], ['atta-original', 'atta-kesari'], ['atta-ajwain'], ['atta-ajwain', 'atta-lite-sugar'], ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar']];
+const LASTS = [{ 'atta-original': 1 }, { 'atta-original': 2 }, { 'atta-original': 1, 'atta-kesari': 1 }, { 'atta-kesari': 1, 'atta-ajwain': 1, 'atta-lite-sugar': 1 }, { 'atta-original': 1, 'atta-kesari': 1, 'atta-ajwain': 1, 'atta-lite-sugar': 1 }];
+let under = [], tries = 0;
+for (const stock of SETS) for (const last of LASTS) {
+  const res = cart.cartLink({ orders: [O(last)], inStock: new Set(stock), campaign: 'c', medium: 'journey' });
+  if (res.trySlug) tries++;
+  if (res.path.startsWith('cart?') && boxesIn(res.path) < 2) under.push(res.path);
+}
+same(under, [], 'R30: no cart, try or repeat, totals under 2 boxes (' + SETS.length * LASTS.length + ' stock/order mixes)');
+ok(tries > 5, 'R30: the sweep above covers the try path too (' + tries + ' try carts)');
+r = cart.cartLink({ orders: [O({ 'atta-original': 2 })], inStock: new Set(['atta-ajwain']), campaign: 'c', medium: 'journey' });
+same([r.path, boxesIn(r.path)], ['cart?add=atta-ajwain:2&' + UTM('c'), 2], 'R30: a try cart with no favourite in stock totals 2 (the try topped up)');
 ok(['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'].join() === cart.SLUGS.join(), 'SLUGS is the tie-break order');
 
 console.log(`reorder-cart-test: ${pass} passed, ${fail} failed`);
