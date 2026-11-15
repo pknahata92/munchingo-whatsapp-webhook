@@ -40,8 +40,27 @@ contacts.setDeps({
   let r = await optin.onPaid(order());
   const c = store['919876543210'];
   ok(r.joined && c && c.consent_marketing === true && c.consent_text === optin.CONSENT_TEXT && c.consent_at === '2026-10-27T05:50:00.000Z', 'ticked + paid: joins with consent, sentence and tick time');
-  ok(c.consent_reminder === false, 'a v1 order joins without reminder consent');
+  ok(c.consent_reminder !== true && !('consent_reminder' in c), 'a v1 order joins without reminder consent (the field is not written; the column defaults to false)');
   ok(c.first_source === 'website:2026-10-27' && c.last_source === 'website:2026-10-27' && c.name === 'Asha', 'source is website:<IST day>, buyer name kept');
+
+  // ── A8 fix 6: a v1 tick (an old checkout page still open) never lowers a reminder yes ──
+  const V2AT = '2026-10-20T06:00:00.000Z';
+  store = { '919876543210': { phone: '919876543210', consent_marketing: true, consent_reminder: true, consent_at: V2AT, consent_text: optin.CONSENT_TEXTS.v2, first_source: 'website:2026-10-20', last_source: 'website:2026-10-20' } };
+  r = await optin.onPaid(order());
+  { const x = store['919876543210'];
+    ok(r.joined && x.consent_marketing === true && x.consent_reminder === true, 'v1 tick on a contact who said yes to reminders: consent_reminder stays true (' + JSON.stringify(x) + ')');
+    ok(x.consent_text === optin.CONSENT_TEXTS.v2 && x.consent_at === V2AT, 'and the reminder yes record (v2 words and time) is left as it was');
+    ok(x.last_source === 'website:2026-10-27', 'the new visit is still noted (last_source)'); }
+  store = { '919876543210': { phone: '919876543210', consent_marketing: true, consent_reminder: false, consent_at: '2026-10-01T00:00:00Z', consent_text: 'fair', first_source: 'fair:2026-10-25' } };
+  r = await optin.onPaid(order());
+  ok(r.joined && store['919876543210'].consent_reminder === false && store['919876543210'].consent_text === optin.CONSENT_TEXT, 'v1 tick on a contact without a reminder yes: still no reminder consent, the v1 words recorded');
+  store = { '919876543210': { phone: '919876543210', consent_marketing: true, consent_reminder: false, consent_at: '2026-10-01T00:00:00Z', consent_text: 'fair', first_source: 'fair:2026-10-25' } };
+  r = await optin.onPaid(order({ delivery_address: { marketing: { text: optin.CONSENT_TEXTS.v2, at: '2026-10-27T05:50:00.000Z' } } }));
+  ok(r.joined && store['919876543210'].consent_reminder === true && store['919876543210'].consent_text === optin.CONSENT_TEXTS.v2, 'a v2 tick still sets consent_reminder true');
+  { const src = require('fs').readFileSync(require('path').join(__dirname, '../utils/checkoutOptIn.js'), 'utf8');
+    ok(!/DRAFT/.test(src), 'checkoutOptIn.js no longer calls C4 a draft (approved)'); }
+  { const src = require('fs').readFileSync(require('path').join(__dirname, '../utils/contacts.js'), 'utf8');
+    ok(!/DRAFT C2|still wording it/.test(src), 'contacts.js no longer calls C2 a draft (approved)'); }
 
   store = {};
   r = await optin.onPaid(order({ delivery_address: {} }));

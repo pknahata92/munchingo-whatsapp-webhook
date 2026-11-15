@@ -4,7 +4,7 @@
 // joins `contacts` with consent. Unticked changes nothing; a STOP sent after the tick wins; gift recipients never join.
 const CONSENT_TEXTS = {
   v1: 'Send me new Flavors and offers on WhatsApp. A few messages a month. Reply STOP any time.',
-  v2: 'Send me fresh batches, new Flavors and one nudge when my box is likely running low, on WhatsApp. At most 3 a month. Reply STOP any time.',   // DRAFT C4: names the reorder nudge
+  v2: 'Send me fresh batches, new Flavors and one nudge when my box is likely running low, on WhatsApp. At most 3 a month. Reply STOP any time.',   // C4 (approved): names the reorder nudge
 };
 const CONSENT_TEXT = CONSENT_TEXTS.v1;   // kept so existing imports keep working
 
@@ -31,7 +31,12 @@ async function onPaid(order) {
       return { joined: false, reason: 'STOP after the tick' };
     }
     const source = 'website:' + istDay(Date.parse(m.at));
-    const r = await contacts.save(phone, { name: order.customer_name || null, consent_marketing: true, consent_reminder: m.text === CONSENT_TEXTS.v2, consent_at: m.at, consent_text: m.text, last_source: source }, source);
+    // Only the v2 words set consent_reminder. A v1 tick (an old checkout page still open) never lowers it: a contact who already
+    // said yes to reminders keeps that consent and its record (words and time) as they are.
+    const v2 = m.text === CONSENT_TEXTS.v2;
+    const keep = !v2 && old && old.consent_marketing === true && old.consent_reminder === true;
+    const consent = keep ? {} : { consent_marketing: true, ...(v2 ? { consent_reminder: true } : {}), consent_at: m.at, consent_text: m.text };
+    const r = await contacts.save(phone, { name: order.customer_name || null, ...consent, last_source: source }, source);
     return { joined: !!r.ok, reason: r.ok ? 'joined' : 'save failed' };
   } catch (e) {
     console.error('[OPTIN] could not record the checkout opt-in:', e.message);
