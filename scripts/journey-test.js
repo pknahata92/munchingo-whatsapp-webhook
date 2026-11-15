@@ -23,6 +23,7 @@ const W = {
   c11: "Thank you. It's with me now, and I'll reply myself.",
   c12: 'Thank you. I read every one myself.',
   c13: 'No problem. Thank you for telling me how it went.',
+  c15: 'Thank you. Your next Set is ready to build whenever you want it.',
 };
 // EXACTLY what the buyer is sent: the same words with WhatsApp line breaks (ruling R15). Every send below is compared to these.
 const S = {
@@ -39,6 +40,7 @@ const S = {
   c11: "Thank you.\nIt's with me now, and I'll reply myself.",
   c12: 'Thank you.\nI read every one myself.',
   c13: 'No problem.\nThank you for telling me how it went.',
+  c15: 'Thank you.\nYour next Set is ready to build whenever you want it.',
   failed: "Sorry, that didn't go through on our side. Please try again in a minute.",
 };
 const reflow = (s) => s.replace(/\n+/g, ' ');   // only to prove S is W with line breaks; never used on a sent message
@@ -54,6 +56,8 @@ const journey = require('../utils/journey');
 const contacts = require('../utils/contacts');
 const suggestions = require('../utils/suggestions');
 
+let seq = 0;
+const wamid = () => ({ messages: [{ id: 'wamid.T' + (++seq) }] });
 function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
   let t = START;
   const rows = {}, waits = {}, events = [], sent = [], mails = [], saved = [], calls = [], pending = {};
@@ -76,9 +80,9 @@ function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
     insertSuggestion: async (row) => { log('insertSuggestion'); const r = { id: saved.length + 1, ...row }; saved.push(r); return r; },
   };
   const wa = {
-    sendText: async (to, text) => { sent.push({ to, kind: 'text', text }); },
-    sendButtons: async (to, body, buttons, opts) => { sent.push({ to, kind: 'buttons', text: body, buttons, header: opts && opts.header }); },
-    sendVideo: async (to, link, caption) => { sent.push({ to, kind: 'video', link, caption }); },
+    sendText: async (to, text) => { const r = wamid(); sent.push({ to, kind: 'text', text, id: r.messages[0].id }); return r; },
+    sendButtons: async (to, body, buttons, opts) => { const r = wamid(); sent.push({ to, kind: 'buttons', text: body, buttons, header: opts && opts.header, id: r.messages[0].id }); return r; },
+    sendVideo: async (to, link, caption) => { const r = wamid(); sent.push({ to, kind: 'video', link, caption, id: r.messages[0].id }); return r; },
   };
   const mail = {
     sendComplaintAlert: async (x) => { mails.push({ kind: 'complaint', ...x }); },
@@ -97,7 +101,7 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   delete process.env.DELIVERY_NATIONWIDE;
 
   // ── the words: S is the approved words with line breaks, and the module sends S ──
-  for (const k of ['ask', 'r1', 'notQuite', 'wrong', 'c3', 'c7', 'c9', 'c10', 'c11', 'c12', 'c13']) ok(reflow(S[k]) === W[k], `${k}: the words are the approved words`);
+  for (const k of ['ask', 'r1', 'notQuite', 'wrong', 'c3', 'c7', 'c9', 'c10', 'c11', 'c12', 'c13', 'c15']) ok(reflow(S[k]) === W[k], `${k}: the words are the approved words`);
   ok(reflow(S.consented('Atta Kesari')) === W.consented('Atta Kesari'), 'consented: the approved words');
   ok(reflow(S.usual) === W.consented('X').replace(', with one X added to try.', '.'), 'usual: the consented words without the try clause (accepted subset)');
   ok(Object.keys(journey.REPLIES).join() === 'en', 'one REPLIES map, English only for now (Hindi is data later)');
@@ -177,6 +181,13 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'The box was crushed') === true, 'captured even when Prashant cannot be reached');
   ok(w.toBuyer().length === nb, 'no C11: "It\'s with me now" is never sent when it reached nobody');
   ok(w.events.some((e) => e.event === 'journey_complaint_followup' && e.meta.text === 'The box was crushed'), 'the text is on the order timeline');
+  w = world();
+  await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
+  w.mail.sendComplaintAlert = async () => { throw new Error('mail down'); };
+  const nb2 = w.toBuyer().length, ow2 = w.toOwner().length;
+  ok(await journey.captureReply(ASHA, 'Asha', 'text', 'Lid was open') === true && w.toOwner().length === ow2 + 1, 'email down: the WhatsApp alert to Prashant still goes (R22)');
+  ok(w.toBuyer().length === nb2, 'but WhatsApp alone does not count as reached: no C11 (Meta can accept and then drop it)');
+  ok(w.events.some((e) => e.event === 'journey_complaint_followup' && e.meta.text === 'Lid was open'), 'and the follow-up is on the order timeline');
   w = world();
   await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
   await journey.captureReply(ASHA, 'Asha', 'text', 'x'.repeat(1500));
@@ -262,7 +273,11 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   w = world({ contact: { consent_marketing: true, consent_reminder: true }, orders: [{ order_id: OID, customer_phone: ASHA, status: 'paid', created_at: '2026-11-08T05:00:00Z', items: [{ slug: 'full-range-set', quantity: 1 }], delivery_address: { pincode: '110009' } }] });
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   b = w.toBuyer();
-  ok(b.length === 1 && b[0].text === S.usual + '\n\nhttps://munchingo.com/build-a-box?utm_source=whatsapp&utm_medium=journey&utm_campaign=j4_reorder', 'a Set last time: the usual words and Build a box (R20): ' + show(b));
+  ok(b.length === 1 && b[0].text === S.c15 + '\n\nhttps://munchingo.com/build-a-box?utm_source=whatsapp&utm_medium=journey&utm_campaign=j4_reorder', 'a Set last time: exactly C15 and Build a box (R20, R23): ' + show(b));
+  w = world({ orders: [{ order_id: OID, customer_phone: ASHA, status: 'paid', created_at: '2026-11-08T05:00:00Z', items: [{ slug: 'trio-gift-set-kesari-lite-sugar-original', quantity: 1 }], delivery_address: { pincode: '110009' } }] });
+  await journey.handleTap(ASHA, 'j4_yes', 'Asha');
+  b = w.toBuyer();
+  ok(b.length === 2 && b[0].text === S.c7 && b[1].text === S.c15 + '\n\nhttps://munchingo.com/build-a-box?utm_source=whatsapp&utm_medium=journey&utm_campaign=j4_reorder', 'Yes after a Trio: C7, then exactly C15 and Build a box: ' + show(b));
   w = world({ contact: { consent_marketing: true, consent_reminder: true }, inStock: [] });
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   b = w.toBuyer();
@@ -373,6 +388,47 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   w = world();
   await journey.handleTap(ASHA, 'j4_yes', 'Asha');
   ok(!w.sent.some((s) => s.kind === 'video' || s.header), 'Yes, keep me posted gets no second video');
+  // R21: Meta reports a failed clip later (status webhook); the plain words follow once, never twice
+  w = world();
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  const hdrId = w.toBuyer()[0].id;
+  ok(await journey.noteStatus({ id: hdrId, status: 'delivered', recipient_id: ASHA }) === false && w.toBuyer().length === 1, 'a delivered status does nothing');
+  w = world();
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  const hdrId2 = w.toBuyer()[0].id;
+  ok(await journey.noteStatus({ id: 'wamid.unknown', status: 'failed' }) === false && w.toBuyer().length === 1, 'a failed status for a message that is not ours does nothing');
+  ok(await journey.noteStatus({ id: hdrId2, status: 'sent' }) === false && w.toBuyer().length === 1, 'a sent status does nothing');
+  ok(await journey.noteStatus({ id: hdrId2, status: 'failed', recipient_id: ASHA, errors: [{ code: 131053 }] }) === true, 'a failed clip-header reply is resent');
+  b = w.toBuyer().slice(1);
+  ok(b.length === 1 && b[0].kind === 'buttons' && b[0].header === undefined && b[0].text === S.ask && show(b[0].buttons) === show(journey.BUTTONS.consent), 'as exactly the plain consent ask with its buttons, no header: ' + show(b));
+  ok(await journey.noteStatus({ id: hdrId2, status: 'failed' }) === false && w.toBuyer().length === 2, 'a second failed status for the same reply does not resend');
+  w = world({ contact: { consent_marketing: true, consent_reminder: true } });
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  ok(await journey.noteStatus({ id: w.toBuyer()[0].id, status: 'failed' }) === true, 'a failed clip-with-caption reply is resent');
+  b = w.toBuyer().slice(1);
+  ok(b.length === 1 && b[0].kind === 'text' && b[0].text === CART, 'as exactly the plain cart message: ' + show(b));
+  w = world({ contact: { consent_marketing: true, consent_reminder: false } });
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  await journey.noteStatus({ id: w.toBuyer()[0].id, status: 'failed' });
+  b = w.toBuyer().slice(1);
+  ok(b.length === 2 && b[0].kind === 'text' && b[0].text === CART && b[1].kind === 'buttons' && b[1].text === S.c9 && b[1].header === undefined && show(b[1].buttons) === show(journey.BUTTONS.reminder), 'consented: exactly what the no-clip path sends, the cart then C9 with its buttons');
+  w = world();
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  const oldId = w.toBuyer()[0].id;
+  w.tick(25 * 3600000);
+  ok(await journey.noteStatus({ id: oldId, status: 'failed' }) === false && w.toBuyer().length === 1, 'kept 24 h only: a failure reported later resends nothing');
+  w = world();
+  w.wa.sendButtons = async (to, body, buttons, opts) => { if (opts && opts.header) throw new Error('bad media'); return w.wa.sendText(to, body); };
+  const clipsBefore = journey._clipCount();
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  ok(journey._clipCount() === clipsBefore && w.toBuyer().length === 1 && w.toBuyer()[0].text === S.ask, 'a clip refused at once is not remembered (the plain words already went)');
+  ok(await journey.noteStatus(undefined) === false && await journey.noteStatus({}) === false, 'noteStatus never throws on odd input');
+  {
+    w = world();
+    for (let i = 0; i < 510; i++) journey._rememberClip('wamid.cap' + i, { to: ASHA, plain: [{ text: 'x' }] });
+    ok(journey._clipCount() === 500, 'at most 500 remembered (' + journey._clipCount() + ')');
+    ok(await journey.noteStatus({ id: 'wamid.cap0', status: 'failed' }) === false && await journey.noteStatus({ id: 'wamid.cap509', status: 'failed' }) === true, 'the oldest is dropped first');
+  }
   process.env.JOURNEY_UNLOCK_VIDEO_URL = '   ';
   w = world();
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
@@ -432,6 +488,8 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   const ri = h.slice(h.indexOf('async function routeInteractive('));
   ok(ri.indexOf('journey.handleTap(') > 0 && ri.indexOf('journey.handleTap(') < ri.indexOf('switch (buttonId)'), 'routeInteractive: journey taps before the switch (whose default is the welcome)');
   ok(/require\('\.\.\/utils\/journey'\)/.test(h), 'messageHandler loads utils/journey');
+  const loop = srv.slice(srv.indexOf('for (const s of statuses)'), srv.indexOf('for (const s of statuses)') + 900);
+  ok(/broadcast'\)\.noteStatus\(s\)/.test(loop) && /try \{ await require\('\.\/utils\/journey'\)\.noteStatus\(s\); \} catch/.test(loop), 'server.js: each status also goes to journey.noteStatus, in its own try/catch');
   const sql = fs.readFileSync(path.join(__dirname, '..', 'growth_journey_migration.sql'), 'utf8').toLowerCase();
   ok(/create unique index if not exists order_events_journey_tap_once on order_events \(order_id, event\) where event = 'journey_tap'/.test(sql), 'the migration makes journey_tap once per order (claimOrderEvent needs a unique index to return false)');
 

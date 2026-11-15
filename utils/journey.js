@@ -5,7 +5,8 @@
 //   Loved it        -> not consented: the consent question (Yes / No thanks), no link. Consented: the reorder cart, then the
 //                      reminder question (C9) if they have not said yes to the running-low nudge. STOP ever, or a No within
 //                      90 days (J4 No thanks or any consent No): thanks only (rulings R1, R19). With JOURNEY_UNLOCK_VIDEO_URL
-//                      set, the "unlock" clip rides in that first reply (R17).
+//                      set, the "unlock" clip rides in that first reply (R17); if Meta later fails to fetch it, the plain
+//                      words follow once (noteStatus, R21). A Set last time: C15 and Build a box (R20, R23).
 //   Not quite       -> one question; their next message within 24 h is saved as feedback and emailed to Prashant.
 //   Something wrong -> apology and a photo ask; Prashant is alerted now, and their next message within 24 h (a photo too) is
 //                      forwarded to him on WhatsApp and by email and kept on the order timeline. The contact gets
@@ -39,6 +40,7 @@ const REPLIES = {
     lovedNoAsk: "Glad to hear it.\nYou've unlocked the good stuff.",   // R1: the first two §11 sentences (STOP, a recent No, or nothing to link)
     usualWithTry: (flavor) => `Thank you.\nYour usual is ready in one tap whenever you want it, with one ${flavor} added to try.`,   // §11 consented
     usual: 'Thank you.\nYour usual is ready in one tap whenever you want it.',   // §11 consented without the try clause (accepted subset)
+    setReady: 'Thank you.\nYour next Set is ready to build whenever you want it.',   // C15: the last order was a Set (link: Build a box)
     askReminder: 'One more thing: may I also send one nudge when your box is probably running low?',   // C9
     alreadyAnswered: 'No problem.\nThank you for telling me how it went.',   // C10
     notQuite: 'Thanks for being honest.\nWhat would have made it right for you?\n\nOne line is enough. I read every reply.',   // §11
@@ -110,7 +112,25 @@ async function reorderMessage(R, orders) {
   try { inStock = await D().inStock(); } catch (e) { console.error('[JOURNEY] could not read stock:', e.message); return null; }
   const c = cartLink({ orders, inStock, campaign: 'j4_reorder', medium: 'journey' });
   if (!c.favSlug) return null;
-  return `${c.trySlug ? R.usualWithTry(NAME[c.trySlug]) : R.usual}\n\n${SITE}${c.path}`;
+  const line = c.path.startsWith('build-a-box') ? R.setReady : c.trySlug ? R.usualWithTry(NAME[c.trySlug]) : R.usual;
+  return `${line}\n\n${SITE}${c.path}`;
+}
+
+// Replies that carry the clip, by wamid: Meta reports a clip it cannot fetch later, as a 'failed' status, so the plain words
+// must follow then (R21). In memory only (a restart forgets), at most CLIP_CAP, each for 24 h. wamid -> { to, plain, at }.
+const CLIP_CAP = 500, CLIP_TTL_MS = DAY;
+const clipSends = new Map();
+function rememberClip(wamid, { to, plain }) {
+  if (!wamid) return;
+  const nowMs = D().now();
+  for (const [id, e] of clipSends) { if (nowMs - e.at > CLIP_TTL_MS) clipSends.delete(id); else break; }   // oldest first
+  clipSends.set(wamid, { to, plain, at: nowMs });
+  while (clipSends.size > CLIP_CAP) clipSends.delete(clipSends.keys().next().value);
+}
+/** Exactly what goes when there is no clip: each part as plain text, or text with its buttons. */
+async function sendPlain(phone, parts) {
+  const { wa } = D();
+  for (const p of parts) await send('loved reply', () => (p.buttons ? wa.sendButtons(phone, p.text, p.buttons) : wa.sendText(phone, p.text)));
 }
 
 /** The first Loved it reply. parts: [{ text, buttons? }] (only the last may have buttons). Meta does not keep separate
@@ -123,24 +143,44 @@ async function replyLoved(phone, parts) {
   if (url) {
     const body = parts.map((p) => p.text).join('\n\n');
     const buttons = parts[parts.length - 1].buttons;
-    const sent = await send('unlock video reply', () => (buttons
-      ? wa.sendButtons(phone, body, buttons, { header: { type: 'video', link: url } })
-      : wa.sendVideo(phone, url, body)));
-    if (sent) return;
+    try {
+      const res = await (buttons ? wa.sendButtons(phone, body, buttons, { header: { type: 'video', link: url } }) : wa.sendVideo(phone, url, body));
+      rememberClip(res && res.messages && res.messages[0] && res.messages[0].id, { to: phone, plain: parts });
+      return;
+    } catch (e) { console.error('[JOURNEY] unlock clip refused, sending the plain words:', e.message); }
   }
-  for (const p of parts) await send('loved reply', () => (p.buttons ? wa.sendButtons(phone, p.text, p.buttons) : wa.sendText(phone, p.text)));
+  await sendPlain(phone, parts);
 }
 
-/** Something wasn't right, to Prashant: WhatsApp (if OWNER_PHONE is set) and email. True when either one went. Internal words. */
+/** Every WhatsApp status (server.js): a clip reply Meta failed to deliver (it could not fetch the video) is followed ONCE by the
+ *  plain words. True when it resent. Never throws. */
+async function noteStatus(s) {
+  try {
+    const entry = s && s.id ? clipSends.get(s.id) : null;
+    if (!entry) return false;
+    if (s.status === 'delivered' || s.status === 'read') { clipSends.delete(s.id); return false; }   // the clip went through
+    if (s.status !== 'failed') return false;
+    clipSends.delete(s.id);   // once only
+    if (D().now() - entry.at > CLIP_TTL_MS) return false;
+    const err = s.errors && s.errors[0];
+    console.error(`[JOURNEY] clip reply ${s.id} to ${entry.to} failed${err ? ` (${err.code})` : ''}; sending the plain words`);
+    await sendPlain(entry.to, entry.plain);
+    return true;
+  } catch (e) {
+    console.error('[JOURNEY] noteStatus failed:', e.message);
+    return false;
+  }
+}
+
+/** Something wasn't right, to Prashant: WhatsApp (if OWNER_PHONE is set) as an extra, and email. True only when the EMAIL was
+ *  accepted: Meta can accept a WhatsApp to the owner and drop it outside his 24 h window (R22). Internal words. */
 async function tellOwner({ phone, name, orderId, headline, body, emailMessage }) {
   const { wa, mail, ownerPhone } = D();
   const p = digits(phone), owner = ownerPhone();
   const msg = `${headline}\n\nOrder: ${orderId}\nCustomer: ${String(name || '').trim() || 'Unknown'}\nWhatsApp: +${p}\n\n${body}\n\nReply directly on WhatsApp: https://wa.me/${p}`;
-  let reached = false;
-  if (owner) reached = await send('owner WhatsApp', () => wa.sendText(owner, msg));
+  if (owner) await send('owner WhatsApp', () => wa.sendText(owner, msg));
   else console.warn('[JOURNEY] OWNER_PHONE not set — owner not notified via WhatsApp');
-  if (await send('owner email', () => mail.sendComplaintAlert({ customerPhone: p, customerName: name, orderId, message: emailMessage }))) reached = true;
-  return reached;
+  return send('owner email', () => mail.sendComplaintAlert({ customerPhone: p, customerName: name, orderId, message: emailMessage }));
 }
 
 async function loved(phone, order, R) {
@@ -176,7 +216,7 @@ async function somethingWrong(phone, name, order, R) {
     body: 'They were asked what happened and for a photo. Their next message within 24 h comes to you here and by email.',
     emailMessage: `Tapped "Something wasn't right" on the check-in. Their next message within 24 h is forwarded to you.`,
   });
-  if (!reached) console.error(`[JOURNEY] Something wasn't right on ${order.order_id} reached neither WhatsApp nor email; it is on the order timeline (journey_complaint)`);
+  if (!reached) console.error(`[JOURNEY] Something wasn't right on ${order.order_id}: the owner email failed; it is on the order timeline (journey_complaint)`);
   try { await db.logOrderEvent({ actor_name: 'Customer', order_id: order.order_id, event: 'journey_complaint', meta: {} }); } catch (e) { console.error('[JOURNEY] could not log the complaint:', e.message); }
   try { await db.updateContact(phone, { last_complaint_at: at }); } catch (e) { console.error('[JOURNEY] could not mark the complaint on the contact:', e.message); }   // update only: never creates a contact
 }
@@ -283,7 +323,7 @@ async function captureReply(phone, name, type, text) {
         emailMessage: media || t,
       });
       if (reached) await send('C11', () => wa.sendText(phone, R.complaintThanks));
-      else console.error(`[JOURNEY] complaint follow-up on ${orderId} reached neither WhatsApp nor email; no C11 sent, it is on the order timeline`);
+      else console.error(`[JOURNEY] complaint follow-up on ${orderId}: the owner email failed; no C11 sent, it is on the order timeline`);
     } else {
       const line = `[check-in ${orderId}] ${media || t}`;
       await suggestions.recordFeedback(phone, name, null, line);   // never throws; saved as kind 'feedback' (ruling R12)
@@ -297,4 +337,4 @@ async function captureReply(phone, name, type, text) {
   }
 }
 
-module.exports = { handleTap, captureReply, REPLIES, BUTTONS, J7_REMIND_TEXT, setDeps };
+module.exports = { handleTap, captureReply, noteStatus, REPLIES, BUTTONS, J7_REMIND_TEXT, setDeps, _rememberClip: rememberClip, _clipCount: () => clipSends.size };

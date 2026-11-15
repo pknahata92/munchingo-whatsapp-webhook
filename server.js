@@ -711,6 +711,7 @@ app.post('/webhook', async (req, res) => {
         const err = s.errors && s.errors[0];
         console.log(`[Status] ${s.id} → ${s.status} (${s.recipient_id})` + (err ? ` ERROR ${err.code}: ${err.title || ''} ${err.message || ''} ${(err.error_data && err.error_data.details) || ''}` : ''));
         try { require('./utils/broadcast').noteStatus(s); } catch (e) { console.error('[BROADCAST] status note failed:', e.message); }
+        try { await require('./utils/journey').noteStatus(s); } catch (e) { console.error('[JOURNEY] status note failed:', e.message); }   // a clip Meta could not fetch: send the plain words
       }
       return;
     }
