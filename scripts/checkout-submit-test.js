@@ -66,7 +66,7 @@ async function run(label, { source, expectSent = true, saved, optin }) {
   set('ck-addr-line1', '43 Sector 14 test street'); set('ck-email', 't@example.com'); if (source) set('ck-source', source);
   const box = d.getElementById('ck-whatsapp-optin');
   ok(box && box.type === 'checkbox' && box.checked === false, `${label}: the WhatsApp offers box exists and starts unticked`);
-  ok(box && /Send me new Flavors and offers on WhatsApp\. A few messages a month\. Reply STOP any time\./.test((box.closest('label') || {}).textContent || ''), `${label}: the box shows the approved wording`);
+  ok(box && /Send me fresh batches, new Flavors and one nudge when my box is likely running low, on WhatsApp\. At most 3 a month\. Reply STOP any time\./.test((box.closest('label') || {}).textContent || ''), `${label}: the box shows the approved wording`);
   if (optin && box) { box.checked = true; box.dispatchEvent(new w.Event('change', { bubbles: true })); }
   await wait(600); w.__pinBlocked = false;
   d.getElementById('ck-submit').form.requestSubmit();
@@ -79,7 +79,7 @@ async function run(label, { source, expectSent = true, saved, optin }) {
     ok(/\/api\/checkout$/.test(sent[0].url), `${label}: it goes to /api/checkout`);
     ok(b.name === 'Test Buyer' && b.items.length === 1 && b.total === 900, `${label}: name, items and total are in the request`);
     if (source) ok(b.source && b.source.how === source, `${label}: the "how did you hear" answer rides along`);
-    ok(optin ? b.marketing === true : b.marketing === undefined, `${label}: marketing is ${optin ? 'true' : 'not sent'} in the request`);
+    ok(optin ? b.marketing === 'v2' : b.marketing === undefined, `${label}: marketing is ${optin ? 'v2' : 'not sent'} in the request`);
   }
   if (expectSent) { const mem = JSON.parse(w.localStorage.getItem('munchingo_customer') || 'null'); ok(mem && mem.name === 'Test Buyer' && mem.pincode === '121007', `${label}: details are remembered after a successful order`); }
   ok(w.location.hash === '#paid', `${label}: the page moves on to the payment link`);
