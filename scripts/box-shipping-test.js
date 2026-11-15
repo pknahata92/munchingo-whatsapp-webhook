@@ -98,6 +98,8 @@ const TRIO = 'trio-gift-set-ajwain-kesari-original';
   due = [sub(11, [{ slug: 'atta-original', name: 'Atta Original', unit: '250g', quantity: 2 }])];
   res = await run(); o = saved[0];
   ok(res.results[0].ok === true && o.total === 518 - Math.round(518 * 0.05) + 49 && o.items.some(S.isShippingItem), 'a 2-single renewal still pays shipping and keeps its stored 5%');
+  const em = emails[emails.length - 1];
+  ok(em && em.items.some(S.isShippingItem) && em.discountRupees === Math.round(518 * 0.05) && em.total === o.total && JSON.stringify(em.items) === JSON.stringify(o.items), 'the renewal email carries the same items (with the shipping row), discount and total as the saved order');
   saved.length = 0; links.length = 0; processed.length = 0;
   due = [sub(12, [{ slug: 'trio-gift-set-bogus-bogus-bogus', name: 'Bad', unit: null, quantity: 1 }])];
   res = await run();

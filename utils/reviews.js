@@ -239,4 +239,4 @@ async function submit(token, body) {
   return { status: 201, body: { ok: true, googleUrl: process.env.GOOGLE_REVIEW_URL || '' } };
 }
 
-module.exports = { _deps: () => D(), getForm, submit, signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT, setDeps, normPhone, dueRequests, sweepRequests, TEMPLATE, REVIEW_URL };
+module.exports = { _deps: () => D(), getForm, submit, signToken, readToken, flavoursFor, firstName, cityOf, validateSubmission, FLAVOURS, MAX_COMMENT, setDeps, normPhone, dueRequests, sweepRequests, TEMPLATE, REVIEW_URL, RETAILER_SLUG };

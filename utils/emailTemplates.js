@@ -8,6 +8,7 @@
  */
 
 const { contentsOf, flavourTotals, boxesIn } = require('./orderText');
+const { RETAILER_SLUG } = require('./reviews');
 
 const SITE = 'https://munchingo.com';
 const C = { navy: '#0B2D50', gold: '#CEAD5E', terra: '#A35A34', terraDeep: '#86482A', ink: '#2A1A12', ink2: '#5B4537', cream: '#FAF6EB', paper: '#FFFDF8', line: '#E9DCC3', band: '#F3E6CC' };
@@ -25,20 +26,22 @@ const IMG = () => process.env.EMAIL_IMAGE_BASE || `${SITE}/images/`;
 // One real photo under the header of each customer email. src is computed when read, so EMAIL_IMAGE_BASE applies.
 const heroOf = (key, alt) => ({ get src() { return `${IMG()}email-hero-${key}.jpg`; }, alt });
 const HEROES = {
-  confirmed: heroOf('confirmed', 'Munchingo biscuits being packed into a box, ready to ship'),
-  packed: heroOf('packed', 'A Munchingo box packed and sealed, ready for the courier'),
-  shipped: heroOf('shipped', 'A Munchingo box on its way to your door'),
-  delivered: heroOf('delivered', 'A Munchingo box opened at home with biscuits ready to eat'),
-  review: heroOf('review', 'Munchingo biscuits with a cup of tea'),
-  range: heroOf('range', 'Munchingo biscuits in a bowl with the four packs'),
+  confirmed: heroOf('confirmed', 'The four Munchingo packs with a bowl of atta biscuits'),
+  packed: heroOf('packed', 'An Atta Original pack on a red background with Munchingo tissue paper'),
+  shipped: heroOf('shipped', 'An Atta Ajwain pack wrapped in Munchingo tissue paper'),
+  delivered: heroOf('delivered', 'Three blue jars of atta biscuits lined with Munchingo tissue paper'),
+  review: heroOf('review', 'A Munchingo pack with its tear strip pulled open'),
+  range: heroOf('range', 'The four Munchingo packs on a red background with candles'),
 };
 
 // Thumbnail for an order line: the pack photo, the set photo for a Set, or null (shipping line, unknown or legacy item).
 function thumbFor(item) {
-  if (!item || !item.slug || require('./shipping').isShippingItem(item)) return null;
-  const f = FLAVOURS.find((x) => x.slug === item.slug);
+  if (!item || require('./shipping').isShippingItem(item)) return null;
+  const slug = item.slug || RETAILER_SLUG[item.product_retailer_id];
+  if (!slug) return null;
+  const f = FLAVOURS.find((x) => x.slug === slug);
   if (f) return `${IMG()}${f.img}`;
-  if (require('./catalog').boxesForSlug(item.slug) > 1) return `${IMG()}email-set.jpg`;
+  if (require('./catalog').boxesForSlug(slug) > 1) return `${IMG()}email-set.jpg`;
   return null;
 }
 
@@ -144,7 +147,7 @@ function thumbCell(it) {
   const src = thumbFor(it);
   const edge = `border-bottom:1px solid ${C.line};`;
   if (!src) return `<td width="68" style="width:68px;padding:11px 0;${edge}"></td>`;
-  return `<td width="68" style="width:68px;padding:11px 12px 11px 0;${edge}vertical-align:middle;"><img src="${src}" width="56" alt="${esc(it.productName || it.name || 'Munchingo')}" style="display:block;width:56px;height:auto;border:0;border-radius:8px;"></td>`;
+  return `<td width="68" style="width:68px;padding:11px 12px 11px 0;${edge}vertical-align:middle;"><img src="${src}" width="56" alt="" style="display:block;width:56px;height:auto;border:0;border-radius:8px;"></td>`;
 }
 
 function summaryTable({ items, totalRupees, discountRupees = 0, couponCode = null, gstAmount }) {
@@ -222,12 +225,12 @@ function customerConfirmationHtml({ order, invoice }) {
 }
 
 // ── Customer: subscription box ready ──────────────────────────────────────────
-function subscriptionRenewalHtml({ customerName, orderId, items, discountPct, total, paymentUrl }) {
+function subscriptionRenewalHtml({ customerName, orderId, items, discountPct, discountRupees = 0, total, paymentUrl }) {
   const first = String(customerName || 'there').trim().split(/\s+/)[0];
   const body = [
     card(`
       <div style="font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${C.terra};margin-bottom:10px;">Subscribe &amp; Save &middot; ${discountPct}% off &middot; Order ${esc(orderId)}</div>
-      ${summaryTable({ items, totalRupees: total, gstAmount: Math.round((total - total / 1.05) * 100) }).replace('Total paid', `Total (after ${discountPct}% subscriber discount)`)}
+      ${summaryTable({ items, totalRupees: total, discountRupees, gstAmount: Math.round((total - total / 1.05) * 100) }).replace('Total paid', `Total (after ${discountPct}% subscriber discount)`)}
       <div style="text-align:center;padding:22px 0 4px;">${button(paymentUrl, `Pay &#8377;${total} to confirm`)}</div>`),
     `<tr><td style="padding:14px 34px 0;font-family:${FONT};font-size:12.5px;line-height:1.6;color:${C.ink2};text-align:center;">Delivering somewhere else this time, or want to skip, pause or cancel? Just reply to this email or WhatsApp us at +91 99889 92024.</td></tr>`,
   ].join('');

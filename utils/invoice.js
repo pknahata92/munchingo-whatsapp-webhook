@@ -15,6 +15,7 @@
 
 const path = require('path');
 const { contentsOf } = require('./orderText');
+const { RETAILER_SLUG } = require('./reviews');
 const PDFDocument = require('pdfkit');
 
 const SELLER = {
@@ -222,8 +223,9 @@ const money = (p) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFraction
 // The shipping line, an item without a slug or an old WhatsApp-catalogue retailer id get none.
 const THUMBS = { 'atta-original': 'original.jpg', 'atta-kesari': 'kesari.jpg', 'atta-ajwain': 'ajwain.jpg', 'atta-lite-sugar': 'lite.jpg' };
 function invoiceThumb(item) {
-  const slug = item && item.slug;
-  if (!slug || require('./shipping').isShippingItem(item)) return null;
+  if (!item || require('./shipping').isShippingItem(item)) return null;
+  const slug = item.slug || RETAILER_SLUG[item.product_retailer_id];
+  if (!slug) return null;
   const file = THUMBS[slug] || (require('./catalog').boxesForSlug(slug) > 1 ? 'set.jpg' : null);
   return file ? path.join(INVOICE_ASSETS, file) : null;
 }

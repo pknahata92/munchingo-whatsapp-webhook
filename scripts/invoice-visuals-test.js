@@ -151,6 +151,7 @@ const inv = (order, no = 'MUN/26-27/0001') => buildInvoice(order, { invoiceNo: n
     ok(t({ slug: 'full-range-set' }) === path.join(ASSETS, 'set.jpg'), 'full-range-set -> set.jpg');
     ok(t({ slug: 'trio-gift-set-ajwain-kesari-original' }) === path.join(ASSETS, 'set.jpg'), 'a Trio -> set.jpg');
     ok(t({ slug: null, name: 'Munchingo item' }) === null, 'no slug -> no thumbnail');
+    ok(t({ product_retailer_id: '91slwpjdqq', name: 'Atta Original' }) === path.join(ASSETS, 'original.jpg'), 'a catalogue item with product_retailer_id and no slug -> its Flavor thumbnail');
     ok(t({ slug: 'mun_orig_250' }) === null, 'an old WhatsApp retailer id -> no thumbnail');
     ok(t(shipping.shippingItem(49)) === null, 'the shipping line -> no thumbnail');
     ok(t(inv(shipOrder).items[1]) === null, 'the invoice shipping item -> no thumbnail');

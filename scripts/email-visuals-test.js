@@ -15,6 +15,16 @@ const hero = (k) => `https://munchingo.com/images/email-hero-${k}.jpg`;
 
 ok(T.HEROES && ['confirmed', 'packed', 'shipped', 'delivered', 'review', 'range'].every((k) => T.HEROES[k] && T.HEROES[k].src === hero(k) && T.HEROES[k].alt), 'HEROES has six entries with src and alt');
 
+const ALTS = {
+  confirmed: 'The four Munchingo packs with a bowl of atta biscuits',
+  packed: 'An Atta Original pack on a red background with Munchingo tissue paper',
+  shipped: 'An Atta Ajwain pack wrapped in Munchingo tissue paper',
+  delivered: 'Three blue jars of atta biscuits lined with Munchingo tissue paper',
+  review: 'A Munchingo pack with its tear strip pulled open',
+  range: 'The four Munchingo packs on a red background with candles',
+};
+for (const [k, a] of Object.entries(ALTS)) ok(T.HEROES[k].alt === a, `hero ${k} alt is exactly "${a}"`);
+
 const cases = {
   confirmed: T.customerConfirmationHtml({ order }),
   packed: T.packedHtml({ order }),
@@ -41,7 +51,7 @@ ok(/<img src="[^"]*email-hero-confirmed\.jpg" width="600" alt="[^"]+" style="dis
 // thumbnails
 const sum = (items, extra = {}) => T.summaryTable({ items, totalRupees: 518, ...extra });
 const s1 = sum([orig]);
-ok(s1.includes('<img') && s1.includes('email-original.jpg') && s1.includes('width="56"') && s1.includes('alt="Atta Original"') && s1.includes('border-radius:8px'), 'Original line has a 56px thumbnail');
+ok(s1.includes('<img') && s1.includes('email-original.jpg') && s1.includes('width="56"') && s1.includes('<img src="https://munchingo.com/images/email-original.jpg" width="56" alt=""') && s1.includes('border-radius:8px'), 'Original line has a 56px thumbnail');
 ok(sum([{ productName: 'Full Range Set', quantity: 1, item_price: 999, slug: 'full-range-set' }]).includes('email-set.jpg'), 'a Set line uses email-set.jpg');
 ok(!sum([shipping.shippingItem(49)]).includes('<img'), 'a shipping line has no image');
 let noSlug; try { noSlug = sum([{ productName: 'Old thing', quantity: 1, item_price: 100 }]); } catch (e) { noSlug = null; }
@@ -49,6 +59,20 @@ ok(noSlug !== null && !noSlug.includes('<img'), 'an item with no slug renders wi
 let legacy; try { legacy = sum([{ product_retailer_id: 'abc123', quantity: 1, item_price: 100, slug: 'not-a-real-slug' }]); } catch (e) { legacy = null; }
 ok(legacy !== null && !legacy.includes('<img'), 'an unknown slug renders without an image');
 ok(typeof T.thumbFor === 'function' && T.thumbFor(orig) === 'https://munchingo.com/images/email-original.jpg' && T.thumbFor({ slug: 'zzz' }) === null && T.thumbFor(shipping.shippingItem(49)) === null, 'thumbFor returns url or null');
+
+// WhatsApp-catalogue lines: a retailer id with no slug still gets its Flavor thumbnail
+const cat = { product_retailer_id: '91slwpjdqq', productName: 'Atta Original', quantity: 1, item_price: 259 };
+ok(T.thumbFor(cat) === 'https://munchingo.com/images/email-original.jpg' && sum([cat]).includes('email-original.jpg'), 'a catalogue item with product_retailer_id and no slug gets its thumbnail in the email');
+
+// renewal email: shows exactly what was saved and charged (V4 fix 1)
+const renewItems = [orig, shipping.shippingItem(49)];
+const rnw = T.subscriptionRenewalHtml({ customerName: 'Asha', orderId: 'MUN-R', items: renewItems, discountPct: 5, discountRupees: 26, total: 541, paymentUrl: 'https://x.test/p' });
+ok(/Shipping charges[\s\S]*?&#8377;49</.test(rnw), 'renewal email shows "Shipping charges" with the saved Rs 49');
+ok(/Discount[\s\S]*?&minus; &#8377;26</.test(rnw), 'renewal email shows the discount row');
+ok(rnw.includes('Total (after 5% subscriber discount)') && /Total \(after 5% subscriber discount\)[\s\S]*?&#8377;541</.test(rnw), 'renewal email total is the charged Rs 541');
+ok(518 + 49 - 26 === 541, 'renewal rows add up to the charged total');
+const rnwFree = T.subscriptionRenewalHtml({ customerName: 'Asha', orderId: 'MUN-R', items: [{ ...orig, quantity: 3, item_price: 259 }], discountPct: 5, discountRupees: 39, total: 738, paymentUrl: 'https://x.test/p' });
+ok(!/shipping/i.test(rnwFree), 'renewal at/over the free threshold has no shipping words');
 
 // truthful shipping
 const withShip = T.customerConfirmationHtml({ order: { ...order, items: [orig, shipping.shippingItem(49)], total: 567 }, invoice: { cgstPaise: 1, sgstPaise: 1, igstPaise: 0, invoiceNo: 'I1' } });
