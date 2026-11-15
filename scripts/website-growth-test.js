@@ -78,10 +78,14 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     w.close();
   }
 
-  // 3. pincode outside the area: the note gets a "notify" link
-  for (const c of [{ pin: '302001', city: 'Jaipur', want: 'Jaipur' }, { pin: '302001', city: '', want: '302001' }]) {
-    const dom = page('atta-original.html', 'atta-original.html', (U) => /\/api\/pincode\//.test(U)
-      ? json({ ok: true, pin: c.pin, valid: true, serviceable: false, outside: true, city: c.city, message: 'We’re delivering in Delhi NCR only.' }) : null);
+  // 3. pincode outside the area: the note gets a "notify" link. The live /api/pincode outside answer carries NO city
+  //    (routes/checkout.js), so the city comes from India Post (A8 fix 11); if India Post fails too, the pincode.
+  const OUTSIDE = (pin) => json({ ok: true, pin, valid: true, serviceable: false, outside: true, message: 'We’re delivering in Delhi NCR only.' });
+  const POST = (district) => json([{ Message: 'Number of pincode(s) found:1', Status: 'Success', PostOffice: [{ Name: 'Jaipur G.P.O.', District: district, State: 'Rajasthan' }] }]);
+  const IP = /api\.postalpincode\.in\/pincode\//;
+  for (const c of [{ pin: '302001', post: () => POST('Jaipur'), want: 'Jaipur' }, { pin: '302001', post: () => null, want: '302001' },
+    { pin: '302001', post: () => json([{ Message: 'No records found', Status: 'Error', PostOffice: null }]), want: '302001' }, { pin: '302001', post: () => Promise.reject(new Error('offline')), want: '302001' }]) {
+    const dom = page('atta-original.html', 'atta-original.html', (U) => /\/api\/pincode\//.test(U) ? OUTSIDE(c.pin) : IP.test(U) ? c.post() : null);
     const w = dom.window, d = w.document; await wait(1200);
     const inp = d.querySelector('.pc-in'), msg = d.querySelector('.pc-msg');
     inp.value = c.pin; inp.dispatchEvent(new w.Event('input', { bubbles: true })); await wait(500);
@@ -91,10 +95,9 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     ok(/Delhi NCR only/.test(msg.textContent), 'the backend message is still shown');
     w.close();
   }
-  // a hostile city name is escaped in the text and encoded in the href
+  // a hostile city name (from India Post) is escaped in the text and encoded in the href
   for (const city of ['<img src=x onerror=alert(1)>', 'Ja"ipur']) {
-    const dom = page('atta-original.html', 'atta-original.html', (U) => /\/api\/pincode\//.test(U)
-      ? json({ ok: true, pin: '302001', valid: true, serviceable: false, outside: true, city, message: 'We’re delivering in Delhi NCR only.' }) : null);
+    const dom = page('atta-original.html', 'atta-original.html', (U) => /\/api\/pincode\//.test(U) ? OUTSIDE('302001') : IP.test(U) ? POST(city) : null);
     const w = dom.window, d = w.document; await wait(1200);
     const inp = d.querySelector('.pc-in'), msg = d.querySelector('.pc-msg');
     inp.value = '302001'; inp.dispatchEvent(new w.Event('input', { bubbles: true })); await wait(500);
@@ -103,6 +106,24 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     ok(a && a.textContent === 'Tell me when you deliver to ' + city, 'hostile city ' + city + ': link text is the city as plain text (got: ' + (a && a.textContent) + ')');
     ok(a && a.getAttribute('href') === WA + '?text=' + encodeURIComponent('NOTIFY - ' + city), 'hostile city ' + city + ': href is encodeURIComponent-encoded (got: ' + (a && a.getAttribute('href')) + ')');
     ok(a && !/["<>]/.test(a.getAttribute('href')), 'hostile city ' + city + ': no raw quote or angle bracket in the href');
+    w.close();
+  }
+  // checkout: the status line's notify link names the city India Post gave checkout (ip.district), even when js/pincode.js's own
+  // India Post call fails; with no India Post answer at all, the pincode
+  for (const c of [{ answers: ['ok', 'fail'], want: 'Jaipur' }, { answers: ['ok', 'ok'], want: 'Jaipur' }, { answers: ['fail', 'fail'], want: '302001' }]) {
+    let ipCalls = 0;
+    const dom = page('checkout.html', 'checkout.html', (U) => {
+      if (/\/api\/pincode\//.test(U)) return OUTSIDE('302001');
+      if (IP.test(U)) return c.answers[ipCalls++] === 'ok' ? POST('Jaipur') : null;
+      return null;
+    });
+    const w = dom.window, d = w.document; await wait(1200);
+    const pinEl = d.getElementById('ck-addr-pincode');
+    pinEl.value = '302001'; pinEl.dispatchEvent(new w.Event('input', { bubbles: true })); await wait(800);
+    const st = d.getElementById('ck-pin-status'), a = st && st.querySelector('a');
+    ok(a && norm(a.textContent) === 'Tell me when you deliver to ' + c.want, 'checkout outside NCR (India Post ' + c.answers.join('/') + '): "Tell me when you deliver to ' + c.want + '" (got: ' + (st && norm(st.textContent)) + ')');
+    ok(a && a.getAttribute('href') === WA + '?text=' + encodeURIComponent('NOTIFY - ' + c.want), 'checkout notify link: NOTIFY - ' + c.want + ' (got: ' + (a && a.getAttribute('href')) + ')');
+    ok(w.__pinBlocked === true && /Delhi NCR only/.test(st.textContent), 'checkout: still blocked, the backend message still shown');
     w.close();
   }
   // an in-area answer has no notify link
@@ -175,6 +196,7 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
       const html = read(F), d = new JSDOM(html).window.document;
       const meta = (sel) => { const e = d.querySelector(sel); return e && e.getAttribute('content'); };
       ok(d.title === TITLE, 'palm page title is the ruled text (got: ' + d.title + ')');
+      ok(!/Task \d|this task's file list/.test(html), 'palm page carries no build-process comment (public HTML, A8 fix 12)');
       ok(meta('meta[name="description"]') === DESC && meta('meta[property="og:description"]') === DESC && meta('meta[name="twitter:description"]') === DESC, 'palm page description, og and twitter descriptions are the ruled text');
       ok(meta('meta[property="og:title"]') === TITLE && meta('meta[name="twitter:title"]') === TITLE, 'palm page og:title and twitter:title match the title');
       ok(d.querySelector('link[rel="canonical"]') && d.querySelector('link[rel="canonical"]').getAttribute('href') === 'https://munchingo.com/how-to-spot-palm-oil', 'palm page canonical is https://munchingo.com/how-to-spot-palm-oil');
