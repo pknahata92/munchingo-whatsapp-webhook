@@ -9,6 +9,9 @@
 // Tests: scripts/broadcast-reply-test.js
 
 const REPLY_WINDOW_MS = 3 * 86_400_000;
+// Logged in marketing_sends but not a broadcast: the J6 reminder sent free-form (utils/reorders.js TEMPLATE.freeform) goes only while
+// the buyer is mid-chat inside the 24 h window, so it must not switch them to forwarding. A J6 template send still does.
+const NOT_A_BROADCAST = new Set(['freeform_j6']);
 const isStop = (text) => /^\s*(stop|unsubscribe)\s*[.!]?\s*$/i.test(String(text || ''));
 const MEDIA = { image: 'a photo', video: 'a video', audio: 'a voice note', document: 'a document', sticker: 'a sticker' };
 
@@ -36,7 +39,7 @@ async function maybeForward({ from, name, type, text }) {
   let sends;
   try { sends = await db.listRecentMarketingSends(phone.slice(-10), new Date(now() - REPLY_WINDOW_MS).toISOString()); }
   catch (e) { console.error('[REPLY] could not check broadcasts:', e.message); return false; }
-  const last = (sends || []).filter((s) => s.status === 'sent').sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at)))[0];
+  const last = (sends || []).filter((s) => s.status === 'sent' && !NOT_A_BROADCAST.has(s.template)).sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at)))[0];
   if (!last) return false;
 
   // In the middle of a bot conversation (typing an order address, answering the suggestion question): the bot keeps it.

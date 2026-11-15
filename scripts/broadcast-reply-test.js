@@ -83,6 +83,17 @@ const S = (phone, hoursAgo, status = 'sent', template = 'munchingo_diwali_2026')
   w = world({ sends: [S(ASHA, 5)], suggestionWait: { asked_at: new Date(NOW).toISOString() } });
   ok(await r.maybeForward({ from: ASHA, name: 'Asha', type: 'text', text: 'make a bigger box' }) === false && w.wa.length === 0, 'a customer answering the suggestion question keeps the bot');
 
+  // A8 fix 7: the J6 reminder sent free-form (only ever while the buyer is mid-chat, inside the 24 h window) never switches the
+  // bot to "reply to a broadcast" mode, so the conversation they are in keeps going. A J6 TEMPLATE send still does.
+  const FREE = require('../utils/reorders').TEMPLATE.freeform;
+  ok(FREE === 'freeform_j6', 'the free-form J6 log name is freeform_j6');
+  w = world({ sends: [S(ASHA, 1, 'sent', FREE)] });
+  ok(await r.maybeForward({ from: ASHA, name: 'Asha', type: 'text', text: 'yes please, 2 Kesari' }) === false && w.wa.length === 0 && w.mail.length === 0, 'after a free-form J6 the bot keeps answering (nothing forwarded)');
+  w = world({ sends: [S(ASHA, 30, 'sent', 'munchingo_diwali_2026'), S(ASHA, 1, 'sent', FREE)] });
+  ok(await r.maybeForward({ from: ASHA, name: 'Asha', type: 'text', text: 'thanks!' }) === true && w.wa[0].text.includes('munchingo_diwali_2026') && !w.wa[0].text.includes(FREE), 'a real broadcast in the window still counts, and is the one named (not the free-form J6)');
+  w = world({ sends: [S(ASHA, 5, 'sent', 'munchingo_reorder_try')] });
+  ok(await r.maybeForward({ from: ASHA, name: 'Asha', type: 'text', text: 'ordered, thanks' }) === true, 'a J6 template send still starts the reply mode');
+
   // wiring: the real database, mailer and webhook have what the module needs
   ok(typeof require('../utils/database').listRecentMarketingSends === 'function', 'database has listRecentMarketingSends');
   ok(typeof require('../utils/mailer').sendBroadcastReplyAlert === 'function', 'mailer has sendBroadcastReplyAlert');
