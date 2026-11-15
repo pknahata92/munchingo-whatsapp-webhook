@@ -65,6 +65,20 @@ async function sendTemplateWithUrlButton(to, templateName, languageCode, bodyPar
   });
 }
 
+// ── Approved template with quick-reply buttons (payloads) and an optional URL button at urlIndex (J3 check-in) ──
+async function sendTemplateWithButtons(to, templateName, languageCode, bodyParams, { quickReplies = [], urlSuffix, urlIndex = quickReplies.length } = {}) {
+  const components = [{ type: 'body', parameters: (bodyParams || []).map((text) => ({ type: 'text', text: String(text) })) }];
+  quickReplies.forEach((payload, i) => components.push({ type: 'button', sub_type: 'quick_reply', index: String(i), parameters: [{ type: 'payload', payload: String(payload) }] }));
+  if (urlSuffix != null) components.push({ type: 'button', sub_type: 'url', index: String(urlIndex), parameters: [{ type: 'text', text: String(urlSuffix) }] });
+  return sendMessage({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: { name: templateName, language: { code: languageCode }, components },
+  });
+}
+
 // ── Approved template with an optional media header ({ type: 'video'|'image', link }) and body parameters (broadcasts) ──
 async function sendTemplateWithHeader(to, templateName, languageCode, header, bodyParams) {
   const components = [];
@@ -244,6 +258,7 @@ async function sendImage(to, imageUrl, caption) {
 }
 
 module.exports = { sendTemplateWithUrlButton,
+  sendTemplateWithButtons,
   sendTemplateWithHeader,
   sendTemplate,
   uploadMedia,

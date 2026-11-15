@@ -147,6 +147,74 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
   r._deps().db.claimOrderEvent = realClaim;
   ok(sent.length === 0 && res.asked === 0, 'an overlapping run that already claimed the order: no second message');
 
+  // ── Growth A4: J3 check-in (quick replies) behind JOURNEY_J3_ENABLED; J5 reminder only when no button was tapped ──
+  ok(kinds(due([mk('MNG-J-0001', { delivered_at: ago(10) })], { 'MNG-J-0001': [ev('review_requested', 6), ev('journey_tap', 5)] })) === '', 'a button was tapped: no reminder');
+  ok(kinds(due([mk('MNG-J-0002', { delivered_at: ago(10) })], { 'MNG-J-0002': [ev('review_requested', 6)] })) === 'MNG-J-0002:reminder', 'no tap: the reminder still goes after 6 days');
+  {
+    const buttons = [], plain = [];
+    logged.length = 0; sent.length = 0;
+    r.setDeps({
+      now: () => NOW,
+      db: {
+        listDeliveredOrders: async () => store,
+        listFoundingTasters: async () => [{ phone: '919810000777' }],
+        listOrderEventsByName: byName,
+        claimOrderEvent: async (e) => { if (logged.some((x) => x.order_id === e.order_id && x.event === e.event)) return false; logged.push({ ...e, created_at: new Date(NOW).toISOString() }); return true; },
+        logOrderEvent: async (e) => { logged.push({ ...e, created_at: new Date(NOW).toISOString() }); },
+      },
+      wa: { sendTemplateWithUrlButton: async (...a) => { plain.push(a); }, sendTemplateWithButtons: async (...a) => { buttons.push(a); } },
+      mail: { sendReviewRequestEmail: async () => {} },
+    });
+    process.env.REVIEW_REQUESTS_ENABLED = '1';
+    const j3Order = (id, extra = {}) => mk(id, { customer_name: 'asha rao', customer_phone: '919810001' + id.slice(-3), items: [{ slug: 'atta-original', quantity: 1 }, { slug: 'atta-ajwain', quantity: 1 }], ...extra });
+    process.env.JOURNEY_J3_ENABLED = '1';
+    store = [j3Order('MNG-AAAA-1111')];
+    await r.sweepRequests();
+    const b = buttons[0];
+    ok(buttons.length === 1 && plain.length === 0 && b[1] === 'munchingo_checkin_v1' && b[2] === 'en', 'flag on: the ask is the check-in template, English, no plain URL send');
+    ok(b && JSON.stringify(b[3]) === JSON.stringify(['Asha', 'MNG-AAAA-1111', 'Atta Original and Atta Ajwain']), 'check-in params: first name, order id, Flavors text (' + JSON.stringify(b && b[3]) + ')');
+    ok(b && JSON.stringify(b[4].quickReplies) === JSON.stringify(['j3:loved:MNG-AAAA-1111', 'j3:meh:MNG-AAAA-1111', 'j3:wrong:MNG-AAAA-1111']), 'three quick-reply payloads carry the order id');
+    ok(b && b[4].urlIndex === 3 && r.readToken(b[4].urlSuffix) === 'MNG-AAAA-1111', 'review link button at index 3 with the signed token');
+    buttons.length = 0; logged.length = 0;
+    store = [j3Order('MNG-AAAA-2222', { items: [{ slug: 'full-range-set', quantity: 1 }] })];
+    await r.sweepRequests();
+    ok(buttons[0] && buttons[0][3][2] === 'Atta Original, Atta Kesari, Atta Sugar-Lite and Atta Ajwain', 'four Flavors: commas, then "and"');
+    buttons.length = 0; logged.length = 0;
+    store = [j3Order('MNG-AAAA-3333', { items: [{ slug: 'atta-kesari', quantity: 3 }] })];
+    await r.sweepRequests();
+    ok(buttons[0] && buttons[0][3][2] === 'Atta Kesari', 'one Flavor: just its name');
+    buttons.length = 0; plain.length = 0; logged.length = 0;
+    store = [j3Order('MNG-AAAA-4444', { customer_phone: '919810000777' })];
+    await r.sweepRequests();
+    ok(buttons.length === 0 && plain.length === 1 && plain[0][1] === 'munchingo_review_founders' && plain[0][3].length === 2, 'founders template unchanged with the flag on');
+    buttons.length = 0; plain.length = 0; logged.length = 0;
+    store = [j3Order('MNG-AAAA-5555', { delivered_at: ago(10) })];
+    logged.push({ order_id: 'MNG-AAAA-5555', event: 'review_requested', created_at: ago(6), meta: { founders: false } });
+    await r.sweepRequests();
+    ok(buttons.length === 0 && plain.length === 1 && plain[0][1] === 'munchingo_review_request' && plain[0][3].length === 2, 'reminder keeps the URL-only review template with the flag on');
+    plain.length = 0; logged.length = 0;
+    logged.push({ order_id: 'MNG-AAAA-5555', event: 'review_requested', created_at: ago(6), meta: { founders: false } }, { order_id: 'MNG-AAAA-5555', event: 'journey_tap', created_at: ago(5), meta: {} });
+    await r.sweepRequests();
+    ok(plain.length === 0 && buttons.length === 0, 'the sweep reads journey_tap events: a tapped order gets no reminder');
+    delete process.env.JOURNEY_J3_ENABLED;
+    buttons.length = 0; plain.length = 0; logged.length = 0;
+    store = [j3Order('MNG-AAAA-6666')];
+    await r.sweepRequests();
+    ok(buttons.length === 0 && plain.length === 1 && plain[0][1] === 'munchingo_review_request' && JSON.stringify(plain[0][3]) === JSON.stringify(['Asha', 'MNG-AAAA-6666']) && r.readToken(plain[0][4]) === 'MNG-AAAA-6666', 'flag off: the old URL-button call, unchanged');
+    const wa = require('../utils/whatsapp'), axios = require('axios'), realPost = axios.post;
+    let body = null;
+    axios.post = async (url, payload) => { body = payload; return { data: { messages: [{ id: 'x' }] } }; };
+    await wa.sendTemplateWithButtons('919810001111', 'munchingo_checkin_v1', 'en', ['Asha', 'MNG-1', 'Atta Original'], { quickReplies: ['a:1', 'b:1', 'c:1'], urlSuffix: 'TOK', urlIndex: 3 });
+    const c = body.template.components;
+    ok(c.length === 5 && c[0].type === 'body' && c[0].parameters.length === 3 && c[0].parameters[2].text === 'Atta Original', 'helper: one body component with text parameters');
+    ok([1, 2, 3].every((i) => c[i].type === 'button' && c[i].sub_type === 'quick_reply' && c[i].index === String(i - 1) && c[i].parameters[0].type === 'payload'), 'helper: quick replies at index 0..2 with payload parameters');
+    ok(c[1].parameters[0].payload === 'a:1' && c[4].sub_type === 'url' && c[4].index === '3' && c[4].parameters[0].text === 'TOK', 'helper: url button at urlIndex with the suffix');
+    await wa.sendTemplateWithButtons('919810001111', 't', 'en', ['x'], { quickReplies: ['p'] });
+    ok(body.template.components.length === 2, 'helper: no url component without a suffix');
+    axios.post = realPost;
+    delete process.env.REVIEW_REQUESTS_ENABLED;
+  }
+
   // ── Task 4: public form and submit ──
   process.env.GOOGLE_REVIEW_URL = 'https://g.page/r/CThPt_VWhjZkEAI/review';
   const saved = [], alerts = [], tl = [];

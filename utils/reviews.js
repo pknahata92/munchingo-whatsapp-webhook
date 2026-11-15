@@ -105,7 +105,7 @@ const ASK_AFTER_DAYS = 4;          // days after delivery
 const REMIND_AFTER_DAYS = 6;       // days after the ask (day 10 for a normal order; measured from the ask so old deliveries are not asked and reminded on consecutive days)
 const PHONE_GAP_DAYS = 30;         // one ask per phone per 30 days, however many orders
 const REVIEW_URL = 'https://munchingo.com/review?t=';
-const TEMPLATE = { standard: 'munchingo_review_request', founders: 'munchingo_review_founders' };
+const TEMPLATE = { standard: 'munchingo_review_request', founders: 'munchingo_review_founders', checkin: 'munchingo_checkin_v1' };
 
 let deps = null;
 function setDeps(d) { deps = d; } // tests only
@@ -113,6 +113,7 @@ function D() {
   if (deps) return deps;
   return { db: require('./database'), wa: require('./whatsapp'), mail: require('./mailer'), now: () => Date.now() };
 }
+const j3Enabled = () => /^(1|true|yes)$/i.test(String(process.env.JOURNEY_J3_ENABLED || ''));
 const enabled = () => /^(1|true|yes)$/i.test(String(process.env.REVIEW_REQUESTS_ENABLED || ''));
 
 /** Digits with the 91 prefix, so 9810000001 and +91 98100 00001 are the same person. */
@@ -154,7 +155,7 @@ function dueRequests({ orders, eventsByOrder = {}, tasters = [], now }) {
       if (lastAskByPhone[ph] && nowMs - lastAskByPhone[ph] < PHONE_GAP_DAYS * DAY) continue;
       askedThisRun.add(ph);
       out.push({ order: o, kind: 'ask', founders: tasterPhones.has(ph) && !foundersSent.has(ph) });
-    } else if (!last(ev, 'review_reminded') && nowMs - at(asked) >= REMIND_AFTER_DAYS * DAY) {
+    } else if (!last(ev, 'review_reminded') && !last(ev, 'journey_tap') && nowMs - at(asked) >= REMIND_AFTER_DAYS * DAY) {
       out.push({ order: o, kind: 'reminder', founders: false });
     }
   }
@@ -175,7 +176,7 @@ async function sweepRequests() {
   const orders = await db.listDeliveredOrders({ since: new Date(nowMs - 120 * DAY).toISOString() });
   const ids = orders.map((o) => o.order_id);
   const eventsByOrder = {};
-  for (const name of ['review_requested', 'review_reminded', 'review_received']) {
+  for (const name of ['review_requested', 'review_reminded', 'review_received', 'journey_tap']) {
     for (let i = 0; i < ids.length; i += 200) {
       for (const e of await db.listOrderEventsByName(name, ids.slice(i, i + 200))) (eventsByOrder[e.order_id] = eventsByOrder[e.order_id] || []).push(e);
     }
@@ -188,7 +189,14 @@ async function sweepRequests() {
     const token = signToken(order.order_id);
     const url = REVIEW_URL + token;
     let waResult = 'sent', emailResult = 'none';
-    try { await wa.sendTemplateWithUrlButton(normPhone(order.customer_phone), founders ? TEMPLATE.founders : TEMPLATE.standard, 'en', [firstName(order) || 'there', order.order_id], token); }
+    try {
+      if (kind === 'ask' && !founders && j3Enabled()) {
+        const names = flavoursFor(order).map((f) => f.name);
+        const flavoursText = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names.join('');
+        await wa.sendTemplateWithButtons(normPhone(order.customer_phone), TEMPLATE.checkin, 'en', [firstName(order) || 'there', order.order_id, flavoursText],
+          { quickReplies: ['loved', 'meh', 'wrong'].map((k) => `j3:${k}:${order.order_id}`), urlSuffix: token, urlIndex: 3 });
+      } else await wa.sendTemplateWithUrlButton(normPhone(order.customer_phone), founders ? TEMPLATE.founders : TEMPLATE.standard, 'en', [firstName(order) || 'there', order.order_id], token);
+    }
     catch (e) { waResult = 'failed'; console.error(`[REVIEWS] WhatsApp ${kind} failed for ${order.order_id}:`, e.message); }
     if (order.customer_email) {
       try { await mail.sendReviewRequestEmail({ order, url, founders }); emailResult = 'sent'; }
