@@ -200,6 +200,35 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   r = await b.run({ template: T, mode: 'dry' });
   ok(r.blocked_twice === 1 && r.to_send === 1 && r.cooling_off === 0, 'blocked_twice has its own count (got ' + JSON.stringify(r) + ')');
 
+  // ── R35 (pre-review ruling, spec §6.4): every broadcast goes to one segment only, all consented NCR contacts ──
+  // Any template and mode: a contact whose newest paid order went outside deliveryArea is left out, and so is anyone who complained
+  // in the last 30 days. No paid order: kept as before (no pincode invented), counted as no_paid_order. The owner is exempt.
+  {
+    delete process.env.DELIVERY_NATIONWIDE;
+    const iso = (ms) => new Date(ms).toISOString();
+    const ord = (phone, pin, daysAgo) => ({ order_id: 'MNG-R35-' + phone.slice(-4) + '-' + daysAgo, customer_phone: phone, status: 'paid', created_at: iso(NOW - daysAgo * DAY), delivery_address: { raw: 'Somewhere - ' + pin, pincode: pin } });
+    const contacts = [C('919000000001', 'Asha'), C('919000000002', 'Ravi'), { ...C('919000000003', 'Neha'), last_complaint_at: iso(NOW - 10 * DAY) }, C('919000000004', 'Om'), { ...C('919000000005', 'Ira'), last_complaint_at: iso(NOW - 31 * DAY) },
+      { ...C('919999900000', 'Prashant Nahata'), last_complaint_at: iso(NOW - DAY) }];
+    const orders = [ord('919000000002', '302001', 5), ord('919000000004', '110017', 3), ord('919000000005', '122001', 8), ord('919999900000', '302001', 2)];
+    w = world({ contacts, orders });
+    r = await b.run({ template: T, mode: 'dry', video: V });
+    ok(r.ok && r.to_send === 4 && r.outside_area === 1 && r.complaint === 1, 'R35: a non-J7 dry run leaves out the 302001 contact and the recent complainer; the owner, Asha, Om and Ira (complaint 31 days ago) stay (got ' + JSON.stringify(r) + ')');
+    ok(r.no_paid_order === 1, 'R35: the dry run counts contacts with no paid order (kept, area unknown): Asha (got ' + JSON.stringify(r.no_paid_order) + ')');
+    ok(!JSON.stringify(r).match(/9190000000|919999900000/), 'R35: counts only, no phone numbers');
+    r = await b.run({ template: T, mode: 'send', video: V, expect: 4 });
+    ok(r.ok && r.sent === 4 && !w.sent.some((s) => s.to === '919000000002' || s.to === '919000000003'), 'R35 send: nothing goes to the 302001 contact or the recent complainer');
+    ok((w.sent[0] || {}).to === '919999900000', 'R35: the owner (his own last order to 302001, a complaint yesterday) is still the live check');
+    w = world({ contacts, orders });
+    r = await b.run({ template: T, mode: 'test', video: V });
+    ok(r.ok && r.sent === 1 && w.sent.length === 1 && (w.sent[0] || {}).to === '919999900000', 'R35: the owner test send is unaffected');
+    process.env.DELIVERY_NATIONWIDE = '1';
+    r = await b.run({ template: T, mode: 'dry', video: V });
+    ok(r.to_send === 5 && r.outside_area === 0 && r.complaint === 1, 'R35: DELIVERY_NATIONWIDE=1 opens the area again; the complaint rule stays (got ' + JSON.stringify(r) + ')');
+    delete process.env.DELIVERY_NATIONWIDE;
+    r = await b.run({ template: T, mode: 'dry', video: V, sources: 'join' });
+    ok(r.to_send === 4 && r.outside_area === 1, 'R35: the segment holds with a sources filter too');
+  }
+
   // ── J7 fresh-batch alert (growth A7, 16 Nov 2026): sent only once the new lot is the one packing ──
   {
     const { makeInventory } = require('../utils/inventory');
@@ -323,10 +352,16 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
     ok(r.ok && r.saved_for_reorder === 2 && r.to_send === 3, 'J7: Neha (2 sends, J6 due in 3 days) and Om (2 sends, J6 due today) are saved for the reorder; Asha (2 sends, no J6) and Ravi (1 send, room for both) go, with the owner (got ' + JSON.stringify(r) + ')');
     r = await b.run({ template: FB, lots: NEW, image: PIC, mode: 'send', expect: 3 });
     ok(r.ok && !w.sent.some((s) => s.to === NEHA || s.to === OM) && w.sent.some((s) => s.to === ASHA) && w.sent.some((s) => s.to === RAVI), 'J7 send: nothing goes to the two saved for their reorder');
+    // R34: a J6 due today is saved too, even when its window has closed by next week (dueReorders at now as well as now + 7 days)
+    { const sends = two(OM); w = W({ contacts: [rc(OM, 'Om')], orders: [j6Order(OM, 49)], sends, reorder: (ms) => ({ orders: [j6Order(OM, 49)], contacts: [rc(OM, 'Om')], sends, eventsByOrder: {}, subscriptionPhones: [], stallOrders: [], inStock: ALL4, nowMs: ms }) }); }
+    r = await b.run({ template: FB, lots: NEW, image: PIC, mode: 'dry' });
+    ok(r.ok && r.saved_for_reorder === 1 && r.to_send === 1, 'R34 due today: a contact with one slot left whose J6 is due today (too late by next week) is saved_for_reorder (got ' + JSON.stringify(r) + ')');
     delete process.env.JOURNEY_J6_ENABLED;
     w = j6World();
     r = await b.run({ template: FB, lots: NEW, image: PIC, mode: 'dry' });
     ok(r.ok && r.saved_for_reorder === 0 && r.to_send === 5, 'J7: with J6 switched off no slot is saved for a reminder that will not go (got ' + JSON.stringify(r) + ')');
+    r = await b.run({ template: FB, lots: NEW, image: PIC, mode: 'send', expect: 5 });
+    ok(r.ok && w.sent.some((s) => s.to === NEHA) && w.sent.some((s) => s.to === OM), 'R34 flag off: contacts with one slot left and a J6 due get the J7 (JOURNEY_J6_ENABLED unset)');
   }
 
   // wiring

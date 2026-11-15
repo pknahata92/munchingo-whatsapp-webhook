@@ -9,12 +9,14 @@
 // Rules (cap, cool-off, retry once, template + campaign, quiet hours) are in utils/marketingCap.js.
 // Every real send is logged in marketing_sends (marketing_sends_migration.sql): nobody gets the same template twice even
 // if the job is re-run, and nobody gets more than CAP marketing messages in 30 days (the sign-up promise: "a few a month").
+// One segment only (spec §6.4, ruling R35, 16 Nov 2026): every run, any template or mode, leaves out a contact whose newest paid order
+// went outside the delivery area (deliveryArea.inArea, which follows DELIVERY_NATIONWIDE) and anyone who complained in the last 30 days.
+// A contact with no paid order is kept, as before (no pincode is guessed), and counted as no_paid_order. The owner is exempt (live check).
 // J7 fresh-batch alert (growth A7, 16 Nov 2026): template=munchingo_fresh_batch with lots=<the new lot codes> and image=<the batch ticket
 // picture>. Refused, in every mode, until each lot is the one packing takes for its Flavor (inventory.packingNext, the Packed step's own
 // rule), so "Every box going out from today is from this batch" is true when it goes. Words: [first name, bake date, Flavors]; quick
-// reply j7_remind (index 0, utils/journey.js stores the reminder yes) and the shop link (index 1) with utm_campaign=batch_<YYMMDD>. On
-// top of the shared gate: no alert within 30 days of a complaint, none to a contact whose newest paid order went outside the delivery
-// area, and the last of the 3 monthly slots is left to a J6 reminder due within the week (saved_for_reorder).
+// reply j7_remind (index 0, utils/journey.js stores the reminder yes) and the shop link (index 1) with utm_campaign=batch_<YYMMDD>. The
+// last of the 3 monthly slots is left to a J6 reminder due now or within the week, while J6 is on (saved_for_reorder, ruling R34).
 // Tests: scripts/broadcast-test.js
 
 const { CAP, CAP_DAYS, slotFor, slotsLeft, isQuietHours } = require('./marketingCap');   // the cap, cool-off, retry-once and duplicate rules live there
@@ -116,10 +118,12 @@ async function batchFor(codes, lang) {
   return { baked: R.date(day), flavours: R.flavours(slugs.map((s) => NAME[s] || s)), campaign: `batch_${day.slice(2, 4)}${day.slice(5, 7)}${day.slice(8, 10)}` };
 }
 
-/** The J7 rules on top of the shared gate (the owner, the live check, is exempt). -> { error } | { before(c), saveForReorder(phone, sends) }
- *  before: 'complaint' (one in the last 30 days) or 'outside_area' (the newest paid order went outside deliveryArea; no order yet stays
- *  in: "Delivering in Delhi NCR for now"), else null. saveForReorder: one slot left and a J6 due now or within 7 days, while J6 is on. */
-async function freshRules(nowMs) {
+/** The segment on top of the shared gate (the owner, the live check, is exempt).
+ *  -> { error } | { before(c), hasOrder(c), saveForReorder(phone, sends) }
+ *  before: 'complaint' (one in the last 30 days) or 'outside_area' (the newest paid order went outside deliveryArea; no paid order stays
+ *  in: "Delivering in Delhi NCR for now"), else null; every broadcast (R35). saveForReorder: the J7 alert only (withJ6), one slot left
+ *  and a J6 due now or within 7 days, while J6 is on (R34). */
+async function segmentRules(nowMs, withJ6) {
   const { db, reorderInput } = D();
   const newest = new Map();   // last 10 digits -> newest paid order (test orders are not where anyone lives)
   for (const o of await db.listPaidOrderAddresses()) {
@@ -130,7 +134,7 @@ async function freshRules(nowMs) {
   }
   const reorders = require('./reorders');
   const j6 = new Set();
-  if (reorders.enabled()) {   // with J6 off no reminder will take the slot, so none is kept for one
+  if (withJ6 && reorders.enabled()) {   // with J6 off no reminder will take the slot, so none is kept for one
     const input = await reorderInput(nowMs);
     if (input.blocked) return { error: input.blocked };
     for (const ms of [nowMs, nowMs + J6_AHEAD_DAYS * DAY]) for (const d of reorders.dueReorders({ ...input, nowMs: ms })) j6.add(last10(d.phone));
@@ -143,11 +147,12 @@ async function freshRules(nowMs) {
       const pin = o ? [a.pincode, deliveryArea.pinIn(a.raw || '')].map((x) => String(x || '').trim()).find((x) => PIN.test(x)) : null;
       return pin && !deliveryArea.inArea(pin) ? 'outside_area' : null;
     },
+    hasOrder: (c) => newest.has(last10(c.phone)),
     saveForReorder: (phone, sends) => j6.has(last10(phone)) && slotsLeft({ phone, sends, nowMs }) === 1,
   };
 }
 
-async function audience(template, sources, exclude = [], campaign = null, fresh = null) {
+async function audience(template, sources, exclude = [], campaign = null, seg = null) {
   const { db, now, ownerPhone } = D();
   const nowMs = now();
   const [contacts, sends] = await Promise.all([db.listMarketingContacts(), db.listMarketingSends({ sinceIso: new Date(nowMs - CAP_DAYS * 86_400_000).toISOString(), template })]);
@@ -155,7 +160,7 @@ async function audience(template, sources, exclude = [], campaign = null, fresh 
   for (const s of sends) { const k = digits(s.phone); if (!byPhone.has(k)) byPhone.set(k, []); byPhone.get(k).push(s); }
   const gate = (p) => slotFor({ phone: p, sends: byPhone.get(p) || [], nowMs, template, campaign });
   const owner = ownerPhone();
-  const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0, cooling_off: 0, blocked_twice: 0, ...(fresh ? { complaint: 0, outside_area: 0, saved_for_reorder: 0 } : {}) };
+  const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0, cooling_off: 0, blocked_twice: 0, complaint: 0, outside_area: 0, saved_for_reorder: 0, no_paid_order: 0 };
   const seen = new Set([owner]);
   const verdict = (p) => { const v = gate(p); if (v !== 'ok') out[v]++; return v === 'ok'; };
   // The owner is the live check on every send. Changed 15 Nov 2026: he used to be skipped on any non-ok verdict; now he is skipped
@@ -168,10 +173,11 @@ async function audience(template, sources, exclude = [], campaign = null, fresh 
     if (c.consent_marketing !== true || !p || seen.has(p) || !fromSource(c)) continue;
     seen.add(p);
     if (SKIP_NAMES.test(c.name || '')) { out.skipped++; continue; }
-    const why = fresh && fresh.before(c);
+    const why = seg && seg.before(c);
     if (why) { out[why]++; continue; }
     if (!verdict(p)) continue;
-    if (fresh && fresh.saveForReorder(p, byPhone.get(p) || [])) { out.saved_for_reorder++; continue; }
+    if (seg && seg.saveForReorder(p, byPhone.get(p) || [])) { out.saved_for_reorder++; continue; }
+    if (seg && !seg.hasOrder(c)) out.no_paid_order++;   // of to_send: no paid order, so the area is not known (kept, R35)
     out.list.push({ phone: p, first: firstName(c.name) });
   }
   return out;
@@ -201,11 +207,11 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   if (batch && batch.error) return { ok: false, error: batch.error };
   const header = video ? { type: 'video', link: video } : image ? { type: 'image', link: image } : null;
   const camp = String(campaign || '') || (batch && batch.campaign) || null;
-  const fresh = batch ? await freshRules(now()) : null;
-  if (fresh && fresh.error) return { ok: false, error: fresh.error };
-  const a = await audience(template, src, exc, camp, fresh);
+  const seg = await segmentRules(now(), !!batch);
+  if (seg.error) return { ok: false, error: seg.error };
+  const a = await audience(template, src, exc, camp, seg);
   const counts = { already_sent: a.already_sent, over_cap: a.over_cap, skipped: a.skipped, cooling_off: a.cooling_off, blocked_twice: a.blocked_twice,
-    ...(fresh ? { complaint: a.complaint, outside_area: a.outside_area, saved_for_reorder: a.saved_for_reorder } : {}), to_send: a.list.length, recent: recent.slice() };
+    complaint: a.complaint, outside_area: a.outside_area, ...(batch ? { saved_for_reorder: a.saved_for_reorder } : {}), no_paid_order: a.no_paid_order, to_send: a.list.length, recent: recent.slice() };
   const about = batch ? { campaign: camp, baked: batch.baked, flavours: batch.flavours } : {};
   // J7: the three words, the reminder quick reply (index 0) and the shop link (index 1); any other broadcast: the first name only
   const deliver = (to, first) => (batch

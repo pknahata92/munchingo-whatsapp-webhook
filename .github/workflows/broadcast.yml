@@ -1,6 +1,7 @@
 name: Broadcast (WhatsApp, by hand only)
 
-# One approved marketing template to everyone who said yes to WhatsApp updates (utils/broadcast.js).
+# One approved marketing template to everyone who said yes to WhatsApp updates (utils/broadcast.js), one segment only (spec 6.4):
+# all consented Delhi NCR contacts. Left out: a newest paid order outside the area, or a complaint in the last 30 days.
 # Order: mode=dry (counts only) -> mode=test (OWNER_PHONE only) -> mode=send with expect = the dry-run "to_send".
 # Fresh-batch alert (J7): template=munchingo_fresh_batch, lots=<the new lot codes>, image=<the batch ticket picture>. It is refused
 # until each lot is the one packing takes for its Flavor; campaign defaults to batch_<YYMMDD of the bake date>.
@@ -25,7 +26,7 @@ on:
         required: false
         default: ''
       sources:
-        description: 'Only these sign-up places, e.g. stall,fair (blank = everyone who said yes)'
+        description: 'Only these sign-up places, e.g. stall,fair (blank = every consented NCR contact)'
         required: false
         default: ''
       exclude:
