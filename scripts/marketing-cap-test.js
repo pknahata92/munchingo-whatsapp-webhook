@@ -38,4 +38,11 @@ ok(cap.isQuietHours(Date.parse('2026-11-20T15:29:00Z')) === false, '20:59 IST is
 ok(cap.isQuietHours(Date.parse('2026-11-20T03:29:00Z')) === true, '08:59 IST is quiet');
 ok(cap.isQuietHours(Date.parse('2026-11-20T18:30:00Z')) === true, 'midnight IST is quiet');
 
+// slotsLeft (growth A7): how many of the 3 a month are still free (J6 wins the last one over a batch alert)
+const left = (sends) => (typeof cap.slotsLeft === 'function' ? cap.slotsLeft({ phone: P, sends, nowMs: NOW }) : 'missing');
+ok(left([]) === 3, 'slotsLeft: nobody sent: 3');
+ok(left([S('a', null, 5 * 24), S('b', null, 10 * 24)]) === 1, 'slotsLeft: two sends this month: 1 left');
+ok(left([S('a', null, 31 * 24), S('b', null, 10 * 24), { ...S('c'), status: 'failed', error: '131049 x' }, { ...S('d'), phone: '919000000002' }]) === 2, 'slotsLeft: only `sent` rows of this person in the last 30 days count');
+ok(left([S('a'), S('b'), S('c'), S('d')]) === 0, 'slotsLeft: never below 0');
+
 console.log(`marketing-cap-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

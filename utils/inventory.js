@@ -57,7 +57,7 @@ const orMissing = (p, empty) => p.catch((e) => {
 async function lotContext(store, nowMs) {
   const [rows, raw] = await Promise.all([orMissing(Promise.resolve().then(() => store.lots()), []), orMissing(Promise.resolve().then(() => store.settingsAll()), {})]);
   const meta = {};
-  for (const [k, l] of lotRules.lotIndex(rows || [])) meta[k] = { status: l.status == null ? null : l.status, best_before: l.best_before || null, lot: l.lot_code, ownerHold: lotRules.ownerHold(l) };
+  for (const [k, l] of lotRules.lotIndex(rows || [])) meta[k] = { status: l.status == null ? null : l.status, best_before: l.best_before || null, lot: l.lot_code, ownerHold: lotRules.ownerHold(l), bake_date: l.bake_date || null };
   return { meta, today: lotRules.todayIst(nowMs), s: lotRules.readSettings(raw) };
 }
 // A ledger row's lot: the stock_lots row decides the status (and the best before when it has one); a row with no lot row, or no lot code, is legacy.
@@ -600,6 +600,24 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     }
     return { rows, short };
   }
+  // The lot packing takes next, per biscuit Flavor (growth J7, 16 Nov 2026): planForOrder's own rule for one box (lotted rows with boxes,
+  // eligible for 'pack' today in India, oldest best before first, in allocate's order), so a fresh-batch alert can never name a lot the
+  // Packed step would not take. { slug: { lot_code, bake_date, best_before } | null }: the lot's own code (boxes kept under an alias name
+  // their lot), bake_date from stock_lots (null for a lot with no row or no date). Writes nothing.
+  async function packingNext() {
+    const [list, all, ctx] = await Promise.all([store.items(), store.byLot(), lotContext(store, now())]);
+    const day = (v) => (v ? String(v).slice(0, 10) : null);
+    const out = {};
+    for (const item of list.filter((i) => i.kind === 'product')) {
+      const mine = all.filter((r) => r.item_slug === item.slug);
+      const first = allocate(packLots(mine).filter((l) => eligibleRow(ctx, l, 'pack')), 1).pieces[0];
+      if (!first) { out[item.slug] = null; continue; }
+      const m = ctx.meta[`${item.slug}|${first.lot_code}`];
+      const info = lotInfo(ctx, { item_slug: item.slug, lot_code: first.lot_code, best_before: first.best_before });
+      out[item.slug] = { lot_code: (m && m.lot) || first.lot_code, bake_date: day(m && m.bake_date), best_before: day(info.best_before) };
+    }
+    return out;
+  }
   // Called after an order is marked Packed. With `plan` (from planForOrder) it writes the plan, and the short boxes as one lot-less
   // line per flavour, noted when the owner overrode ("needs lot" until Assign lot). Without a plan (planning failed) it works as before
   // lots: deducts only from tracking_from onward; oldest lot first; a shortfall becomes a lot-less line so stock shows below zero
@@ -710,7 +728,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Only boxes the website may sell count (released or legacy lots, before their website stop date).
   async function sellable() { const [items, rows, committed, ctx] = await Promise.all([store.items(), store.byLot(), store.committed(), lotContext(store, now())]); return computeSellable(items, rows, committed, ctx); }
 
-  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, removeItem, setLevel, reverse, history, planForOrder, deductForOrder, restoreForOrder, needsLot, assignLot };
+  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, removeItem, setLevel, reverse, history, planForOrder, packingNext, deductForOrder, restoreForOrder, needsLot, assignLot };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────

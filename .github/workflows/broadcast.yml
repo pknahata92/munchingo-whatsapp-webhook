@@ -2,6 +2,8 @@ name: Broadcast (WhatsApp, by hand only)
 
 # One approved marketing template to everyone who said yes to WhatsApp updates (utils/broadcast.js).
 # Order: mode=dry (counts only) -> mode=test (OWNER_PHONE only) -> mode=send with expect = the dry-run "to_send".
+# Fresh-batch alert (J7): template=munchingo_fresh_batch, lots=<the new lot codes>, image=<the batch ticket picture>. It is refused
+# until each lot is the one packing takes for its Flavor; campaign defaults to batch_<YYMMDD of the bake date>.
 on:
   workflow_dispatch:
     inputs:
@@ -38,6 +40,14 @@ on:
         description: 'Template language code'
         required: false
         default: 'en'
+      lots:
+        description: 'Fresh-batch alert only: the new lot codes, e.g. MNGO-261120-01,MNGA-261120-01'
+        required: false
+        default: ''
+      campaign:
+        description: 'Campaign tag (blank = none; a fresh-batch alert uses batch_<YYMMDD of the bake date>)'
+        required: false
+        default: ''
 
 jobs:
   broadcast:
@@ -54,9 +64,11 @@ jobs:
           EXPECT: ${{ inputs.expect }}
           EXCLUDE: ${{ inputs.exclude }}
           LANG_CODE: ${{ inputs.lang }}
+          LOTS: ${{ inputs.lots }}
+          CAMPAIGN: ${{ inputs.campaign }}
         run: |
           curl -sS -m 900 -G "https://munchingo-whatsapp-webhook.onrender.com/internal/broadcast" \
             --data-urlencode "secret=$SECRET" --data-urlencode "template=$TEMPLATE" --data-urlencode "mode=$MODE" \
             --data-urlencode "video=$VIDEO" --data-urlencode "image=$IMAGE" --data-urlencode "sources=$SOURCES" --data-urlencode "expect=$EXPECT" --data-urlencode "exclude=$EXCLUDE" \
-            --data-urlencode "lang=$LANG_CODE" -w '\nHTTP %{http_code}\n' | tee out.txt
+            --data-urlencode "lang=$LANG_CODE" --data-urlencode "lots=$LOTS" --data-urlencode "campaign=$CAMPAIGN" -w '\nHTTP %{http_code}\n' | tee out.txt
           grep -q '"ok":true' out.txt

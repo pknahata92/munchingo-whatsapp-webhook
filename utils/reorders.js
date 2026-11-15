@@ -260,12 +260,11 @@ async function caption(item) {
   return `${words}\n\n${SITE}${item.urlSuffix}`;
 }
 
-/** The daily job. -> { disabled } | { quiet } | { blocked } | { checked, sent, skipped, failed, reasons } (counts only). */
-async function sweepReorders() {
-  if (!enabled()) return { disabled: true };
-  const { db, wa, now } = D();
-  const nowMs = now();
-  if (isQuietHours(nowMs)) return { quiet: true };
+/** What planReorders reads, from the database: { orders, contacts, sends, eventsByOrder, subscriptionPhones, stallOrders, inStock,
+ *  nowMs }, or { blocked } when the paid orders fill one page (paging first). Read only. Shared with utils/broadcast.js, where a J6
+ *  due within the week wins the last monthly slot over a J7 batch alert. */
+async function loadInput(nowMs) {
+  const { db } = D();
   const since = new Date(nowMs - LOOKBACK_DAYS * DAY).toISOString();
   const [orders, contacts, sends, subscriptionPhones, stallOrders] = await Promise.all([
     db.getPaidOrdersUpdatedSince(since), db.listMarketingContacts(), db.listMarketingSends(), db.listActiveSubscriptionPhones(), db.listStallOrdersWithPhone(since),
@@ -277,7 +276,18 @@ async function sweepReorders() {
     for (const e of ids.length ? await db.listOrderEventsByName(name, ids) : []) (eventsByOrder[e.order_id] = eventsByOrder[e.order_id] || []).push(e);
   }
   const inStock = await D().inStock();
-  const p = planReorders({ orders, contacts, sends, eventsByOrder, subscriptionPhones, stallOrders, inStock, nowMs });
+  return { orders, contacts, sends, eventsByOrder, subscriptionPhones, stallOrders, inStock, nowMs };
+}
+
+/** The daily job. -> { disabled } | { quiet } | { blocked } | { checked, sent, skipped, failed, reasons } (counts only). */
+async function sweepReorders() {
+  if (!enabled()) return { disabled: true };
+  const { db, wa, now } = D();
+  const nowMs = now();
+  if (isQuietHours(nowMs)) return { quiet: true };
+  const input = await loadInput(nowMs);
+  if (input.blocked) return { blocked: input.blocked };
+  const p = planReorders(input);
   const reasons = { ...p.skipped };
   const res = { checked: p.checked, sent: 0, skipped: Object.values(reasons).reduce((a, b) => a + b, 0), failed: 0, reasons };
   for (const item of p.due) {
@@ -331,4 +341,4 @@ async function handleRequest({ query = {} } = {}) {
   }
 }
 
-module.exports = { REORDER_DAYS, STALL_DAYS, MIN_BOXES, TEMPLATE, EVENT, REPLIES, dueReorders, planReorders, stallClaimIds, sweepReorders, handleRequest, setDeps };
+module.exports = { REORDER_DAYS, STALL_DAYS, MIN_BOXES, TEMPLATE, EVENT, REPLIES, dueReorders, planReorders, stallClaimIds, loadInput, enabled, sweepReorders, handleRequest, setDeps };

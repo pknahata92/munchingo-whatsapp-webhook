@@ -12,6 +12,7 @@ const TTL_MS = 30_000;
 let soldOut = null;        // manually paused base slugs (product_stock), or null until the first successful read
 let autoOut = [];          // base slugs with nothing left to sell (stock ledger), recomputed on every refresh
 let sellableMap = null;    // { slug: boxes still sellable } for flavours that have stock recorded; null = unknown
+let packing = {};          // { slug: bake date 'YYYY-MM-DD' | null } of the lot packing takes next (inventory.packingNext); {} until read
 let loadedAt = 0;
 let inflight = null;
 
@@ -23,6 +24,9 @@ function refresh() {
         // Automatic sold-out from the stock ledger. Any failure keeps the last known answer and never blocks the shop.
         try { const m = await require('./inventory').instance().sellable(); sellableMap = m; autoOut = Object.keys(m).filter((k) => m[k] <= 0); }
         catch (err) { if (!/stock_ledger_migration/.test(err.message)) console.error('[STOCK] could not compute sellable stock, keeping last known:', err.message); }
+        // The bake date of the lot each Flavor is packed from (GET /api/stock, "now shipping: baked {date}"). Dates only: no codes.
+        try { const next = await require('./inventory').instance().packingNext(); packing = Object.fromEntries(Object.entries(next).map(([slug, l]) => [slug, (l && l.bake_date) || null])); }
+        catch (err) { if (!/stock_ledger_migration/.test(err.message)) console.error('[STOCK] could not read the lots being packed, keeping last known:', err.message); }
       })
       .catch((err) => { loadedAt = Date.now() - TTL_MS + 5_000; console.error('[STOCK] could not read product_stock, keeping last known list:', err.message); })
       .finally(() => { inflight = null; });
@@ -39,10 +43,11 @@ const soldOutSlugs = () => (soldOut === null ? null : Array.from(new Set([...sol
 const pausedSlugs = () => soldOut || [];
 const autoSoldOutSlugs = () => autoOut;
 const sellable = (slug) => (sellableMap && slug in sellableMap ? sellableMap[slug] : null);   // null = not tracked, do not limit
+const packingDates = () => ({ ...packing });
 
 async function setAvailable(slug, available, who, note) {
   await db.setStock(slug, available, who, note);
   await refresh();
 }
 
-module.exports = { ensureFresh, refresh, soldOutSlugs, pausedSlugs, autoSoldOutSlugs, sellable, setAvailable };
+module.exports = { ensureFresh, refresh, soldOutSlugs, pausedSlugs, autoSoldOutSlugs, sellable, packingDates, setAvailable };

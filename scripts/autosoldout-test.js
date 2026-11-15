@@ -52,9 +52,9 @@ const A = { email: 'x@y.z', name: 'X' };
   rows = []; await stock.refresh(); ok(stock.soldOutSlugs().length === 0, 'resuming a paused flavour works');
   // failure keeps the last known answer and never blocks the shop
   st.committedMap = { 'atta-kesari': 30 }; await stock.refresh(); const before = stock.autoSoldOutSlugs().join();
-  inv.instance = () => ({ sellable: async () => { throw new Error('db down'); } }); await stock.refresh();
+  inv.instance = () => ({ sellable: async () => { throw new Error('db down'); }, packingNext: async () => { throw new Error('db down'); } }); await stock.refresh();
   ok(stock.autoSoldOutSlugs().join() === before && before === 'atta-kesari', 'if the ledger cannot be read the last known sold-out list is kept');
-  inv.instance = () => ({ sellable: async () => { throw new Error('Run stock_ledger_migration.sql in Supabase first.'); } }); const o = console.error; let logged = false; console.error = () => { logged = true; }; await stock.refresh(); console.error = o;
+  inv.instance = () => ({ sellable: async () => { throw new Error('Run stock_ledger_migration.sql in Supabase first.'); }, packingNext: async () => { throw new Error('Run stock_ledger_migration.sql in Supabase first.'); } }); const o = console.error; let logged = false; console.error = () => { logged = true; }; await stock.refresh(); console.error = o;
   ok(!logged, 'a not-yet-migrated database stays quiet');
   // Fix B: boxes with no lot never count toward the website number (packing refuses them)
   {

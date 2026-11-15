@@ -232,6 +232,22 @@ const metaErr = (code, message) => Object.assign(new Error('Request failed'), { 
   const prevFlag = process.env.JOURNEY_J6_ENABLED, prevSecret = process.env.DIGEST_SECRET;
   delete process.env.DIGEST_SECRET;
 
+  // loadInput (growth A7): what the sweep plans from, shared with the J7 batch alert (J6 wins the last slot over it)
+  {
+    const w0 = world();
+    const inp = typeof r.loadInput === 'function' ? await r.loadInput(NOW) : {};
+    eq(Object.keys(inp).sort(), ['contacts', 'eventsByOrder', 'inStock', 'nowMs', 'orders', 'sends', 'stallOrders', 'subscriptionPhones'], 'loadInput: everything planReorders reads');
+    eq(inp.nowMs ? r.dueReorders(inp).map((x) => x.campaign) : [], ['j6:' + OID], 'loadInput feeds dueReorders: the one due order');
+    eq(w0.sent.length + w0.claims.length + w0.logged.length, 0, 'loadInput only reads');
+    world({ orders: Array.from({ length: 1000 }, (_, i) => order({ order_id: 'MNG-P-' + i })) });
+    const full = typeof r.loadInput === 'function' ? await r.loadInput(NOW) : {};
+    ok(/^1000 paid orders in 120 days fill one page/.test(full.blocked || ''), 'loadInput: a full page of orders is { blocked } (got ' + show(Object.keys(full)) + ')');
+    process.env.JOURNEY_J6_ENABLED = '1';
+    ok(typeof r.enabled === 'function' && r.enabled() === true, 'enabled() is exported and reads JOURNEY_J6_ENABLED');
+    delete process.env.JOURNEY_J6_ENABLED;
+    ok(typeof r.enabled === 'function' && r.enabled() === false, 'enabled() is false when the flag is unset');
+  }
+
   // flag off
   delete process.env.JOURNEY_J6_ENABLED;
   let w = world();

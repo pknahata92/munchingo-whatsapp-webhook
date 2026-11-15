@@ -1109,5 +1109,67 @@ const status = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
       ok(!bad && checked > 500 && lowered > 0 && unchanged > 50, 'Fix B property: the new website number is never above the old one, and unchanged where there is no no-lot stock (' + checked + ' checked, ' + lowered + ' lowered, ' + unchanged + ' unchanged' + (bad ? ', FAILED ' + JSON.stringify(bad) : '') + ')'); }
   }
 
+  // ── Growth A7 (16 Nov 2026): the lot packing takes next, per Flavor (packingNext), and its bake date on GET /api/stock ──
+  // The J7 fresh-batch alert may name a lot only once packing takes it, so packingNext uses the Packed step's own rule (planForOrder).
+  {
+    const pn = async (inv) => (typeof inv.packingNext === 'function' ? inv.packingNext() : {});
+    const lot7 = async (st, slug, code, { status = 'released', bake, bb, qty, aliases }) => {
+      await st.insertLots([{ item_slug: slug, lot_code: code, status, bake_date: bake, best_before: bb, ...(aliases ? { aliases } : {}) }]);
+      if (qty) await st.insert([{ item_slug: slug, qty, type: 'RECEIVE', lot_code: (aliases && aliases[0]) || code, best_before: bb }]);
+    };
+    const st = memStore('2026-10-16T00:00:00.000Z'); const inv = makeInventory(st);
+    await lot7(st, 'atta-original', 'MNGO-261105-01', { bake: '2026-11-05', bb: '2027-02-03', qty: 3 });
+    await lot7(st, 'atta-original', 'MNGO-261120-01', { bake: '2026-11-20', bb: '2027-02-18', qty: 40 });
+    await lot7(st, 'atta-ajwain', 'MNGA-261102-01', { status: 'hold', bake: '2026-11-02', bb: '2027-01-31', qty: 12 });   // held, and older
+    await lot7(st, 'atta-ajwain', 'MNGA-261120-01', { bake: '2026-11-20', bb: '2027-02-18', qty: 30 });
+    await lot7(st, 'atta-kesari', 'MNGK-260930-01', { bake: '2026-09-30', bb: '2026-12-29', qty: 9 });   // released, last ship 9 Nov: still packing on 31 Oct
+    let n = await pn(inv);
+    eq(n['atta-original'], { lot_code: 'MNGO-261105-01', bake_date: '2026-11-05', best_before: '2027-02-03' }, 'packingNext: the older released lot while it still has boxes');
+    eq(n['atta-ajwain'], { lot_code: 'MNGA-261120-01', bake_date: '2026-11-20', best_before: '2027-02-18' }, 'packingNext: a held lot is never chosen, even when it is older');
+    ok(n['atta-lite-sugar'] === null, 'packingNext: a Flavor with no lot that can be packed is null (got ' + JSON.stringify(n['atta-lite-sugar']) + ')');
+    ok(Object.keys(n).sort().join() === 'atta-ajwain,atta-kesari,atta-lite-sugar,atta-original', 'packingNext: one key per biscuit Flavor, no packaging (got ' + Object.keys(n) + ')');
+    const plan7 = await inv.planForOrder({ items: [{ slug: 'atta-original', quantity: 1 }, { slug: 'atta-ajwain', quantity: 1 }], at: new Date(NOW).toISOString() });
+    ok(plan7.rows.length === 2 && plan7.rows.every((r) => n[r.item_slug] && r.lot_code === n[r.item_slug].lot_code), 'packingNext names the lot the Packed step would take (' + JSON.stringify(plan7.rows) + ')');
+    await st.insert([{ item_slug: 'atta-original', qty: -3, type: 'SALE', lot_code: 'MNGO-261105-01', best_before: '2027-02-03', ref: 'MNG-A7-1@2026-10-31T06:00:00.000Z' }]);
+    n = await pn(inv);
+    eq(n['atta-original'], { lot_code: 'MNGO-261120-01', bake_date: '2026-11-20', best_before: '2027-02-18' }, 'packingNext: the new lot once the old one is at 0');
+    // a lot past its last ship date is not the one packing (as planForOrder), and boxes under an alias name the lot's own code
+    const st2 = memStore('2026-10-16T00:00:00.000Z'); const inv2 = makeInventory(st2);
+    await lot7(st2, 'atta-kesari', 'MNGK-260901-01', { bake: '2026-09-01', bb: '2026-11-30', qty: 6 });   // last ship 11 Oct: past it on 31 Oct
+    await lot7(st2, 'atta-kesari', 'MNGK-261016-01', { bake: '2026-10-16', bb: '2027-01-14', qty: 20, aliases: ['16OCT26'] });
+    n = await pn(inv2);
+    eq(n['atta-kesari'], { lot_code: 'MNGK-261016-01', bake_date: '2026-10-16', best_before: '2027-01-14' }, 'packingNext: past its last ship date is skipped; boxes kept under an alias name the lot\'s own code');
+    // a lot with no stock_lots row (legacy) has no bake date
+    const st3 = memStore('2026-10-16T00:00:00.000Z'); const inv3 = makeInventory(st3);
+    await inv3.receive({ slug: 'atta-original', received: 5, lot: '15OCT26', bestBefore: '2027-01-13', actor: A });
+    n = await pn(inv3);
+    eq(n['atta-original'], { lot_code: '15OCT26', bake_date: null, best_before: '2027-01-13' }, 'packingNext: a legacy lot (no stock_lots row) has no bake date');
+
+    // GET /api/stock: { ok, soldOut, packing: { slug: bake date | null } }, bake dates only (no lot codes, no best before)
+    const path = require('path');
+    process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'x'; process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'x'; process.env.RESEND_API_KEY = process.env.RESEND_API_KEY || 'x';
+    const stub = (rel, exp) => { const f = require.resolve(path.join(__dirname, '..', rel)); require.cache[f] = { id: f, filename: f, loaded: true, exports: exp }; };
+    stub('utils/database.js', new Proxy({ listStock: async () => [], listPrices: async () => [] }, { get: (t, k) => t[k] || (async () => null) }));
+    stub('utils/razorpay.js', { createPaymentLink: async () => ({}), orderIdFromReference: () => null, expirePaymentLink: async () => {} });
+    stub('utils/delhivery.js', { checkPincode: async (pin) => ({ pin, valid: true, serviceable: true }) });
+    stub('utils/coupons.js', { validateCoupon: async () => ({ ok: false }) });
+    stub('utils/mailer.js', new Proxy({}, { get: () => async () => {} }));
+    stub('utils/rateLimit.js', { rateLimit: () => (req, res, next) => next() });
+    stub('utils/launch.js', { ordersOpen: () => true, CLOSED_MESSAGE: 'closed', isPreorder: () => false, dispatchLabel: () => '' });
+    stub('utils/whatsapp.js', new Proxy({}, { get: () => async () => {} }));
+    const invMod = require('../utils/inventory');
+    const realInstance = invMod.instance; invMod.instance = () => inv;   // the shop's stock cache reads the memstore above
+    const express = require('express');
+    const app = express(); app.use(require('../routes/checkout'));
+    const server = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+    try {
+      const j = await (await fetch('http://127.0.0.1:' + server.address().port + '/api/stock')).json();
+      ok(j.ok === true && Array.isArray(j.soldOut), '/api/stock still answers { ok, soldOut } (got ' + JSON.stringify(j) + ')');
+      const p = j.packing || {};
+      eq(Object.keys(p).sort().map((k) => [k, p[k]]), [['atta-ajwain', '2026-11-20'], ['atta-kesari', '2026-09-30'], ['atta-lite-sugar', null], ['atta-original', '2026-11-20']], '/api/stock packing: the bake date of the lot packing takes next, null when none');
+      ok(!/MNG|15OCT|2027-/.test(JSON.stringify(j)), '/api/stock never shows lot codes or best before dates (got ' + JSON.stringify(j) + ')');
+    } finally { server.close(); invMod.instance = realInstance; }
+  }
+
   console.log(`inventory-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

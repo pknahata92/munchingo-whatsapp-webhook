@@ -252,6 +252,19 @@ async function getPaidOrdersUpdatedSince(sinceISO) {
   return data || [];
 }
 
+/** Every paid order's phone, address and time (utils/broadcast.js: a contact's newest paid order says where they live, for the
+ *  J7 batch alert's area rule). Paged, so the 1000-row cap never hides a newer order. */
+async function listPaidOrderAddresses() {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db().from('orders').select('order_id, customer_phone, delivery_address, created_at').eq('status', 'paid').order('created_at', { ascending: true }).order('order_id', { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
 /** Orders created since a time (the owner's unpaid-order alert looks at the last day or so). */
 async function listOrdersSince(sinceIso, limit = 500) {
   const { data, error } = await db().from('orders').select('order_id, customer_name, customer_phone, total, status, created_at').gte('created_at', sinceIso).order('created_at', { ascending: true }).limit(limit);
@@ -773,7 +786,7 @@ module.exports = {
   getOrderByPaymentId,
   markOrderRefunded,
   getOrdersPaidSince,
-  getPaidOrdersUpdatedSince,
+  getPaidOrdersUpdatedSince, listPaidOrderAddresses,
   getInvoicesForSummary,
 };
 

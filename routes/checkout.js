@@ -453,7 +453,8 @@ router.post('/api/purchase-seen', rateLimit({ windowMs: 60_000, max: 20 }), asyn
 router.get('/api/stock', rateLimit({ windowMs: 60_000, max: 60 }), async (req, res) => {
   const stock = require('../utils/stock');
   await stock.ensureFresh();
-  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, soldOut: stock.soldOutSlugs() || [] });
+  // packing: per Flavor, the bake date of the lot boxes are packed from now (or null), for "now shipping: baked {date}"
+  res.set('Cache-Control', 'public, max-age=30').json({ ok: true, soldOut: stock.soldOutSlugs() || [], packing: stock.packingDates() });
 });
 
 // Public, read-only: what everything costs right now. The cart and product pages show these; checkout always re-prices

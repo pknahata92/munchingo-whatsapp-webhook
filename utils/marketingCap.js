@@ -22,8 +22,16 @@ function slotFor({ phone, sends = [], nowMs, template, campaign = null }) {
   const failed = mine.filter(is131049);
   if (failed.some((s) => at(s) >= nowMs - COOL_OFF_MS)) return 'cooling_off';
   if (failed.filter((s) => s.template === template && camp(s.campaign) === c).length >= 2) return 'blocked_twice';
-  if (mine.filter((s) => s.status === 'sent' && at(s) >= nowMs - CAP_DAYS * 86_400_000).length >= CAP) return 'over_cap';
+  if (slotsLeft({ phone: p, sends: mine, nowMs }) === 0) return 'over_cap';
   return 'ok';
+}
+
+/** How many of the CAP marketing messages this person may still get in the 30-day window: `sent` rows, any template, never below 0.
+ *  The J7 batch alert leaves the last one to a J6 reminder that is due within the week (utils/broadcast.js). */
+function slotsLeft({ phone, sends = [], nowMs }) {
+  const p = digits(phone);
+  const used = sends.filter((s) => digits(s.phone) === p && s.status === 'sent' && at(s) >= nowMs - CAP_DAYS * 86_400_000).length;
+  return Math.max(0, CAP - used);
 }
 
 /** True from 21:00 to 08:59 IST. */
@@ -32,4 +40,4 @@ function isQuietHours(nowMs) {
   return h >= 21 || h < 9;
 }
 
-module.exports = { CAP, CAP_DAYS, COOL_OFF_MS, slotFor, isQuietHours };
+module.exports = { CAP, CAP_DAYS, COOL_OFF_MS, slotFor, slotsLeft, isQuietHours };
