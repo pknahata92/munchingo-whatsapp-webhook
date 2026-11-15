@@ -601,12 +601,15 @@ app.get('/internal/subscription-renewals', async (req, res) => {
       const orderId = generateRenewalOrderId();
       const timestamp = new Date().toISOString();
 
+      // One list for the saved order and the email: the shipping row only when it is charged.
+      const renewalItems = renewalShipping ? [...enrichedItems, require('./utils/shipping').shippingItem(renewalShipping)] : enrichedItems;
+
       await saveOrder({
         orderId,
         customerPhone: sub.customer_phone,
         customerName: sub.customer_name,
         customerEmail: sub.customer_email,
-        items: renewalShipping ? [...enrichedItems, require('./utils/shipping').shippingItem(renewalShipping)] : enrichedItems,
+        items: renewalItems,
         total: finalTotal,
         currency: 'INR',
         timestamp,
@@ -630,8 +633,9 @@ app.get('/internal/subscription-renewals', async (req, res) => {
           email: sub.customer_email,
           customerName: sub.customer_name,
           orderId,
-          items: enrichedItems,
+          items: renewalItems,
           discountPct: sub.discount_pct,
+          discountRupees: discountAmount,
           total: finalTotal,
           paymentUrl: paymentLinkUrl,
         });

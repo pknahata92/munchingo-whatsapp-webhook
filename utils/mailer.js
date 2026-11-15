@@ -302,13 +302,13 @@ async function sendOwnerPaidEmail({ order, invoice, pdf }) {
   console.log(`[MAILER] Owner payment alert sent for #${order.order_id}`);
 }
 
-async function sendSubscriptionRenewalEmail({ email, customerName, orderId, items, discountPct, total, paymentUrl }) {
+async function sendSubscriptionRenewalEmail({ email, customerName, orderId, items, discountPct, discountRupees, total, paymentUrl }) {
   const t = require('./emailTemplates');
   const { error } = await resend.emails.send({
     from: 'Munchingo Orders <orders@munchingo.com>',
     to: [email],
     subject: `Your next Munchingo box is ready (#${orderId})`,
-    html: t.subscriptionRenewalHtml({ customerName, orderId, items, discountPct, total, paymentUrl }),
+    html: t.subscriptionRenewalHtml({ customerName, orderId, items, discountPct, discountRupees, total, paymentUrl }),
   });
   if (error) throw new Error(error.message);
   console.log(`[MAILER] Subscription renewal email sent for #${orderId}`);
