@@ -1,0 +1,41 @@
+'use strict';
+// Reorder cart link (16 Nov 2026, growth journey J4 and J6): the path after https://munchingo.com/ that refills a buyer's bag in
+// one tap. Two of their favourite plus one Flavor they have never had, when one is in stock; otherwise their last order again.
+// Sold-out Flavors never appear, and with nothing to put in the bag the link opens the shop. No discount, no Sets: the site's
+// cart link (js/cart-link.js, add=<slug>:<qty>,<slug>, utm tags kept) takes single boxes only, so Sets are opened into Flavors.
+//   Tests: scripts/reorder-cart-test.js
+const { boxesBySlug } = require('./inventory');
+const { flavoursFor } = require('./reviews');
+
+const SLUGS = ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'];   // tie-break order, and the order in the link
+
+// A WhatsApp catalog line stores Meta's retailer id instead of the slug; flavoursFor knows the mapping.
+const withSlug = (it) => (it && !it.slug ? { ...it, slug: (flavoursFor({ items: [it] })[0] || {}).slug } : it);
+const boxesIn = (order) => boxesBySlug(((order && order.items) || []).map(withSlug));
+
+/**
+ * { orders (that phone's paid orders, newest first), inStock: Set of slugs, campaign, medium: 'journey' | 'broadcast' }
+ *   -> { path, trySlug, favSlug }
+ * favSlug: the in-stock Flavor with the most boxes in the newest order (a tie goes to the first in SLUGS), or null when nothing
+ * from that order is in stock (then "your usual" would not be true). trySlug: the first in-stock Flavor never bought, or null.
+ */
+function cartLink({ orders, inStock, campaign, medium }) {
+  const list = orders || [];
+  const has = (s) => !!inStock && inStock.has(s);
+  const utm = `utm_source=whatsapp&utm_medium=${medium}&utm_campaign=${campaign}`;
+  const shop = { path: `shop?${utm}`, trySlug: null, favSlug: null };
+  if (!list.length) return shop;
+  const last = boxesIn(list[0]);
+  const bought = new Set();
+  for (const o of list) for (const [slug, boxes] of Object.entries(boxesIn(o))) if (boxes > 0) bought.add(slug);
+  let favSlug = null;
+  for (const s of SLUGS) if (has(s) && last[s] > 0 && (!favSlug || last[s] > last[favSlug])) favSlug = s;
+  const trySlug = SLUGS.find((s) => has(s) && !bought.has(s)) || null;
+  const parts = trySlug
+    ? [favSlug && `${favSlug}:2`, trySlug].filter(Boolean)
+    : SLUGS.filter((s) => has(s) && last[s] > 0).map((s) => `${s}:${last[s]}`);
+  if (!parts.length) return shop;
+  return { path: `cart?add=${parts.join(',')}&${utm}`, trySlug, favSlug };
+}
+
+module.exports = { cartLink, SLUGS };
