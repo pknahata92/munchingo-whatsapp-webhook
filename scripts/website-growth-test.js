@@ -114,5 +114,41 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     w.close();
   }
 
+  // 4. search words (task B2): approved titles, descriptions, price-reason lines; H1s unchanged; no "100%"
+  {
+    const LINE = ' Turn any biscuit pack over and read the first three ingredients.';
+    const W = [
+      ['index.html', 'Munchingo Atta Biscuits: Desi Ghee, No Maida, No Palm Oil', 'Atta biscuits baked in pure desi ghee in Bikaner. Whole wheat flour, no maida, no palm oil. Four Flavors and two Sets, delivering in Delhi NCR.', null, 'Four atta cookies.nothingpretending.'],
+      ['shop.html', 'Desi Ghee Atta Biscuits: Shop All Four | Munchingo', 'Shop all four Munchingo atta biscuits, baked in pure desi ghee with whole wheat flour, no maida and no palm oil, plus the Trio and Full Range Sets.', null, 'The whole range.'],
+      ['atta-original.html', 'Munchingo Atta Original: Desi Ghee Atta Biscuits', 'Cardamom atta biscuits baked in pure desi ghee in Bikaner. Whole wheat flour, no maida, no palm oil. Gently sweet, made for chai.', 'What you pay for: pure desi ghee, whole wheat flour and cardamom. No maida, no palm oil.' + LINE, 'Atta Original'],
+      ['atta-kesari.html', 'Munchingo Atta Kesari: Kesar Atta Biscuits', 'Kesar atta biscuits with real saffron and cardamom, baked in pure desi ghee in Bikaner. Whole wheat flour, no maida, no palm oil.', 'What you pay for: pure desi ghee, whole wheat flour and real saffron. No maida, no palm oil.' + LINE, 'Atta Kesari'],
+      ['atta-ajwain.html', 'Munchingo Atta Ajwain: Ajwain Atta Biscuits', 'Ajwain atta biscuits, spiced and less sweet, baked in pure desi ghee in Bikaner. Whole wheat flour, no maida, no palm oil.', 'What you pay for: pure desi ghee, whole wheat flour and ajwain. No maida, no palm oil.' + LINE, 'Atta Ajwain'],
+      ['atta-lite-sugar.html', 'Munchingo Atta Sugar-Lite: No Added Sugar Biscuits', 'No added sugar atta biscuits, sweetened with maltitol. Pure desi ghee and whole wheat flour, no maida, no palm oil.', 'What you pay for: pure desi ghee and whole wheat flour, sweetened with maltitol. No maida, no palm oil.' + LINE, 'Atta Sugar-Lite'],
+      ['maida-free-cookies-guide.html', 'No Maida Biscuits: How to Read a Biscuit Label | Munchingo', 'How to spot maida, palm oil and added sugar on a biscuit label in India, and what goes into each Munchingo Flavor. A plain guide.', null, 'Maida-free cookies: how to read a biscuit label.'],
+    ];
+    for (const [file, title, desc, line, h1] of W) {
+      const html = fs.readFileSync(path.join(SITE, file), 'utf8');
+      const d = new JSDOM(html).window.document;
+      const meta = (sel) => { const e = d.querySelector(sel); return e && e.getAttribute('content'); };
+      ok(d.title === title, file + ' title is the approved text (got: ' + d.title + ')');
+      ok(title.length <= 60 && desc.length <= 155, file + ' title <= 60 and description <= 155 characters');
+      ok(meta('meta[name="description"]') === desc, file + ' description is the approved text');
+      ok(meta('meta[property="og:title"]') === title && meta('meta[name="twitter:title"]') === title, file + ' og:title and twitter:title match the title');
+      ok(meta('meta[property="og:description"]') === desc && meta('meta[name="twitter:description"]') === desc, file + ' og:description and twitter:description match the description');
+      if (/^atta-/.test(file)) ok(/Munchingo Atta \S+/.test(d.title) && /Biscuits/.test(d.title), file + ' title has "Munchingo Atta <Flavor>" and "Biscuits"');
+      if (file !== 'index.html') ok(norm(d.querySelector('h1').textContent) === h1, file + ' H1 unchanged (got: ' + norm(d.querySelector('h1').textContent) + ')');
+      else ok(norm(d.querySelector('h1').textContent).replace(/\s/g, '') === h1.replace(/\s/g, ''), 'index.html H1 unchanged');
+      if (line) {
+        const p = [...d.querySelectorAll('.v2-buy p')].find((e) => norm(e.textContent) === line);
+        ok(!!p, file + ' has the approved "What you pay for" line in the buy block');
+        const buy = d.querySelector('.v2-buy');
+        ok(p && buy.compareDocumentPosition(p) && p.compareDocumentPosition(d.getElementById('add')) & 4, file + ' the line sits before the add-to-bag button');
+      }
+      ok(!/100\s*%/.test(html), file + ' has no "100%"');
+    }
+    ok(/Desi Ghee Atta Biscuits/.test(new JSDOM(fs.readFileSync(path.join(SITE, 'shop.html'), 'utf8')).window.document.title), 'shop title has "Desi Ghee Atta Biscuits"');
+    ok(/No Maida Biscuits/.test(new JSDOM(fs.readFileSync(path.join(SITE, 'maida-free-cookies-guide.html'), 'utf8')).window.document.title), 'guide title has "No Maida Biscuits"');
+  }
+
   console.log(`website-growth-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
