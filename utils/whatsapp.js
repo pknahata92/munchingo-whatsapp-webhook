@@ -154,6 +154,27 @@ async function uploadMedia(buffer, mimeType, filename) {
   return res.data.id;
 }
 
+// ── Download an image a buyer sent (two Graph calls: GET /{media-id}, then GET its short-lived url, same token) ──
+// Capped and timed out so a stuck download never holds the buyer's reply. Throws on anything unusable. Never logs bytes.
+const MEDIA_MAX_BYTES = 5 * 1024 * 1024;
+const MEDIA_IMAGE_TYPES = /^image\/(jpeg|png|webp)$/i;
+async function downloadMedia(mediaId) {
+  const auth = { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` };
+  const meta = await axios.get(`${BASE_URL}/${encodeURIComponent(mediaId)}`, { headers: auth, timeout: 8000 });
+  const { url, mime_type: mimeType, file_size: size } = meta.data || {};
+  if (!url || !MEDIA_IMAGE_TYPES.test(String(mimeType || ''))) throw new Error('not a supported image');
+  if (Number(size) > MEDIA_MAX_BYTES) throw new Error('image too large');
+  const res = await axios.get(url, { headers: auth, responseType: 'arraybuffer', timeout: 15000, maxContentLength: MEDIA_MAX_BYTES, maxBodyLength: MEDIA_MAX_BYTES });
+  const buffer = Buffer.from(res.data);
+  if (buffer.length > MEDIA_MAX_BYTES) throw new Error('image too large');
+  return { buffer, mimeType: String(mimeType).toLowerCase() };
+}
+
+// ── Image message by an uploaded media id ────────────────────────────────────
+async function sendImageById(to, mediaId, caption) {
+  return sendMessage({ messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'image', image: { id: mediaId, caption } });
+}
+
 // ── Approved template with a PDF document header (the invoice) ───────────────
 async function sendDocumentTemplate(to, templateName, languageCode, { mediaId, filename }, bodyParams) {
   return sendMessage({
@@ -325,6 +346,8 @@ module.exports = { sendMarketingTemplate,
   sendTemplateWithHeader,
   sendTemplate,
   uploadMedia,
+  downloadMedia,
+  sendImageById,
   sendDocumentTemplate,
   sendFlow,
   sendText,

@@ -289,8 +289,26 @@ async function handleTap(phone, payloadId, name) {
   return true;
 }
 
+/** The complaint photo itself, to Prashant: a WhatsApp image (order id as caption) and an email attachment. Runs after the buyer's
+ *  reply. Any failure leaves today's "[sent a photo]" note, already sent. No owner-window check exists in the code, so the image
+ *  is sent anyway and a WhatsApp rejection is just a logged failure. Never logs bytes or the phone. */
+async function forwardPhoto(mediaId, orderId, phone) {
+  const { wa, mail, ownerPhone } = D();
+  let img;
+  try { img = await wa.downloadMedia(mediaId); } catch (e) { console.error(`[JOURNEY] complaint photo on ${orderId} not downloaded:`, e.message); return; }
+  if (!img || !img.buffer || !/^image\//.test(String(img.mimeType))) return;
+  const owner = ownerPhone();
+  if (owner) {
+    await send('owner photo', async () => {
+      const id = await wa.uploadMedia(img.buffer, img.mimeType, `complaint-${orderId}`);
+      await wa.sendImageById(owner, id, orderId);
+    });
+  }
+  await send('owner photo email', () => mail.sendComplaintPhoto({ customerPhone: digits(phone), orderId, buffer: img.buffer, mimeType: img.mimeType }));
+}
+
 /** The buyer's next message after Something wasn't right / Not quite (within 24 h). True when it was taken. Never throws. */
-async function captureReply(phone, name, type, text) {
+async function captureReply(phone, name, type, text, mediaId) {
   try {
     const { db, wa, mail, now } = D();
     if (type !== 'text' && !MEDIA[type]) return false;
@@ -324,6 +342,7 @@ async function captureReply(phone, name, type, text) {
       });
       if (reached) await send('C11', () => wa.sendText(phone, R.complaintThanks));
       else console.error(`[JOURNEY] complaint follow-up on ${orderId}: the owner email failed; no C11 sent, it is on the order timeline`);
+      if (type === 'image' && mediaId) await forwardPhoto(mediaId, orderId, phone);   // after the reply: never delays or breaks it
     } else {
       const line = `[check-in ${orderId}] ${media || t}`;
       await suggestions.recordFeedback(phone, name, null, line);   // never throws; saved as kind 'feedback' (ruling R12)

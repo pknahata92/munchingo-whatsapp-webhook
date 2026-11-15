@@ -84,5 +84,21 @@ const opts = { quickReplies: ['j7_remind'], urlIndex: 1, urlSuffix: 'shop?utm_so
   ok(/sendMarketingTemplate/.test(rd('reorders.js')) && !/sendTemplateWith/.test(rd('reorders.js')), 'reorders.js sends through sendMarketingTemplate');
   ok(!/sendMarketingTemplate/.test(rd('reviews.js')) && !/sendMarketingTemplate/.test(rd('journey.js')) && !/sendMarketingTemplate/.test(rd('refundTemplates.js')) && !/sendMarketingTemplate/.test(rd('ownerAlerts.js')), 'utility senders (J3 check-in, J4, refunds, owner alerts) do not use it');
 
+  // A5c: downloadMedia is two GETs (meta, then the url), same bearer; images only, 5 MB cap
+  {
+    const gets = []; let metaResp = { url: 'https://lookaside.example/x', mime_type: 'image/jpeg', file_size: 100 };
+    axios.get = async (url, cfg) => { gets.push({ url, cfg }); return url.includes('lookaside') ? { data: Buffer.from('IMG') } : { data: metaResp }; };
+    const r = await wa.downloadMedia('MID1');
+    ok(gets.length === 2 && gets[0].url.endsWith('/MID1') && gets[1].url === 'https://lookaside.example/x', 'downloadMedia: GET /{id} then GET the returned url');
+    ok(gets.every((g) => g.cfg.headers.Authorization === 'Bearer x' && g.cfg.timeout > 0), 'downloadMedia: bearer token and a timeout on both calls');
+    ok(r.buffer.toString() === 'IMG' && r.mimeType === 'image/jpeg', 'downloadMedia: returns { buffer, mimeType }');
+    metaResp = { url: 'https://lookaside.example/x', mime_type: 'video/mp4', file_size: 100 };
+    ok(await wa.downloadMedia('M').then(() => false, () => true), 'downloadMedia: rejects a non-image');
+    metaResp = { url: 'https://lookaside.example/x', mime_type: 'image/png', file_size: 6 * 1024 * 1024 };
+    ok(await wa.downloadMedia('M').then(() => false, () => true), 'downloadMedia: rejects over 5 MB');
+    reset(); await wa.sendImageById('91999', 'OUT1', 'MNG-1');
+    ok(calls[0].payload.type === 'image' && calls[0].payload.image.id === 'OUT1' && calls[0].payload.image.caption === 'MNG-1', 'sendImageById: image by id with caption');
+  }
+
   console.log(`whatsapp-transport-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

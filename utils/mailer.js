@@ -158,6 +158,15 @@ async function sendComplaintAlert({ customerPhone, customerName, orderId, messag
   if (error) throw new Error(error.message);
 }
 
+// The photo a buyer sent after Something wasn't right, attached for Prashant (sent after the text alert; the buyer never waits on it).
+async function sendComplaintPhoto({ customerPhone, orderId, buffer, mimeType }) {
+  const ext = String(mimeType).includes('png') ? 'png' : String(mimeType).includes('webp') ? 'webp' : 'jpg';
+  const title = `Photo from the buyer: ${orderId}`;
+  const html = `<div style="font-family:sans-serif;max-width:520px;"><p>The photo they sent after "Something wasn't right" on ${escapeHtml(orderId)} is attached.</p><p style="color:#999;font-size:13px;">Reply directly on WhatsApp: <a href="https://wa.me/${escapeHtml(customerPhone)}">+${escapeHtml(customerPhone)}</a></p></div>`;
+  const { error } = await resend.emails.send({ from: 'Munchingo Orders <orders@munchingo.com>', to: [process.env.NOTIFY_EMAIL], subject: title, html, attachments: [{ filename: `complaint-${String(orderId).replace(/[^A-Za-z0-9-]/g, '')}.${ext}`, content: buffer.toString('base64') }] });
+  if (error) throw new Error(error.message);
+}
+
 // The check-in "Not quite for me" answer: plain feedback. No suggestion promise (that line belongs to suggestions only).
 async function sendCheckinFeedbackAlert({ phone, name, orderId, text }) {
   const title = `Not quite for me: ${orderId}`;
@@ -533,4 +542,4 @@ async function sendBroadcastReplyAlert({ phone, name, template, text }) {
   console.log(`[MAILER] Broadcast reply alert sent for ${phone}`);
 }
 
-module.exports = { sendBroadcastReplyAlert, sendSuggestionAlert, sendComplaintAlert, sendCheckinFeedbackAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendDeliveryEmail, sendLotReleasedEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+module.exports = { sendBroadcastReplyAlert, sendSuggestionAlert, sendComplaintAlert, sendComplaintPhoto, sendCheckinFeedbackAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendDeliveryEmail, sendLotReleasedEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };

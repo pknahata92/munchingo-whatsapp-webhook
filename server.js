@@ -756,7 +756,7 @@ app.post('/webhook', async (req, res) => {
     {
       const replyText = type === 'text' ? message.text?.body : (message[type]?.caption || '');
       try {
-        if (await require('./utils/journey').captureReply(from, contactName, type, replyText)) return;
+        if (await require('./utils/journey').captureReply(from, contactName, type, replyText, message[type]?.id)) return;
       } catch (e) { console.error('[JOURNEY] check-in reply capture failed:', e.message); }
       try {
         if (await require('./utils/broadcastReplies').maybeForward({ from, name: contactName, type, text: replyText })) return;

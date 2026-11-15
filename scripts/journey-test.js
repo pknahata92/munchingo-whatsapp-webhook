@@ -60,7 +60,7 @@ let seq = 0;
 const wamid = () => ({ messages: [{ id: 'wamid.T' + (++seq) }] });
 function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
   let t = START;
-  const rows = {}, waits = {}, events = [], sent = [], mails = [], saved = [], calls = [], pending = {};
+  const media = {}, rows = {}, waits = {}, events = [], sent = [], mails = [], saved = [], calls = [], pending = {};
   if (contact) rows[ASHA] = { phone: ASHA, first_source: 'fair:2026-10-01', ...contact };
   const ords = orders || [{ order_id: OID, customer_phone: ASHA, customer_name: 'Asha Rao', status: 'paid', created_at: '2026-11-08T05:00:00Z', delivered_at: '2026-11-12T05:00:00Z', items: [{ slug: 'atta-original', name: 'Atta Original', quantity: 2 }], delivery_address: { raw: 'B-2, Model Town, Delhi, Delhi - 110009', pincode: '110009' } }];
   const log = (n) => calls.push(n);
@@ -83,16 +83,20 @@ function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
     sendText: async (to, text) => { const r = wamid(); sent.push({ to, kind: 'text', text, id: r.messages[0].id }); return r; },
     sendButtons: async (to, body, buttons, opts) => { const r = wamid(); sent.push({ to, kind: 'buttons', text: body, buttons, header: opts && opts.header, id: r.messages[0].id }); return r; },
     sendVideo: async (to, link, caption) => { const r = wamid(); sent.push({ to, kind: 'video', link, caption, id: r.messages[0].id }); return r; },
+    downloadMedia: async (id) => { calls.push('download:' + id); if (media.fail) throw new Error('graph down'); return media.result || { buffer: Buffer.from('JPEGBYTES'), mimeType: 'image/jpeg' }; },
+    uploadMedia: async (buf, mime, name) => { calls.push('upload'); if (media.failUpload) throw new Error('window closed'); return 'MEDIA-OUT-1'; },
+    sendImageById: async (to, id, caption) => { if (media.failSend) throw new Error('131047'); const r = wamid(); sent.push({ to, kind: 'imageById', mediaId: id, caption, id: r.messages[0].id }); return r; },
   };
   const mail = {
     sendComplaintAlert: async (x) => { mails.push({ kind: 'complaint', ...x }); },
+    sendComplaintPhoto: async (x) => { if (media.failMail) throw new Error('mail down'); mails.push({ kind: 'complaintPhoto', ...x }); },
     sendCheckinFeedbackAlert: async (x) => { mails.push({ kind: 'feedback', ...x }); },
   };
   const now = () => t;
   journey.setDeps({ db, wa, mail, now, ownerPhone: () => owner, inStock: async () => new Set(inStock || ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar']), lang: async () => lang });
   contacts.setDeps({ db, wa, now });
   suggestions.setDeps({ db, wa, mail, now });
-  return { rows, waits, events, sent, mails, saved, calls, ords, pending, db, wa, mail, tick: (ms) => { t += ms; }, toBuyer: () => sent.filter((s) => s.to === ASHA), toOwner: () => sent.filter((s) => s.to === OWNER) };
+  return { media, rows, waits, events, sent, mails, saved, calls, ords, pending, db, wa, mail, tick: (ms) => { t += ms; }, toBuyer: () => sent.filter((s) => s.to === ASHA), toOwner: () => sent.filter((s) => s.to === OWNER) };
 }
 const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')');
 
@@ -172,6 +176,55 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   ok(w.toBuyer().pop().text === S.c11, 'the buyer is thanked with exactly C11');
   ok(!w.waits[ASHA], 'the wait is cleared');
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'hi') === false, 'the message after that goes to the bot as usual');
+
+
+  // ── A5c: the photo itself reaches Prashant (WhatsApp image with the order id, and an email attachment) ──
+  {
+    const setup = async (o) => { const x = world(o); await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha'); return x; };
+    w = await setup();
+    const bn = w.toBuyer().length, mc = w.mails.length;
+    ok(await journey.captureReply(ASHA, 'Asha', 'image', 'crushed', 'MEDIA-IN-1') === true, 'A5c: a photo with a media id is captured');
+    ok(w.calls.includes('download:MEDIA-IN-1'), 'A5c: the image is downloaded by its id');
+    const img = w.toOwner().find((s) => s.kind === 'imageById');
+    ok(img && img.mediaId === 'MEDIA-OUT-1' && img.caption === OID, 'A5c: the photo is sent to OWNER_PHONE by media id with the order id as caption (' + show(img) + ')');
+    const em = w.mails.slice(mc).find((m) => m.kind === 'complaintPhoto');
+    ok(em && em.orderId === OID && Buffer.isBuffer(em.buffer) && em.mimeType === 'image/jpeg', 'A5c: the owner email carries the image attachment');
+    ok(w.toBuyer().slice(bn).length === 1 && w.toBuyer().pop().text === S.c11, 'A5c: the buyer reply is still exactly C11, once');
+    ok(w.mails.slice(mc).some((m) => m.kind === 'complaint' && String(m.message).includes('[sent a photo]')), 'A5c: today\'s text note still goes first');
+    ok(w.events.some((e) => e.event === 'journey_complaint_followup' && e.meta.media === 'image'), 'A5c: timeline record unchanged');
+    ok(!w.events.some((e) => JSON.stringify(e).includes('JPEGBYTES')), 'A5c: image bytes never stored on the timeline');
+
+    w = await setup(); w.media.fail = true;
+    ok(await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1') === true, 'A5c: failed download still captured');
+    ok(!w.toOwner().some((s) => s.kind === 'imageById') && !w.mails.some((m) => m.kind === 'complaintPhoto'), 'A5c: failed download sends no image or attachment');
+    ok(w.toOwner().some((s) => s.text && s.text.includes('[sent a photo]')) && w.mails.some((m) => m.kind === 'complaint' && String(m.message).includes('[sent a photo]')), 'A5c: failed download falls back to the text note (WhatsApp and email)');
+    ok(w.toBuyer().pop().text === S.c11, 'A5c: and the buyer still gets C11');
+
+    w = await setup(); w.media.failSend = true; w.media.failMail = true;
+    ok(await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1') === true && w.toBuyer().pop().text === S.c11, 'A5c: WhatsApp image and photo email both failing never break the reply');
+
+    w = await setup(); w.media.failSend = true;
+    await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1');
+    ok(w.mails.some((m) => m.kind === 'complaintPhoto'), 'A5c: email attachment goes even when the WhatsApp image is rejected');
+
+    w = await setup(); w.media.result = { buffer: Buffer.from('x'), mimeType: 'application/pdf' };
+    await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1');
+    ok(!w.toOwner().some((s) => s.kind === 'imageById') && !w.mails.some((m) => m.kind === 'complaintPhoto'), 'A5c: a non-image mime type is not forwarded');
+
+    for (const t of ['video', 'document', 'audio', 'sticker']) {
+      w = await setup();
+      await journey.captureReply(ASHA, 'Asha', t, '', 'M1');
+      ok(!w.calls.some((c) => c.startsWith('download')) && w.toOwner().some((s) => s.text && s.text.includes('[sent ')), 'A5c: ' + t + ' keeps today\'s text note, no download');
+    }
+    w = await setup(); w.mail.sendComplaintAlert = async () => { throw new Error('mail down'); };
+    await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1');
+    ok(w.toBuyer().length === 1, 'A5c: owner email down: still no C11 (unchanged rule)');
+    w = await setup({ owner: '' });
+    await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1');
+    ok(!w.sent.some((s) => s.kind === 'imageById') && w.mails.some((m) => m.kind === 'complaintPhoto'), 'A5c: no OWNER_PHONE: no WhatsApp image, email attachment still goes');
+    const srv2 = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    ok(/captureReply\(from, contactName, type, replyText, message\[type\]\?\.id\)/.test(srv2), 'A5c: server.js passes the media id to captureReply');
+  }
 
   // ── a complaint follow-up that reached nobody is never confirmed, and is still kept ──
   w = world({ owner: '' });
