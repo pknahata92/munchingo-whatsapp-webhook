@@ -346,7 +346,11 @@ async function captureReply(phone, name, type, text, mediaId) {
         emailMessage: media || t,
       });
       if (reached) await send('C11', () => wa.sendText(phone, R.complaintThanks));
-      else console.error(`[JOURNEY] complaint follow-up on ${orderId}: the owner email failed; no C11 sent, it is on the order timeline`);
+      else {   // never "It's with me now" when it reached nobody: the wait comes back as it was (same order, same 24 h) and they are asked to send it again
+        console.error(`[JOURNEY] complaint follow-up on ${orderId}: the owner email failed; no C11, the buyer is asked to try again, it is on the order timeline`);
+        try { await db.setSuggestionWait(phone, wait.asked_at, wait.kind, wait.order_id); } catch (e) { console.error('[JOURNEY] could not restore the complaint wait:', e.message); }
+        await send('try-again line', () => wa.sendText(phone, R.failed));
+      }
       if (type === 'image' && mediaId) await forwardPhoto(mediaId, orderId, phone);   // after the reply: never delays or breaks it
     } else {
       const line = `[check-in ${orderId}] ${media || t}`;

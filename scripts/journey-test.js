@@ -221,7 +221,7 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
     }
     w = await setup(); w.mail.sendComplaintAlert = async () => { throw new Error('mail down'); };
     await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1');
-    ok(w.toBuyer().length === 1, 'A5c: owner email down: still no C11 (unchanged rule)');
+    ok(w.toBuyer().length === 2 && w.toBuyer()[1].text === S.failed, 'A5c: owner email down: no C11, the try-again line instead (A8 fix 4): ' + show(w.toBuyer().map((x) => x.text)));
     w = await setup({ owner: '' });
     await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1');
     ok(!w.sent.some((s) => s.kind === 'imageById') && w.mails.some((m) => m.kind === 'complaintPhoto'), 'A5c: no OWNER_PHONE: no WhatsApp image, email attachment still goes');
@@ -235,14 +235,19 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   w.mail.sendComplaintAlert = async () => { throw new Error('mail down'); };
   const nb = w.toBuyer().length;
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'The box was crushed') === true, 'captured even when Prashant cannot be reached');
-  ok(w.toBuyer().length === nb, 'no C11: "It\'s with me now" is never sent when it reached nobody');
+  ok(w.toBuyer().length === nb + 1 && w.toBuyer().pop().text === S.failed, 'no C11: "It\'s with me now" is never sent when it reached nobody; the buyer gets exactly the try-again line (A8 fix 4)');
   ok(w.events.some((e) => e.event === 'journey_complaint_followup' && e.meta.text === 'The box was crushed'), 'the text is on the order timeline');
+  ok(w.waits[ASHA] && w.waits[ASHA].kind === 'complaint' && w.waits[ASHA].order_id === OID && w.waits[ASHA].asked_at === new Date(START).toISOString(), 'the wait is restored as it was (same order, same 24 h from the tap): ' + show(w.waits[ASHA]));
+  w.mail.sendComplaintAlert = async (x) => { w.mails.push({ kind: 'complaint', ...x }); };   // email is back: the buyer tries again
+  ok(await journey.captureReply(ASHA, 'Asha', 'text', 'The box was crushed') === true && w.toBuyer().pop().text === S.c11, 'their retry is captured and now gets C11');
+  ok(w.mails.some((m) => m.kind === 'complaint' && m.message === 'The box was crushed') && !w.waits[ASHA], 'Prashant has the email and the wait is cleared');
   w = world();
   await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
   w.mail.sendComplaintAlert = async () => { throw new Error('mail down'); };
   const nb2 = w.toBuyer().length, ow2 = w.toOwner().length;
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'Lid was open') === true && w.toOwner().length === ow2 + 1, 'email down: the WhatsApp alert to Prashant still goes (R22)');
-  ok(w.toBuyer().length === nb2, 'but WhatsApp alone does not count as reached: no C11 (Meta can accept and then drop it)');
+  ok(w.toBuyer().length === nb2 + 1 && w.toBuyer().pop().text === S.failed, 'but WhatsApp alone does not count as reached: no C11 (Meta can accept and then drop it), the try-again line instead');
+  ok(w.waits[ASHA] && w.waits[ASHA].kind === 'complaint' && w.waits[ASHA].order_id === OID, 'and the wait is restored for the retry');
   ok(w.events.some((e) => e.event === 'journey_complaint_followup' && e.meta.text === 'Lid was open'), 'and the follow-up is on the order timeline');
   w = world();
   await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
