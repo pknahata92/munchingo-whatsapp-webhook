@@ -17,14 +17,14 @@ const WA = 'https://wa.me/919988992024';
 class Local extends ResourceLoader {
   fetch(url) {
     const u = new URL(url);
-    if (u.hostname !== 'localhost') return Promise.resolve(Buffer.from(''));
+    if (!['localhost', 'www.munchingo.com', 'abc123.munchingo-website.pages.dev'].includes(u.hostname)) return Promise.resolve(Buffer.from(''));
     const f = path.join(SITE, decodeURIComponent(u.pathname));
     return Promise.resolve(fs.existsSync(f) ? fs.readFileSync(f) : Buffer.from(''));
   }
 }
 const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
 const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, file), 'utf8'), {
-  url: 'http://localhost/' + (url || file), runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
+  url: /^https?:/.test(url || '') ? url : 'http://localhost/' + (url || file), runScripts: 'dangerously', resources: new Local(), pretendToBeVisual: true,
   beforeParse(w) {
     w.scrollTo = () => {}; w.matchMedia = w.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
     // every call is stubbed: only what the handler answers comes back, everything else is a 404
@@ -233,13 +233,16 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
   // 6. task B4: product pages show "Now shipping: baked <D> <Month>" from /api/stock packing. Stubbed fetch only.
   {
     const stock = (extra) => (U) => /\/api\/stock/.test(U) ? json(Object.assign({ ok: true, soldOut: [] }, extra)) : null;
-    const probe = async (file, handler) => {
-      const errors = [];
-      const dom = page(file, file, handler);
+    const LIVE = 'https://www.munchingo.com/';   // cart.js only talks to /api/stock on the real domain
+    let stockCalls = 0;
+    const probe = async (file, handler, host) => {
+      const errors = []; stockCalls = 0;
+      const counted = handler && ((U, o) => { if (/\/api\/stock/.test(U)) stockCalls++; return handler(U, o); });
+      const dom = page(file, (host || LIVE) + file, counted);
       dom.window.addEventListener('error', (e) => errors.push(e.message));
       const d = dom.window.document; await wait(900);
       const el = d.querySelector('.pdp-baked');
-      const r = { dom, el, visible: !!el && !el.hidden, text: el ? norm(el.textContent) : null, errors, d };
+      const r = { dom, el, calls: () => stockCalls, visible: !!el && !el.hidden, text: el ? norm(el.textContent) : null, errors, d };
       return r;
     };
     // exists on all four pages, hidden by default, after Add to bag, before the minimum-order strip, never inside the price row
@@ -290,6 +293,19 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
       ok(!r.visible && r.text === '', 'baked line stays hidden and empty: ' + name);
       ok(r.errors.length === 0, 'no script error: ' + name + ' (got: ' + r.errors.join('|') + ')');
       r.dom.window.close();
+    }
+    // one request per page on the real domain (cart.js's), none on localhost or a preview, and pdp.js itself never fetches
+    {
+      let r = await probe('atta-kesari.html', stock({ packing: { 'atta-kesari': '2026-11-20' } }));
+      ok(r.calls() === 1, 'on munchingo.com exactly one /api/stock request is made (got ' + r.calls() + ')');
+      ok(typeof r.dom.window.MunchingoCart.packingFor === 'function' && r.dom.window.MunchingoCart.packingFor('atta-kesari') === '2026-11-20' && r.dom.window.MunchingoCart.packingFor('atta-original') === null, 'MunchingoCart.packingFor returns the bake date or null');
+      r.dom.window.close();
+      for (const h of ['http://localhost/', 'https://abc123.munchingo-website.pages.dev/']) {
+        r = await probe('atta-kesari.html', stock({ packing: { 'atta-kesari': '2026-11-20' } }), h);
+        ok(r.calls() === 0, h + ': no /api/stock request is made (got ' + r.calls() + ')');
+        ok(!r.visible && r.text === '', h + ': the baked line stays hidden');
+        r.dom.window.close();
+      }
     }
     // a sold-out Flavor does not advertise a ship date
     {

@@ -126,7 +126,7 @@ ok(read('js/stall.js').includes("': which Flavors?'"), 'stall: which Flavors?');
 ok(!/\.was-price|\.promo-note|Pre-Diwali gift set offer note/.test(read('css/style.css')), 'style.css: no .was-price / .promo-note / Pre-Diwali offer comment');
 // B3: prices.js on the six pages that load the bag but did not re-price it, before cart.js
 for (const f of ['about.html', 'contact.html', 'terms.html', 'privacy-policy.html', 'our-story.html', 'maida-free-cookies-guide.html']) {
-  const s = read(f), pi = s.indexOf('<script src="js/prices.js?v=9" data-no-reload></script>'), ci = s.indexOf('<script src="js/cart.js?v=43"');
+  const s = read(f), pi = s.indexOf('<script src="js/prices.js?v=9" data-no-reload></script>'), ci = s.indexOf('<script src="js/cart.js?v=44"');
   ok(pi > 0 && ci > pi, f + ': prices.js v9 loads before cart.js');
 }
 // cache numbers: every page on one number per file
