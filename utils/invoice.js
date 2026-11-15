@@ -214,7 +214,23 @@ function buildInvoice(order, { invoiceNo, issuedAt }) {
 
 // ── PDF ───────────────────────────────────────────────────────────────────────
 const C = { ink: '#2A1A12', ink2: '#5B4537', terra: '#A35A34', line: '#E4D6BE', band: '#F6EEDD', cream: '#FAF6EB' };
-const rs = (p) => 'Rs. ' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const INVOICE_ASSETS = path.join(__dirname, '..', 'assets', 'invoice');
+// '₹' + the amount in Indian digit grouping (was 'Rs. 1,076.00', now '₹1,076.00').
+const money = (p) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Line thumbnails, matched by slug as in the customer emails: a flavour shows its pack, a Trio or Full Range Set the Set photo.
+// The shipping line, an item without a slug or an old WhatsApp-catalogue retailer id get none.
+const THUMBS = { 'atta-original': 'original.jpg', 'atta-kesari': 'kesari.jpg', 'atta-ajwain': 'ajwain.jpg', 'atta-lite-sugar': 'lite.jpg' };
+function invoiceThumb(item) {
+  const slug = item && item.slug;
+  if (!slug || require('./shipping').isShippingItem(item)) return null;
+  const file = THUMBS[slug] || (require('./catalog').boxesForSlug(slug) > 1 ? 'set.jpg' : null);
+  return file ? path.join(INVOICE_ASSETS, file) : null;
+}
+const THUMB = 24, THUMB_SHIFT = 30;   // the picture sits left of the item name; the name moves right by THUMB_SHIFT
+const STRIP_RATIO = 200 / 1200;       // assets/invoice/strip.jpg is 1200x200
+const FOOTER_TEXT = (inv) => 'Prices include GST. This is a computer-generated invoice and does not require a signature. Questions about this order? Write to ' + inv.seller.email + ' or WhatsApp ' + inv.seller.phone + '.';
+const PROMO_TEXT = (inv) => 'Loved it? A Munchingo Trio or Full Range Set makes the best "just because". Visit ' + inv.seller.site + '/build-a-box';
 
 function renderInvoicePdf(inv) {
   return new Promise((resolve, reject) => {
@@ -227,6 +243,37 @@ function renderInvoicePdf(inv) {
     const L = 40, R = 555, W = R - L;
     let display = 'Helvetica-Bold';
     try { doc.registerFont('Display', path.join(__dirname, '..', 'assets', 'Monthoers.otf')); display = 'Display'; } catch (_) { /* fall back to Helvetica-Bold */ }
+    // Helvetica has no ₹ glyph: only the sign is drawn in Poppins-Bold (open licence). The sign is set on the digits' baseline using
+    // each font's ascender, read once here from pdfkit's private doc._font. If the font file is missing or a pdfkit update hides
+    // those metrics, every amount falls back to "Rs.": the invoice always renders.
+    let rupee = false;
+    const ascender = {};
+    try {
+      doc.registerFont('Rupee', path.join(INVOICE_ASSETS, 'Poppins-Bold.ttf'));
+      for (const f of ['Helvetica', 'Helvetica-Bold', 'Rupee']) {
+        doc.font(f);
+        const a = doc._font && doc._font.ascender;
+        if (!Number.isFinite(a)) throw new Error('font metrics unavailable');
+        ascender[f] = a;
+      }
+      rupee = true;
+    } catch (_) { /* "Rs." */ }
+    doc.font('Helvetica');
+
+    // An amount right-aligned in [x, x + w]: the digits in the given Helvetica face end exactly where they did before,
+    // the ₹ sits flush to their left on the same baseline, and an optional prefix ('- ' for a discount) to the left of that.
+    const amount = (p, x, y, w, face, size, prefix = '') => {
+      const digits = money(p).slice(1);
+      doc.font(face).fontSize(size);
+      if (!rupee) { doc.text(prefix + 'Rs. ' + digits, x, y, { width: w, align: 'right' }); return; }
+      doc.text(digits, x, y, { width: w, align: 'right' });
+      const digitsW = doc.widthOfString(digits);
+      doc.font('Rupee').fontSize(size);
+      const signX = x + w - digitsW - doc.widthOfString('₹');
+      doc.text('₹', signX, y + (((ascender[face] || ascender.Helvetica) - ascender.Rupee) / 1000) * size, { lineBreak: false });
+      doc.font(face).fontSize(size);
+      if (prefix) doc.text(prefix, signX - doc.widthOfString(prefix), y, { lineBreak: false });
+    };
 
     // Header band: navy with the real Munchingo logo (gold ringed mark with the TM sign)
     doc.rect(0, 0, 595, 104).fill('#0B2D50');
@@ -274,50 +321,94 @@ function renderInvoicePdf(inv) {
     doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(8.5);
     cols.forEach((c) => doc.text(c.k, c.x + (c.a === 'left' ? 4 : 0), y + 6, { width: c.w - 4, align: c.a }));
     y += 20;
-    doc.font('Helvetica').fontSize(9);
+    const thumbX = cols[1].x + 4, nameX = thumbX + THUMB_SHIFT, nameW = cols[1].w - 4 - THUMB_SHIFT;
     inv.items.forEach((it, i) => {
       const label = it.unit ? `${it.name} (${it.unit})` : it.name;
-      const row = [String(i + 1), label, inv.hsn, String(it.qty), rs(it.taxablePaise), rs(it.taxPaise), rs(it.netPaise)];
-      cols.forEach((c, ci) => doc.fillColor(C.ink).text(row[ci], c.x + (c.a === 'left' ? 4 : 0), y + 7, { width: c.w - 4, align: c.a }));
-      if (it.contents) doc.fillColor(C.ink2).font('Helvetica-Oblique').fontSize(7.5).text('Contains: ' + it.contents, cols[1].x + 4, y + 19, { width: cols[1].w - 4 }).font('Helvetica').fontSize(9);
-      y += it.contents ? 34 : 26;
+      // The name column is 30 pt narrower than before: a long name or "Contains" line wraps and the row grows to hold it.
+      doc.font('Helvetica').fontSize(9);
+      const nameExtra = Math.max(0, doc.heightOfString(label, { width: nameW }) - doc.heightOfString('X', { width: nameW }));
+      const contentsY = y + 19 + nameExtra;
+      let rowH = 26 + nameExtra;
+      // "Contains" wraps between Flavors, never inside one: the Full Range line no longer fits on one line and "Sugar-Lite" must stay whole.
+      let contains = '';
+      if (it.contents) {
+        doc.font('Helvetica-Oblique').fontSize(7.5);
+        const lines = [];
+        it.contents.split(' + ').forEach((f, k) => {
+          const next = k ? lines[lines.length - 1] + ' + ' + f : 'Contains: ' + f;
+          if (!k || doc.widthOfString(next + ' +') <= nameW) lines[Math.max(0, lines.length - 1)] = next;   // room for a trailing ' +'
+          else { lines[lines.length - 1] += ' +'; lines.push(f); }
+        });
+        contains = lines.join('\n');
+        rowH = Math.max(34 + nameExtra, contentsY - y + doc.heightOfString(contains, { width: nameW }) + 6);
+      }
+      doc.font('Helvetica').fontSize(9).fillColor(C.ink);
+      [String(i + 1), null, inv.hsn, String(it.qty)].forEach((v, ci) => { if (v !== null) doc.text(v, cols[ci].x + (cols[ci].a === 'left' ? 4 : 0), y + 7, { width: cols[ci].w - 4, align: cols[ci].a }); });
+      doc.text(label, nameX, y + 7, { width: nameW });
+      [it.taxablePaise, it.taxPaise, it.netPaise].forEach((p, k) => amount(p, cols[4 + k].x, y + 7, cols[4 + k].w - 4, 'Helvetica', 9));
+      if (contains) doc.fillColor(C.ink2).font('Helvetica-Oblique').fontSize(7.5).text(contains, nameX, contentsY, { width: nameW }).font('Helvetica').fontSize(9);
+      const thumb = invoiceThumb(it);
+      if (thumb) {
+        const ty = y + (rowH - THUMB) / 2;
+        doc.save();
+        try { doc.roundedRect(thumbX, ty, THUMB, THUMB, 3).clip(); doc.image(thumb, thumbX, ty, { width: THUMB, height: THUMB }); } catch (_) { /* a missing picture never stops an invoice */ } finally { doc.restore(); }
+      }
+      y += rowH;
       doc.moveTo(L, y).lineTo(R, y).strokeColor(C.line).lineWidth(0.6).stroke();
     });
 
     // Totals
     y += 12;
     const lab = 330, val = R;
-    const line = (label, v, bold) => {
-      doc.fillColor(bold ? C.ink : C.ink2).font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 11 : 9)
-        .text(label, lab, y, { width: 130 }).text(v, lab + 130, y, { width: val - lab - 130, align: 'right' });
+    // v: paise (drawn with the ₹ sign) or plain text.
+    const line = (label, v, bold, prefix) => {
+      const face = bold ? 'Helvetica-Bold' : 'Helvetica', size = bold ? 11 : 9;
+      doc.fillColor(bold ? C.ink : C.ink2).font(face).fontSize(size).text(label, lab, y, { width: 130 });
+      if (typeof v === 'number') amount(v, lab + 130, y, val - lab - 130, face, size, prefix);
+      else doc.text(v, lab + 130, y, { width: val - lab - 130, align: 'right' });
       y += bold ? 20 : 15;
     };
-    line('Items total (incl. GST)', rs(inv.grossPaise));
-    if (inv.discountPaise) line(`Discount${inv.couponCode ? ' (' + inv.couponCode + ')' : ''}`, '- ' + rs(inv.discountPaise));
-    line('Taxable value', rs(inv.taxablePaise));
+    line('Items total (incl. GST)', inv.grossPaise);
+    if (inv.discountPaise) line(`Discount${inv.couponCode ? ' (' + inv.couponCode + ')' : ''}`, inv.discountPaise, false, '- ');
+    line('Taxable value', inv.taxablePaise);
     if (inv.supplyType === 'intra') {
-      line(`CGST @ ${inv.gstRate / 2}%`, rs(inv.cgstPaise));
-      line(`SGST @ ${inv.gstRate / 2}%`, rs(inv.sgstPaise));
+      line(`CGST @ ${inv.gstRate / 2}%`, inv.cgstPaise);
+      line(`SGST @ ${inv.gstRate / 2}%`, inv.sgstPaise);
     } else {
-      line(`IGST @ ${inv.gstRate}%`, rs(inv.igstPaise));
+      line(`IGST @ ${inv.gstRate}%`, inv.igstPaise);
     }
-    line('Shipping', 'Free');
+    // No Shipping line in the totals (Prashant, 16 Nov 2026: "The shipping should be mentioned only if it's charged. It should
+    // directly come from checkout."). A charged fee is the "Shipping charges" row checkout saved on the order, shown in the items
+    // table and already inside the items total and the tax above; an order without that row says nothing about shipping.
     doc.moveTo(lab, y).lineTo(R, y).strokeColor(C.terra).lineWidth(1).stroke(); y += 6;
-    line('Total paid', rs(inv.totalPaise), true);
+    line('Total paid', inv.totalPaise, true);
 
     doc.fillColor(C.ink2).font('Helvetica-Oblique').fontSize(8.5).text(inv.amountInWords, L, y - 18, { width: 270 });
+    const totalsEnd = Math.max(y, doc.y);   // the amount in words may wrap below the Total paid line
+
+    // Photo strip between the totals and the payment box, only when everything below it still fits on page 1.
+    const footerH = 62 + doc.font('Helvetica').fontSize(8).heightOfString(FOOTER_TEXT(inv), { width: W })
+      + 10 + doc.font('Helvetica-Bold').fontSize(9).heightOfString(PROMO_TEXT(inv), { width: W });
+    const stripH = W * STRIP_RATIO;
+    const stripTop = Math.max(totalsEnd + 12, 560 - 14 - stripH);
+    const stripFits = stripTop + stripH + 14 + footerH <= doc.page.height - doc.page.margins.bottom;
+    let drewStrip = false;
+    if (stripFits) {
+      doc.save();
+      try { doc.roundedRect(L, stripTop, W, stripH, 6).clip(); doc.image(path.join(INVOICE_ASSETS, 'strip.jpg'), L, stripTop, { width: W, height: stripH }); drewStrip = true; } catch (_) { /* no strip */ } finally { doc.restore(); }
+    }
 
     // Payment + footer
-    y = Math.max(y + 18, 560);
+    y = drewStrip ? stripTop + stripH + 14 : Math.max(y + 18, 560);
     doc.roundedRect(L, y, W, 44, 6).fill(C.cream);
     doc.fillColor(C.ink).font('Helvetica-Bold').fontSize(9).text('Payment received', L + 12, y + 9);
     doc.font('Helvetica').fillColor(C.ink2).fontSize(8.5)
       .text(`Paid online via Razorpay${inv.paymentId ? '  |  Payment ID: ' + inv.paymentId : ''}`, L + 12, y + 23, { width: W - 24 });
     y += 62;
     doc.fillColor(C.ink2).font('Helvetica').fontSize(8)
-      .text('Prices include GST. This is a computer-generated invoice and does not require a signature. Questions about this order? Write to ' + inv.seller.email + ' or WhatsApp ' + inv.seller.phone + '.', L, y, { width: W });
+      .text(FOOTER_TEXT(inv), L, y, { width: W });
     doc.fillColor(C.terra).font('Helvetica-Bold').fontSize(9)
-      .text('Loved it? A Munchingo Trio or Full Range Set makes the best "just because". Visit ' + inv.seller.site + '/build-a-box', L, doc.y + 10, { width: W });
+      .text(PROMO_TEXT(inv), L, doc.y + 10, { width: W });
     doc.end();
   });
 }
@@ -339,4 +430,4 @@ async function issueInvoice(order) {
   return { invoice, pdf: await renderInvoicePdf(invoice), created: true, row };
 }
 
-module.exports = { SELLER, buildInvoice, renderInvoicePdf, issueInvoice, parseAddress, normaliseState, financialYear, amountInWords };
+module.exports = { SELLER, buildInvoice, renderInvoicePdf, issueInvoice, parseAddress, normaliseState, financialYear, amountInWords, money, invoiceThumb };
