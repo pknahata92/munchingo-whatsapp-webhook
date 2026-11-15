@@ -271,6 +271,33 @@ const inv = (order, no = 'MUN/26-27/0001') => buildInvoice(order, { invoiceNo: n
   const L10 = await layout(tenLines, '10-line order');
   ok(L10.strips === 0, '10-line order: no room, so the strip is skipped');
 
+  // 6. The ₹ baseline uses pdfkit's private doc._font.ascender. If a pdfkit update hides or renames it, the invoice must still
+  // render in full (falling back to "Rs."), never reject. Simulated faithfully: pdfkit itself keeps its font, but any read of
+  // doc._font made directly from utils/invoice.js sees undefined.
+  const PDFDocument = require('pdfkit');
+  Object.defineProperty(PDFDocument.prototype, '_font', {
+    configurable: true,
+    get() { const caller = (new Error().stack.split('\n')[2] || ''); return caller.includes(path.join('utils', 'invoice.js')) ? undefined : this.__testFont; },
+    set(v) { this.__testFont = v; },
+  });
+  let hidden = null, hiddenErr = null;
+  try { hidden = await renderInvoicePdf(sInv); } catch (e) { hiddenErr = e; } finally { delete PDFDocument.prototype._font; }
+  ok(!hiddenErr && Buffer.isBuffer(hidden), `_font unavailable: the invoice still renders (got: ${hiddenErr ? hiddenErr.message : 'a PDF'})`);
+  if (hidden) {
+    const hPdf = await readPdf(hidden);
+    const hLines = linesOf(hPdf.pages[0], 320), hText = textOf(hPdf);
+    ok(hPdf.numPages === 1, '_font unavailable: one page');
+    for (const l of ['Items total (incl. GST) Rs. 1,076.00', 'Discount (FOUNDING10) - Rs. 100.00', 'Taxable value Rs. 929.53', 'IGST @ 5% Rs. 46.47', 'Total paid Rs. 976.00']) {
+      ok(hLines.includes(l), `_font unavailable: totals fall back to "${l}"`);
+    }
+    for (const legal of ['GSTIN: 06AIIPN5005C2ZP', 'FSSAI Lic. No.: 10826003000333', 'Rupees Nine Hundred Seventy Six Only', 'Paid online via Razorpay | Payment ID: pay_QxAmPlE12345', 'Rs. 447.49']) {
+      ok(hText.includes(legal), `_font unavailable: still prints ${legal}`);
+    }
+    ok(!hText.includes('₹') && !hText.includes('NaN'), '_font unavailable: no stray ₹ and no NaN');
+  }
+  const again = textOf(await readPdf(await renderInvoicePdf(sInv)));
+  ok(again.includes('₹929.53') && !again.includes('Rs.'), 'after the stub is removed, the ₹ is back');
+
   console.log(`${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

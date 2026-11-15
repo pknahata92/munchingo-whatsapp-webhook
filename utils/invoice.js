@@ -243,9 +243,21 @@ function renderInvoicePdf(inv) {
     const L = 40, R = 555, W = R - L;
     let display = 'Helvetica-Bold';
     try { doc.registerFont('Display', path.join(__dirname, '..', 'assets', 'Monthoers.otf')); display = 'Display'; } catch (_) { /* fall back to Helvetica-Bold */ }
-    // Helvetica has no ₹ glyph: only the sign is drawn in Poppins-Bold (open licence). Without the file the invoice falls back to "Rs.".
+    // Helvetica has no ₹ glyph: only the sign is drawn in Poppins-Bold (open licence). The sign is set on the digits' baseline using
+    // each font's ascender, read once here from pdfkit's private doc._font. If the font file is missing or a pdfkit update hides
+    // those metrics, every amount falls back to "Rs.": the invoice always renders.
     let rupee = false;
-    try { doc.registerFont('Rupee', path.join(INVOICE_ASSETS, 'Poppins-Bold.ttf')); doc.font('Rupee'); rupee = true; } catch (_) { /* "Rs." */ }
+    const ascender = {};
+    try {
+      doc.registerFont('Rupee', path.join(INVOICE_ASSETS, 'Poppins-Bold.ttf'));
+      for (const f of ['Helvetica', 'Helvetica-Bold', 'Rupee']) {
+        doc.font(f);
+        const a = doc._font && doc._font.ascender;
+        if (!Number.isFinite(a)) throw new Error('font metrics unavailable');
+        ascender[f] = a;
+      }
+      rupee = true;
+    } catch (_) { /* "Rs." */ }
     doc.font('Helvetica');
 
     // An amount right-aligned in [x, x + w]: the digits in the given Helvetica face end exactly where they did before,
@@ -255,10 +267,10 @@ function renderInvoicePdf(inv) {
       doc.font(face).fontSize(size);
       if (!rupee) { doc.text(prefix + 'Rs. ' + digits, x, y, { width: w, align: 'right' }); return; }
       doc.text(digits, x, y, { width: w, align: 'right' });
-      const digitsW = doc.widthOfString(digits), ascender = doc._font.ascender;
+      const digitsW = doc.widthOfString(digits);
       doc.font('Rupee').fontSize(size);
       const signX = x + w - digitsW - doc.widthOfString('₹');
-      doc.text('₹', signX, y + ((ascender - doc._font.ascender) / 1000) * size, { lineBreak: false });
+      doc.text('₹', signX, y + (((ascender[face] || ascender.Helvetica) - ascender.Rupee) / 1000) * size, { lineBreak: false });
       doc.font(face).fontSize(size);
       if (prefix) doc.text(prefix, signX - doc.widthOfString(prefix), y, { lineBreak: false });
     };
