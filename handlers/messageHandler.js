@@ -579,15 +579,15 @@ async function handleOrderMessage(to, order, contactName) {
     return { ...item, productName: product ? product.name : item.product_retailer_id };
   });
 
-  const lines = enrichedItems
-    .map((item) => `• ${item.productName} × ${item.quantity} — ₹${item.item_price * item.quantity}`)
-    .concat(shippingFee ? [`• Shipping — ₹${shippingFee} (free from ₹${FREE_FROM})`] : [])
-    .join('\n');
-
   const goodsTotal = items.reduce((sum, i) => sum + i.item_price * i.quantity, 0);
   // Same rule as the website: Rs 49 shipping under Rs 777 of boxes, kept as its own line on the order (utils/shipping.js).
   const shippingFee = shippingFor(goodsTotal);
   const total = goodsTotal + shippingFee;
+
+  const lines = enrichedItems
+    .map((item) => `• ${item.productName} × ${item.quantity} — ₹${item.item_price * item.quantity}`)
+    .concat(shippingFee ? [`• Shipping — ₹${shippingFee} (free from ₹${FREE_FROM})`] : [])
+    .join('\n');
 
   const totalBoxes = items.reduce((n, i) => n + i.quantity, 0); // every catalog item is one box
   if (totalBoxes < MIN_BOXES) {
