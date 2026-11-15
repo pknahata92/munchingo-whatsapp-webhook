@@ -41,7 +41,7 @@ const page = (file, extra) => new JSDOM(fs.readFileSync(path.join(SITE, file), '
   const inp = d.querySelector('.pc-in'), msg = d.querySelector('.pc-msg');
   ok(inp && msg, 'the product page has the Check delivery box');
   inp.value = '400001'; inp.dispatchEvent(new w.Event('input', { bubbles: true })); await wait(400);
-  ok(msg.textContent.trim() === MSG && /bad/.test(msg.className), 'product page: a Mumbai pincode shows only "' + MSG + '" (got: ' + msg.textContent.trim() + ')');
+  ok(msg.textContent.trim() === MSG + ' Tell me when you deliver to 400001' && /bad/.test(msg.className), 'product page: a Mumbai pincode shows "' + MSG + '" and the notify link (got: ' + msg.textContent.trim() + ')');
   inp.value = '110017'; inp.dispatchEvent(new w.Event('input', { bubbles: true })); await wait(400);
   ok(/Delivery available/.test(msg.textContent), 'product page: a Delhi pincode shows delivery available');
   w.close();
@@ -53,7 +53,7 @@ const page = (file, extra) => new JSDOM(fs.readFileSync(path.join(SITE, file), '
   const set = (id, v) => { const e = d.getElementById(id); e.value = v; e.dispatchEvent(new w.Event('input', { bubbles: true })); e.dispatchEvent(new w.Event('change', { bubbles: true })); };
   set('ck-name', 'Test Buyer'); set('ck-phone', '9999900001'); set('ck-addr-line1', '12 Marine Drive test street'); set('ck-addr-city', 'Mumbai'); set('ck-addr-state', 'Maharashtra'); set('ck-email', 't@example.com');
   set('ck-addr-pincode', '400001'); await wait(800);
-  ok((d.getElementById('ck-pin-status').textContent || '').trim() === MSG, 'checkout: the pincode line shows the NCR message (got: ' + (d.getElementById('ck-pin-status').textContent || '').trim() + ')');
+  ok((d.getElementById('ck-pin-status').textContent || '').trim() === MSG + ' Tell me when you deliver to 400001', 'checkout: the pincode line shows the NCR message and the notify link (got: ' + (d.getElementById('ck-pin-status').textContent || '').trim() + ')');
   d.getElementById('ck-submit').form.requestSubmit(); await wait(800);
   ok(sent.length === 0 && (d.getElementById('checkout-error').textContent || '').trim() === MSG, 'checkout: Pay is refused with the same words and nothing is sent');
   w.close();
@@ -62,8 +62,8 @@ const page = (file, extra) => new JSDOM(fs.readFileSync(path.join(SITE, file), '
   const pages = fs.readdirSync(SITE).filter((f) => f.endsWith('.html'));
   const promising = pages.filter((f) => /across India|all over India|pan[- ]India|nationwide/i.test(fs.readFileSync(path.join(SITE, f), 'utf8')));
   ok(promising.length === 0, 'no page says we deliver across India (found in: ' + promising.join(', ') + ')');
-  const stale = pages.filter((f) => /js\/pincode\.js\?v=2/.test(fs.readFileSync(path.join(SITE, f), 'utf8')));
-  ok(stale.length === 0, 'every page loads the new pincode.js (v=3), so phones do not keep the old copy');
+  const stale = pages.filter((f) => /js\/pincode\.js\?v=[23]/.test(fs.readFileSync(path.join(SITE, f), 'utf8')));
+  ok(stale.length === 0, 'every page loads the new pincode.js (v=4), so phones do not keep the old copy');
 
   console.log(`website-ncr-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();
