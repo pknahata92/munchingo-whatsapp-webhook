@@ -29,6 +29,7 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
     w.scrollTo = () => {}; w.matchMedia = w.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
     // every call is stubbed: only what the handler answers comes back, everything else is a 404
     w.fetch = (u, o) => { const r = handler && handler(String(u), o || {}); return r || Promise.resolve({ ok: false, status: 404, json: async () => ({}), text: async () => '' }); };
+    if (global.PRESET_SOLDOUT) w.localStorage.setItem('munchingo_soldout', JSON.stringify(global.PRESET_SOLDOUT));
     if (file === 'checkout.html') w.localStorage.setItem('munchingo_cart', JSON.stringify([{ slug: 'atta-original', name: 'Atta Original', price: 300, unit: '250g', qty: 3 }]));
   },
 });
@@ -226,6 +227,77 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
       ok(JSON.stringify(o.sameAs) === JSON.stringify(['https://www.instagram.com/munchingo.india']), 'Organization sameAs is the Instagram URL the site links');
       ok(!('address' in o) && !('telephone' in o) && !/Faridabad/i.test(JSON.stringify(blocks)), 'Organization has no address, no phone, no Faridabad');
       ok(s.name === 'Munchingo' && s.url === 'https://munchingo.com/' && !('potentialAction' in s), 'WebSite has name and url only, no SearchAction');
+    }
+  }
+
+  // 6. task B4: product pages show "Now shipping: baked <D> <Month>" from /api/stock packing. Stubbed fetch only.
+  {
+    const stock = (extra) => (U) => /\/api\/stock/.test(U) ? json(Object.assign({ ok: true, soldOut: [] }, extra)) : null;
+    const probe = async (file, handler) => {
+      const errors = [];
+      const dom = page(file, file, handler);
+      dom.window.addEventListener('error', (e) => errors.push(e.message));
+      const d = dom.window.document; await wait(900);
+      const el = d.querySelector('.pdp-baked');
+      const r = { dom, el, visible: !!el && !el.hidden, text: el ? norm(el.textContent) : null, errors, d };
+      return r;
+    };
+    // exists on all four pages, hidden by default, after Add to bag, before the minimum-order strip, never inside the price row
+    for (const f of ['atta-original.html', 'atta-kesari.html', 'atta-ajwain.html', 'atta-lite-sugar.html']) {
+      const d = new JSDOM(fs.readFileSync(path.join(SITE, f), 'utf8')).window.document;
+      const el = d.querySelectorAll('.pdp-baked');
+      ok(el.length === 1 && el[0].hidden && norm(el[0].textContent) === '', f + ' has one empty hidden .pdp-baked line');
+      ok(el.length === 1 && !!(d.getElementById('add').compareDocumentPosition(el[0]) & 4) && !!(el[0].compareDocumentPosition(d.querySelector('.v2-mov')) & 4), f + ' the baked line sits after Add to bag (CTA does not drop, R31)');
+    }
+    const cases = [
+      ['atta-kesari.html', { packing: { 'atta-kesari': '2026-11-20' } }, 'Now shipping: baked 20 November'],
+      ['atta-original.html', { packing: { 'atta-original': '2026-12-05' } }, 'Now shipping: baked 5 December'],
+      ['atta-ajwain.html', { packing: { 'atta-ajwain': '2026-01-01' } }, 'Now shipping: baked 1 January'],
+      ['atta-lite-sugar.html', { packing: { 'atta-lite-sugar': '2026-11-20' } }, 'Now shipping: baked 20 November'],
+      ['atta-kesari.html', { packing: { 'atta-kesari': '2026-11-20', 'atta-original': '2026-11-01' } }, 'Now shipping: baked 20 November'],
+    ];
+    for (const [f, extra, want] of cases) {
+      const r = await probe(f, stock(extra));
+      ok(r.visible && r.text === want, f + ' shows "' + want + '" (got: ' + r.text + ', hidden=' + !r.visible + ')');
+      ok(!/\bLOT\b|\bB\d{2}|MUN-/i.test(r.text || ''), f + ' baked line shows no lot code');
+      ok(r.errors.length === 0, f + ' no script error with a date (got: ' + r.errors.join('|') + ')');
+      r.dom.window.close();
+    }
+    const hidden = [
+      ['field missing', { }],
+      ['value null', { packing: { 'atta-kesari': null } }],
+      ['slug missing from the map', { packing: { 'atta-original': '2026-11-20' } }],
+      ['packing is not an object', { packing: 'x' }],
+      ['malformed string', { packing: { 'atta-kesari': 'next week' } }],
+      ['impossible date', { packing: { 'atta-kesari': '2026-13-45' } }],
+      ['date with extra text', { packing: { 'atta-kesari': '2026-11-20 LOT-ABC' } }],
+      ['non-string value', { packing: { 'atta-kesari': 20261120 } }],
+    ];
+    for (const [name, extra] of hidden) {
+      const r = await probe('atta-kesari.html', stock(extra));
+      ok(!r.visible && r.text === '', 'baked line stays hidden and empty: ' + name + ' (got: ' + r.text + ', hidden=' + !r.visible + ')');
+      ok(r.errors.length === 0, 'no script error: ' + name + ' (got: ' + r.errors.join('|') + ')');
+      ok(!!r.d.getElementById('add') && !r.d.getElementById('add').disabled, 'Add to bag still works: ' + name);
+      r.dom.window.close();
+    }
+    for (const [name, h] of [
+      ['fetch rejects', (U) => /\/api\/stock/.test(U) ? Promise.reject(new Error('network')) : null],
+      ['fetch 500', (U) => /\/api\/stock/.test(U) ? Promise.resolve({ ok: false, status: 500, json: async () => ({}), text: async () => '' }) : null],
+      ['body is not JSON', (U) => /\/api\/stock/.test(U) ? Promise.resolve({ ok: true, status: 200, json: async () => { throw new Error('bad json'); }, text: async () => 'x' }) : null],
+      ['fetch never answers (timeout)', (U) => /\/api\/stock/.test(U) ? new Promise(() => {}) : null],
+    ]) {
+      const r = await probe('atta-kesari.html', h);
+      ok(!r.visible && r.text === '', 'baked line stays hidden and empty: ' + name);
+      ok(r.errors.length === 0, 'no script error: ' + name + ' (got: ' + r.errors.join('|') + ')');
+      r.dom.window.close();
+    }
+    // a sold-out Flavor does not advertise a ship date
+    {
+      global.PRESET_SOLDOUT = ['atta-kesari'];   // the sold-out list the site remembers from /api/stock
+      const r = await probe('atta-kesari.html', stock({ soldOut: ['atta-kesari'], packing: { 'atta-kesari': '2026-11-20' } }));
+      global.PRESET_SOLDOUT = null;
+      ok(r.d.getElementById('add').disabled && !r.visible, 'a sold-out Flavor keeps the baked line hidden');
+      r.dom.window.close();
     }
   }
 
