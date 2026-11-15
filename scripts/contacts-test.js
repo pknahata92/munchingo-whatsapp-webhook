@@ -52,7 +52,7 @@ function fakes(startMs) {
   let m = f.sent[0];
   ok(f.sent.length === 1 && m.kind === 'buttons' && m.to === '919810000001', 'one button message is sent back');
   ok(m.body === c.CONSENT_QUESTION && /^Thanks for stopping by Munchingo! 🍪/.test(m.body) && !/picking/.test(m.body) && /Reply STOP any time/.test(m.body) && /Flavor/.test(m.body) && /a few weeks after an order, when your box is probably running low\?/.test(m.body) && /At most 3 a month/.test(m.body) && !/offers/.test(m.body), 'the consent question is the new wording that names the reorder nudge');
-  ok(JSON.stringify(m.buttons) === JSON.stringify([{ id: 'optin_yes', title: 'Yes, keep me posted' }, { id: 'optin_no', title: 'No thanks' }]), 'two buttons: yes and no');
+  ok(JSON.stringify(m.buttons) === JSON.stringify([{ id: 'optin2_yes', title: 'Yes, keep me posted' }, { id: 'optin2_no', title: 'No thanks' }]), 'two buttons: yes and no, with the C2 ids optin2_yes / optin2_no (got ' + JSON.stringify(m.buttons) + ')');
   ok(m.buttons.every((b) => b.title.length <= 20), 'button titles fit WhatsApp\'s 20-character limit');
 
   // ── answering ──
@@ -66,6 +66,30 @@ function fakes(startMs) {
   row = f.rows['919810000001'];
   ok(row.consent_marketing === false && row.consent_reminder === false && row.consent_text === c.CONSENT_QUESTION, 'no records a refusal (and no reminder consent)');
   ok(f.sent[2].kind === 'buttons' && /No problem, I won't send these\. Enjoy them\. 🍪/.test(f.sent[2].body) && JSON.stringify(f.sent[2].buttons) === JSON.stringify([{ id: 'btn_products', title: '🛒 Browse Products' }]), 'no gets a polite reply with a Browse Products button');
+
+  // ── A8 fix 2: a tap on the OLD question (sent before the C2 push, ids optin_yes / optin_no) records the OLD words ──
+  const V1 = 'Thanks for stopping by Munchingo! 🍪\n\nCan we send you new Flavors, launches and offers on WhatsApp? A few messages a month at most. Reply STOP any time to stop.';
+  ok(c.CONSENT_QUESTION_V1 === V1, 'the v1 question is kept word for word, for taps on it');
+  {
+    const g = fakes(START); c.setDeps(g.deps);
+    await c.handleOptIn('919810000020', true, 'v1');
+    let r1 = g.rows['919810000020'];
+    ok(r1 && r1.consent_marketing === true && r1.consent_reminder === false && r1.consent_text === V1, 'old Yes: consent with the v1 words and consent_reminder false (' + JSON.stringify(r1) + ')');
+    ok(g.sent[0] && g.sent[0].kind === 'buttons' && /on the list/.test(g.sent[0].body), 'old Yes: the same thank-you');
+    await c.handleOptIn('919810000020', false, 'v1');
+    r1 = g.rows['919810000020'];
+    ok(r1.consent_marketing === false && r1.consent_reminder === false && r1.consent_text === V1, 'old No: a refusal with the v1 words');
+    // a v1 Yes never lowers a reminder yes the contact gave elsewhere (as the checkout v1 tick, fix 6)
+    const V2AT = '2026-10-20T06:00:00.000Z', V2 = require('../utils/checkoutOptIn').CONSENT_TEXTS.v2;
+    g.rows['919810000021'] = { phone: '919810000021', first_source: 'website:2026-10-20', consent_marketing: true, consent_reminder: true, consent_at: V2AT, consent_text: V2 };
+    await c.handleOptIn('919810000021', true, 'v1');
+    r1 = g.rows['919810000021'];
+    ok(r1.consent_marketing === true && r1.consent_reminder === true && r1.consent_text === V2 && r1.consent_at === V2AT, 'old Yes from a contact who already said yes to reminders: the record is left as it was (' + JSON.stringify(r1) + ')');
+    ok(/on the list/.test(g.sent[g.sent.length - 1].body), 'and still gets the thank-you');
+    await c.handleOptIn('919810000022', true);
+    ok(g.rows['919810000022'].consent_reminder === true && g.rows['919810000022'].consent_text === c.CONSENT_QUESTION, 'no version given = the C2 question (consent_reminder true)');
+    c.setDeps(f.deps);
+  }
 
   // ── coming back on another day keeps the first source and the earlier answer ──
   await c.handleOptIn('919810000001', true);
@@ -131,7 +155,8 @@ function fakes(startMs) {
   const body = h.slice(h.indexOf('async function routeText('));
   const iStop = body.indexOf('contacts.isStop('), iSign = body.indexOf('contacts.signupSource('), iLang = body.indexOf('HINDI_ENABLED()'), iHi = body.indexOf('/^(hi|hello');
   ok(iStop > 0 && iSign > 0 && iStop < iLang && iSign < iLang && iSign < iHi, 'routeText checks STOP and sign-ups first');
-  ok(/case 'optin_yes':/.test(h) && /case 'optin_no':/.test(h), 'routeInteractive handles both buttons');
+  ok(/case 'optin2_yes':\s*return contacts\.handleOptIn\(to, true\);/.test(h) && /case 'optin2_no':\s*return contacts\.handleOptIn\(to, false\);/.test(h), 'routeInteractive: the C2 buttons record the C2 question');
+  ok(/case 'optin_yes':\s*return contacts\.handleOptIn\(to, true, 'v1'\);/.test(h) && /case 'optin_no':\s*return contacts\.handleOptIn\(to, false, 'v1'\);/.test(h), 'routeInteractive: the old buttons still work and record the v1 question');
   ok(/case 'btn_products':\s*return sendProductList\(to\)/.test(h), 'the Browse Products button opens the product list');
 
   // ── the table ──

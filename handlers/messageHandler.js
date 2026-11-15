@@ -960,8 +960,10 @@ async function routeInteractive(to, interactive, name) {
       if (!HINDI_ENABLED()) return sendWelcome(to, name); // stale picker button: stay English
       return changeLanguage(to, name, buttonId === 'lang_hi' ? 'hi' : 'en');
     }
-    case 'optin_yes':       return contacts.handleOptIn(to, true);
-    case 'optin_no':        return contacts.handleOptIn(to, false);
+    case 'optin2_yes':      return contacts.handleOptIn(to, true);
+    case 'optin2_no':       return contacts.handleOptIn(to, false);
+    case 'optin_yes':       return contacts.handleOptIn(to, true, 'v1');    // a tap on the question sent before C2 (its own words)
+    case 'optin_no':        return contacts.handleOptIn(to, false, 'v1');
     case 'btn_products':    return sendProductList(to);
     case 'btn_order':       return sendOrderInstructions(to);
     case 'btn_faq':         return sendFAQ(to);
