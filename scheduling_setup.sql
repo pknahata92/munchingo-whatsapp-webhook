@@ -21,3 +21,10 @@ $$);
 
 -- To stop either job:  select cron.unschedule('munchingo-daily-summary');
 -- To check they ran:   select jobid, status, start_time from cron.job_run_details order by start_time desc limit 10;
+
+-- J6 reorder reminder (growth journey, 16 Nov 2026). Prashant (the owner) runs it in Supabase (SQL editor) himself, after the
+-- growth-journey push is live and growth_journey_migration.sql has been run. Remove the leading "-- " from the select line to run it.
+-- 10:30 UTC = 16:00 IST. The endpoint accepts this bare call only between 15:30 and 18:00 IST, runs at most once a day, and sends
+-- nothing until JOURNEY_J6_ENABLED=1 is set on Render (after Meta approves munchingo_reorder_try and munchingo_reorder_same).
+-- select cron.schedule('munchingo-reorders', '30 10 * * *', $$ select net.http_get(url := 'https://munchingo-whatsapp-webhook.onrender.com/internal/reorders', timeout_milliseconds := 120000); $$);
+-- To stop it:  select cron.unschedule('munchingo-reorders');

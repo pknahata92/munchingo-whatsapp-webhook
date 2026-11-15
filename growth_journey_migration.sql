@@ -20,7 +20,12 @@ alter table suggestion_waits add column if not exists order_id text;
 -- journey_tap before this push, so there are no duplicates to trip it.
 create unique index if not exists order_events_journey_tap_once on order_events (order_id, event) where event = 'journey_tap';
 
--- Read-back: should return 8 rows (the 7 columns, and the journey_tap index with its definition).
+-- order_events: one J6 reorder reminder per order, and at most one retry after Meta refused it (utils/reorders.js claims each with
+-- claimOrderEvent before sending; without this index the claim always succeeds and two overlapping runs could both send).
+-- Nothing writes these events before this push, so there are no duplicates to trip it.
+create unique index if not exists order_events_reorder_once on order_events (order_id, event) where event in ('reorder_reminder', 'reorder_reminder_retry');
+
+-- Read-back: should return 9 rows (the 7 columns, and the journey_tap and reorder indexes with their definitions).
 select table_name::text as table_name, column_name::text as column_name, data_type::text as data_type
 from information_schema.columns
 where (table_name = 'contacts' and column_name in ('last_inbound_at', 'consent_reminder', 'journey_declined_at', 'last_complaint_at'))
@@ -29,5 +34,5 @@ where (table_name = 'contacts' and column_name in ('last_inbound_at', 'consent_r
 union all
 select tablename::text, indexname::text, indexdef::text
 from pg_indexes
-where tablename = 'order_events' and indexname = 'order_events_journey_tap_once'
+where tablename = 'order_events' and indexname in ('order_events_journey_tap_once', 'order_events_reorder_once')
 order by 1, 2;

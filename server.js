@@ -472,6 +472,16 @@ app.get('/internal/review-requests', async (req, res) => {
   catch (e) { console.error('[REVIEWS] sweep error:', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// J6 reorder reminder (utils/reorders.js): pg_cron calls this bare at 16:00 IST (scheduling_setup.sql). The guard is the
+// daily-digest one, kept in reorders.handleRequest so it is tested: a bare call only 15:30-18:00 IST and once a day; with
+// DIGEST_SECRET it runs any time and can be re-run (each order is claimed once). Sends nothing unless JOURNEY_J6_ENABLED=1.
+app.get('/internal/reorders', async (req, res) => {
+  try {
+    const r = await require('./utils/reorders').handleRequest({ query: req.query });
+    if (r.body) res.status(r.status).json(r.body); else res.sendStatus(r.status);
+  } catch (e) { console.error('[REORDERS] error:', e.message); res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // Same reasoning and protection pattern as /internal/daily-digest above:
 // triggered by a scheduled GitHub Actions workflow (not an in-process timer,
 // since Render's free tier can spin the service down), reuses DIGEST_SECRET
