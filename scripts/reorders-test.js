@@ -219,7 +219,7 @@ function world({ orders = [order()], contacts = [contact()], sends = [], subs = 
   };
   const id = () => 'wamid.R' + (++seq);
   const wa = {
-    sendTemplateWithButtons: async (to, name, lang, params, opts) => { if (w.failWith) throw w.failWith; const m = id(); w.sent.push({ kind: 'template', to, name, lang, params, opts, id: m }); return { messages: [{ id: m }] }; },
+    sendMarketingTemplate: async (to, name, lang, params, opts) => { if (w.failWith) throw w.failWith; const m = id(); w.sent.push({ kind: 'template', to, name, lang, params, opts, id: m }); return { messages: [{ id: m }] }; },
     sendImage: async (to, link, caption) => { if (w.failWith) throw w.failWith; const m = id(); w.sent.push({ kind: 'image', to, link, caption, id: m }); return { messages: [{ id: m }] }; },
     sendText: async (to, text) => { w.sent.push({ kind: 'text', to, text }); return { messages: [{ id: id() }] }; },
   };

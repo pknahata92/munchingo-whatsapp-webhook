@@ -215,8 +215,8 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   const about = batch ? { campaign: camp, baked: batch.baked, flavours: batch.flavours } : {};
   // J7: the three words, the reminder quick reply (index 0) and the shop link (index 1); any other broadcast: the first name only
   const deliver = (to, first) => (batch
-    ? wa.sendTemplateWithButtons(to, template, lang, [first, batch.baked, batch.flavours], { quickReplies: [J7_REMIND], urlIndex: 1, urlSuffix: `shop?utm_source=whatsapp&utm_medium=broadcast&utm_campaign=${camp}`, header })
-    : wa.sendTemplateWithHeader(to, template, lang, header, [first]));
+    ? wa.sendMarketingTemplate(to, template, lang, [first, batch.baked, batch.flavours], { quickReplies: [J7_REMIND], urlIndex: 1, urlSuffix: `shop?utm_source=whatsapp&utm_medium=broadcast&utm_campaign=${camp}`, header })
+    : wa.sendMarketingTemplate(to, template, lang, [first], { header }));
 
   if (mode === 'dry') return { ok: true, mode, template, ...about, ...counts };
 

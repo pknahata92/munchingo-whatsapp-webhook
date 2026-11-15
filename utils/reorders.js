@@ -301,7 +301,7 @@ async function sweepReorders() {
     try {
       const out = open
         ? await wa.sendImage(item.phone, item.header.link, await caption(item))
-        : await wa.sendTemplateWithButtons(item.phone, item.template, 'en', item.params, { urlSuffix: item.urlSuffix, urlIndex: 0, header: item.header });
+        : await wa.sendMarketingTemplate(item.phone, item.template, 'en', item.params, { urlSuffix: item.urlSuffix, urlIndex: 0, header: item.header });
       waId = (out && out.messages && out.messages[0] && out.messages[0].id) || null;
       res.sent++;
     } catch (e) {

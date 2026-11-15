@@ -81,6 +81,52 @@ async function sendTemplateWithButtons(to, templateName, languageCode, bodyParam
   });
 }
 
+// ── Marketing templates: one transport choice (A7b) ───────────────────────────
+// With MM_API_ENABLED=1 a marketing template is POSTed to /{PHONE_NUMBER_ID}/marketing_messages (Marketing Messages API: same
+// payload as /messages, template sends only, status webhooks arrive as usual with pricing.category "marketing_lite").
+// Meta itself falls back to Cloud API when the number does not qualify (unless product_policy is STRICT), so a rejection is
+// rare; if one names "not onboarded / not eligible" we retry ONCE on /messages. Every other error (131049 included) is thrown
+// unchanged so the 48 h retry-once rule in marketingCap.js still applies, and a call that got no HTTP answer is never retried
+// (it may have gone through: no double send). Utility templates (check-in, order updates, reviews) never come through here.
+function mmEnabled() { return /^(1|true)$/i.test(String(process.env.MM_API_ENABLED || '').trim()); }
+
+// Meta documents no dedicated code for "not onboarded"; an unknown endpoint for the number answers code 100 / subcode 33.
+function isNotOnboarded(err) {
+  const e = err && err.response && err.response.data && err.response.data.error;
+  if (!e || typeof e !== 'object') return false;
+  if (Number(e.code) === 100 && Number(e.error_subcode) === 33) return true;
+  return /onboard|not eligible|marketing_messages/i.test(String(e.message || ''));
+}
+
+async function postTemplate(endpoint, payload) {
+  const url = `${BASE_URL}/${process.env.PHONE_NUMBER_ID}/${endpoint}`;
+  try {
+    const res = await axios.post(url, payload, { headers: getHeaders() });
+    console.log(`[WA] Message sent (${endpoint}) →`, res.data.messages?.[0]?.id);
+    return res.data;
+  } catch (err) {
+    console.error(`[WA] Send error (${endpoint}):`, JSON.stringify(err.response?.data?.error || err.message));
+    throw err;
+  }
+}
+
+async function sendMarketingTemplate(to, templateName, languageCode, bodyParams, { quickReplies = [], urlSuffix, urlIndex = quickReplies.length, header } = {}) {
+  const components = [];
+  if (header) components.push({ type: 'header', parameters: [{ type: header.type, [header.type]: { link: header.link } }] });
+  if (bodyParams && bodyParams.length) components.push({ type: 'body', parameters: bodyParams.map((text) => ({ type: 'text', text: String(text) })) });
+  quickReplies.forEach((payload, i) => components.push({ type: 'button', sub_type: 'quick_reply', index: String(i), parameters: [{ type: 'payload', payload: String(payload) }] }));
+  if (urlSuffix != null) components.push({ type: 'button', sub_type: 'url', index: String(urlIndex), parameters: [{ type: 'text', text: String(urlSuffix) }] });
+  const payload = { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'template', template: { name: templateName, language: { code: languageCode }, components } };
+  if (!mmEnabled()) return { ...(await postTemplate('messages', payload)), transport: 'cloud' };
+  try {
+    return { ...(await postTemplate('marketing_messages', payload)), transport: 'mm' };
+  } catch (err) {
+    if (!isNotOnboarded(err)) throw err;
+    console.warn(`[WA] ${templateName}: Marketing Messages API not available for this number, sending on /messages instead`);
+    return { ...(await postTemplate('messages', payload)), transport: 'cloud' };
+  }
+}
+
 // ── Approved template with an optional media header ({ type: 'video'|'image', link }) and body parameters (broadcasts) ──
 async function sendTemplateWithHeader(to, templateName, languageCode, header, bodyParams) {
   const components = [];
@@ -273,7 +319,8 @@ async function sendVideo(to, videoUrl, caption) {
   });
 }
 
-module.exports = { sendTemplateWithUrlButton,
+module.exports = { sendMarketingTemplate,
+  sendTemplateWithUrlButton,
   sendTemplateWithButtons,
   sendTemplateWithHeader,
   sendTemplate,

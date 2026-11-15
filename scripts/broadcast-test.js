@@ -22,8 +22,8 @@ function world({ contacts, sends = [], failFor = [], at = NOW, packingNext = nul
       listPaidOrderAddresses: async () => orders.slice(),
     },
     wa: {
-      sendTemplateWithHeader: async (to, name, lang, header, params) => { if (failFor.includes(to)) throw new Error('bad number'); sent.push({ to, name, lang, header, params }); return { messages: [{ id: to === '919999900000' ? 'wamid' : 'wamid-' + to }] }; },
-      sendTemplateWithButtons: async (to, name, lang, params, o = {}) => { if (failFor.includes(to)) throw new Error('bad number'); sent.push({ to, name, lang, params, header: o.header, quickReplies: o.quickReplies, urlIndex: o.urlIndex, urlSuffix: o.urlSuffix }); return { messages: [{ id: 'wamid-' + to }] }; },
+      // A7b: every broadcast template goes through the one marketing transport (header-only = no quick replies / url)
+      sendMarketingTemplate: async (to, name, lang, params, o = {}) => { if (failFor.includes(to)) throw new Error('bad number'); sent.push({ to, name, lang, params, header: o.header, quickReplies: o.quickReplies, urlIndex: o.urlIndex, urlSuffix: o.urlSuffix }); return { messages: [{ id: to === '919999900000' ? 'wamid' : 'wamid-' + to }] }; },
     },
     now: () => at, wait: async () => {}, ownerPhone: () => '919999900000',
     packingNext: async () => { if (!packingNext) throw new Error('this test has no stock'); return packingNext(); },
