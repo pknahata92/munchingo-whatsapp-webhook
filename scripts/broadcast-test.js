@@ -15,7 +15,7 @@ function world({ contacts, sends = [], failFor = [], at = NOW }) {
     db: {
       listMarketingContacts: async () => contacts.filter((c) => c.consent_marketing === true),
       listMarketingSends: async () => sends.slice(),
-      insertMarketingSend: async (row) => { logged.push(row); sends.push({ ...row, sent_at: new Date(NOW).toISOString() }); },
+      insertMarketingSend: async (row) => { logged.push(row); sends.push({ ...row, sent_at: new Date(at).toISOString() }); },
       markMarketingSendFailed: async (waId, error) => { markedFailed.push({ waId, error }); const r = sends.find((x) => x.wa_message_id === waId); if (r) { r.status = 'failed'; r.error = error; } },
     },
     wa: { sendTemplateWithHeader: async (to, name, lang, header, params) => { if (failFor.includes(to)) throw new Error('bad number'); sent.push({ to, name, lang, header, params }); return { messages: [{ id: to === '919999900000' ? 'wamid' : 'wamid-' + to }] }; } },
@@ -147,11 +147,10 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   ok(r.to_send === 2, 'exclude=stall,fair leaves the sign-up who never bought plus the owner, and drops a sign-up who later bought at a stall (got ' + r.to_send + ')');
   ok(!(await b.run({ template: T, mode: 'dry', exclude: 'x; drop' })).ok, 'an exclude list with odd characters is refused');
 
-
   // quiet hours (15 Nov 2026): no marketing send 21:00-09:00 IST; dry and test may run any time
   w = world({ contacts: [C('919000000001', 'Asha')], at: Date.parse('2026-11-20T16:00:00Z') });   // 21:30 IST
   r = await b.run({ template: T, mode: 'send', expect: 2 });
-  ok(!r.ok && r.error === 'Quiet hours (21:00-09:00 IST): send after 9 AM.' && w.sent.length === 0, 'send at 21:30 IST is refused and sends nothing (got ' + JSON.stringify(r) + ')');
+  ok(JSON.stringify(r) === JSON.stringify({ ok: false, error: 'Quiet hours (21:00-09:00 IST): send after 9 AM.' }) && w.sent.length === 0, 'send at 21:30 IST is refused and sends nothing (got ' + JSON.stringify(r) + ')');
   r = await b.run({ template: T, mode: 'dry' });
   ok(r.ok, 'dry runs in quiet hours');
   r = await b.run({ template: T, mode: 'test' });
@@ -169,6 +168,14 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   await b.run({ template: T, mode: 'send', expect: 2 });
   ok(w.logged.every((l) => l.campaign === null), 'no campaign logs null (legacy)');
   ok(!(await b.run({ template: T, mode: 'dry', campaign: 'Bad Campaign!' })).ok, 'a campaign with odd characters is refused');
+
+  // the owner is the live check: three sends in 30 days never drop him, an earlier send of the same template does
+  w = world({ contacts: [], sends: ['a', 'b', 'c'].map((t, i) => ({ phone: '919999900000', template: t, campaign: null, status: 'sent', sent_at: new Date(NOW - (i + 1) * DAY).toISOString() })) });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 1 && r.over_cap === 0, 'the owner over the cap is still sent to (got ' + JSON.stringify({ t: r.to_send, o: r.over_cap }) + ')');
+  w = world({ contacts: [], sends: [{ phone: '919999900000', template: T, campaign: null, status: 'sent', sent_at: new Date(NOW - DAY).toISOString() }] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 0 && r.already_sent === 1, 'the owner is still skipped when already sent');
 
   // retry at most once after 131049: two failures for the same template + campaign block the person
   const h131 = (h) => ({ phone: '919000000001', template: T, campaign: null, status: 'failed', error: '131049 x', sent_at: new Date(NOW - h * 3_600_000).toISOString() });

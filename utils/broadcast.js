@@ -72,7 +72,8 @@ async function audience(template, sources, exclude = [], campaign = null) {
   const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0, cooling_off: 0, blocked_twice: 0 };
   const seen = new Set([owner]);
   const verdict = (p) => { const v = gate(p); if (v !== 'ok') out[v]++; return v === 'ok'; };
-  if (owner && verdict(owner)) out.list.push({ phone: owner, first: 'Prashant' });
+  // The owner is the live check on every send: skipped only if already sent or cooling off, never for the cap or blocked_twice.
+  if (owner) { const v = gate(owner); if (v === 'already_sent' || v === 'cooling_off') out[v]++; else out.list.push({ phone: owner, first: 'Prashant' }); }
   const has = (c, list) => list.some((x) => [c.first_source, c.last_source].some((v) => String(v || '').startsWith(x)));
   const fromSource = (c) => (!sources.length || has(c, sources)) && !(exclude.length && has(c, exclude));
   for (const c of contacts) {
@@ -95,7 +96,7 @@ async function run({ template, lang = 'en', mode = 'dry', video = '', image = ''
   if (!/^[a-z0-9:,\- ]*$/i.test(String(sources))) return { ok: false, error: 'sources must look like stall,fair or stall:2026-11-06.' };
   if (!/^[a-z0-9:,\- ]*$/i.test(String(exclude))) return { ok: false, error: 'exclude must look like stall,fair.' };
   if (!/^[a-z0-9_]{0,64}$/.test(String(campaign || ''))) return { ok: false, error: 'campaign must be lowercase letters, numbers, _ (for example batch_261120).' };
-  if (mode === 'send' && isQuietHours(D().now())) return { ok: false, mode, error: 'Quiet hours (21:00-09:00 IST): send after 9 AM.' };
+  if (mode === 'send' && isQuietHours(D().now())) return { ok: false, error: 'Quiet hours (21:00-09:00 IST): send after 9 AM.' };
   const list = (v) => String(v).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
   const src = list(sources), exc = list(exclude);
   const { db, wa, wait, ownerPhone } = D();
