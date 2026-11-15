@@ -370,6 +370,8 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   ok(/noteStatus/.test(srv) && /s\.errors/.test(srv), 'the webhook passes delivery statuses (with their errors) to broadcast.noteStatus and logs the error');
   const wf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'broadcast.yml'), 'utf8');
   ok(/workflow_dispatch/.test(wf) && !/schedule/.test(wf) && /DIGEST_SECRET/.test(wf), 'the workflow only runs by hand and uses the secret');
+  // A8 fix 8: two dispatches never run at once; the second waits (an in-progress send is never cancelled half way)
+  ok(/\nconcurrency:\n  group: broadcast\n  cancel-in-progress: false\n/.test(wf) && wf.indexOf('\nconcurrency:') < wf.indexOf('\njobs:'), 'the workflow has a top-level concurrency group "broadcast" that queues, never cancels');
   const wa = require('../utils/whatsapp');
   ok(typeof wa.sendTemplateWithHeader === 'function', 'whatsapp.js can send a template with a media header');
   const db = fs.readFileSync(path.join(__dirname, '..', 'utils', 'database.js'), 'utf8');

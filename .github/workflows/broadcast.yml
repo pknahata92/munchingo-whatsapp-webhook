@@ -50,6 +50,11 @@ on:
         required: false
         default: ''
 
+# Two dispatches never run at once: a second one waits for the first to finish (a send in progress is never cancelled half way).
+concurrency:
+  group: broadcast
+  cancel-in-progress: false
+
 jobs:
   broadcast:
     runs-on: ubuntu-latest
