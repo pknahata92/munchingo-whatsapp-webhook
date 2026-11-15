@@ -366,18 +366,24 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
   const OLD_AT = '2026-10-01T00:00:00.000Z';
   w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_text: 'v1', consent_at: OLD_AT } });
   ok(await journey.handleTap(ASHA, 'j4_remind_yes', 'Asha') === true, 'j4_remind_yes is handled');
-  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === S.c9 + ' | Yes, remind me' && w.rows[ASHA].consent_marketing === true, 'reminder consent saved with C9 + " | Yes, remind me"');
+  const REM = (text) => `Reminder yes, ${new Date(START).toISOString()}: ${text}`;   // A8 fix 3: the reminder yes is added to the record
+  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === 'v1\n\n' + REM(S.c9 + ' | Yes, remind me') && w.rows[ASHA].consent_marketing === true, 'reminder consent added to the kept marketing consent text, with C9 + " | Yes, remind me" and its time (got ' + show(w.rows[ASHA].consent_text) + ')');
   ok(w.rows[ASHA].consent_at === OLD_AT, 'consent_at is not overwritten (R6-fix)');
   only(w.toBuyer(), 'j4_remind_yes reply');
   ok(w.toBuyer()[0].text === S.c3, 'j4_remind_yes replies exactly C3 (R18)');
+  { const before = w.rows[ASHA].consent_text; await journey.handleTap(ASHA, 'j4_remind_yes', 'Asha');
+    ok(w.rows[ASHA].consent_text === before, 'a second tap does not add the same reminder yes twice'); }
   w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_text: 'v1', consent_at: OLD_AT } });
   ok(await journey.handleTap(ASHA, 'j4_remind_no', 'Asha') === true && w.rows[ASHA].consent_reminder === false && w.rows[ASHA].consent_text === 'v1' && w.rows[ASHA].consent_at === OLD_AT, 'j4_remind_no: handled, nothing changed');
   ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === S.c13, 'j4_remind_no replies exactly C13 (R18)');
   w = world({ contact: { consent_marketing: false, consent_text: 'STOP' } });
   ok(await journey.handleTap(ASHA, 'j4_remind_yes', 'Asha') === false && w.rows[ASHA].consent_reminder === undefined && w.sent.length === 0, 'j4_remind_yes without marketing consent changes nothing');
-  w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_at: OLD_AT } });
+  w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_at: OLD_AT, consent_text: contacts.CONSENT_QUESTION } });
   ok(await journey.handleTap(ASHA, 'j7_remind', 'Asha') === true, 'j7_remind is handled for a consented contact');
-  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === 'j7_remind: Remind me to reorder' && w.rows[ASHA].consent_at === OLD_AT, 'it saves reminder consent with its own text, consent_at untouched');
+  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === contacts.CONSENT_QUESTION + '\n\n' + REM('j7_remind: Remind me to reorder') && w.rows[ASHA].consent_at === OLD_AT, 'it keeps the marketing consent text and adds the reminder yes with its own text, consent_at untouched (got ' + show(w.rows[ASHA].consent_text) + ')');
+  { const x = world({ contact: { consent_marketing: true, consent_reminder: false, consent_at: OLD_AT } });
+    await journey.handleTap(ASHA, 'j7_remind', 'Asha');
+    ok(x.rows[ASHA].consent_text === REM('j7_remind: Remind me to reorder'), 'no earlier text: the reminder yes alone (got ' + show(x.rows[ASHA].consent_text) + ')'); w = x; w.sent.length = 0; await journey.handleTap(ASHA, 'j7_remind', 'Asha'); }
   ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === S.c3, 'and replies exactly C3');
   for (const contact of [undefined, { consent_marketing: false }]) {
     w = world({ contact });

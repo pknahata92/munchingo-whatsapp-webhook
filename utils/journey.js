@@ -249,7 +249,10 @@ async function answerButton(phone, id, name) {
   try { c = await db.getContact(phone); } catch (e) { console.error('[JOURNEY] could not read the contact:', e.message); }
   if (!c || c.consent_marketing !== true) return false;
   const text = id === 'j7_remind' ? J7_REMIND_TEXT : `${R.askReminder} | Yes, remind me`;
-  const r = await contacts.save(phone, { consent_reminder: true, consent_text: text }, source);   // consent_at stays the marketing yes (R6-fix)
+  // The marketing yes stays on the record: the reminder yes is added after it, with its own time (consent_at stays the marketing yes, R6-fix).
+  const base = String(c.consent_text || '');
+  const consentText = base.includes(text) ? base : `${base ? base + '\n\n' : ''}Reminder yes, ${at}: ${text}`;
+  const r = await contacts.save(phone, { consent_reminder: true, consent_text: consentText }, source);
   if (!r.ok) { await failed(); return true; }
   await send('C3', () => wa.sendText(phone, R.remindDone));   // both: C3 (R18)
   return true;
