@@ -68,7 +68,7 @@ function D() {
     lang: (phone) => require('./langPrefs').getStoredLang(phone),
   };
 }
-const enabled = () => /^(1|true|yes)$/i.test(String(process.env.JOURNEY_J6_ENABLED || ''));
+const enabled = () => require('./flags').flagOn('JOURNEY_J6_ENABLED');   // 1 or true only (utils/flags.js)
 
 const last10 = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : ''; };
 const istDay = (ms) => new Date(ms + IST_MS).toISOString().slice(0, 10);

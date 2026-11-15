@@ -209,6 +209,15 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
     ok(await remind('MNG-AAAA-7002', 2, [{ order_id: 'MNG-AAAA-7002', event: 'journey_tap', created_at: ago(1), meta: { kind: 'wrong' } }]) === 'none', 'R14: checked in 2 days ago: no review link yet');
     ok(await remind('MNG-AAAA-7003', 3, []) === 'sent', 'R14: checked in 3 days ago, no tap: review link');
     ok(await remind('MNG-AAAA-7004', 3, [{ order_id: 'MNG-AAAA-7004', event: 'review_received', created_at: ago(1), meta: {} }]) === 'none', 'R14: already reviewed: no link');
+    // A8 fix 9: JOURNEY_J3_ENABLED is read like every flag (utils/flags.js): only 1 or true, any case, spaces ignored
+    let n9 = 0;
+    for (const [v, on] of [['', false], ['0', false], ['false', false], ['yes', false], [' 1 ', true], ['TRUE', true]]) {
+      buttons.length = 0; plain.length = 0; logged.length = 0;
+      process.env.JOURNEY_J3_ENABLED = v;
+      store = [j3Order('MNG-AAAA-90' + (++n9))];
+      await r.sweepRequests();
+      ok(on ? buttons.length === 1 && plain.length === 0 : buttons.length === 0 && plain.length === 1, `JOURNEY_J3_ENABLED=${JSON.stringify(v)}: ${on ? 'the check-in' : 'the plain review ask'} (buttons ${buttons.length}, plain ${plain.length})`);
+    }
     delete process.env.JOURNEY_J3_ENABLED;
     buttons.length = 0; plain.length = 0; logged.length = 0;
     store = [j3Order('MNG-AAAA-6666')];

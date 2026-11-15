@@ -88,7 +88,7 @@ async function sendTemplateWithButtons(to, templateName, languageCode, bodyParam
 // rare; if one names "not onboarded / not eligible" we retry ONCE on /messages. Every other error (131049 included) is thrown
 // unchanged so the 48 h retry-once rule in marketingCap.js still applies, and a call that got no HTTP answer is never retried
 // (it may have gone through: no double send). Utility templates (check-in, order updates, reviews) never come through here.
-function mmEnabled() { return /^(1|true)$/i.test(String(process.env.MM_API_ENABLED || '').trim()); }
+function mmEnabled() { return require('./flags').flagOn('MM_API_ENABLED'); }   // 1 or true only (utils/flags.js)
 
 // Meta documents no dedicated code for "not onboarded"; an unknown endpoint for the number answers code 100 / subcode 33.
 function isNotOnboarded(err) {

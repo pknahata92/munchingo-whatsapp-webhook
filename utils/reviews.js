@@ -115,7 +115,7 @@ function D() {
   if (deps) return deps;
   return { db: require('./database'), wa: require('./whatsapp'), mail: require('./mailer'), now: () => Date.now() };
 }
-const j3Enabled = () => /^(1|true|yes)$/i.test(String(process.env.JOURNEY_J3_ENABLED || ''));
+const j3Enabled = () => require('./flags').flagOn('JOURNEY_J3_ENABLED');   // 1 or true only (utils/flags.js)
 const enabled = () => /^(1|true|yes)$/i.test(String(process.env.REVIEW_REQUESTS_ENABLED || ''));
 
 /** Digits with the 91 prefix, so 9810000001 and +91 98100 00001 are the same person. */
