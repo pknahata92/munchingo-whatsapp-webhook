@@ -7,6 +7,7 @@
  */
 const crypto = require('crypto');
 const { boxesBySlug } = require('./inventory');
+const journeyMedia = require('./journeyMedia');
 
 // Fixed display order and names (matches the website's range order).
 const FLAVOURS = [
@@ -102,6 +103,7 @@ function validateSubmission(order, body) {
 // ── Who is due, and sending ──────────────────────────────────────────────────
 const DAY = 86400000;
 const ASK_AFTER_DAYS = 4;          // days after delivery
+const CHECKIN_REVIEW_AFTER_DAYS = 3;   // J3 flag on (R14): the review link goes 3 days after the check-in, to everyone who has not reviewed, whatever they tapped
 const REMIND_AFTER_DAYS = 6;       // days after the ask (day 10 for a normal order; measured from the ask so old deliveries are not asked and reminded on consecutive days)
 const PHONE_GAP_DAYS = 30;         // one ask per phone per 30 days, however many orders
 const REVIEW_URL = 'https://munchingo.com/review?t=';
@@ -123,6 +125,14 @@ function normPhone(p) {
 }
 const at = (e) => Date.parse(e.created_at);
 const last = (events, name) => (events || []).filter((e) => e.event === name).sort((a, b) => at(b) - at(a))[0] || null;
+
+/** The review link / reminder is due. Flag on and the ask was a check-in: 3 days after it, whatever was tapped (same rule for everyone, so no review gating).
+ *  Otherwise (flag off, or the founders message): the old rule, 6 days after the ask and not if a button was tapped. */
+function reminderDue(ev, asked, nowMs) {
+  const checkin = j3Enabled() && !(asked.meta && asked.meta.founders);
+  if (checkin) return nowMs - at(asked) >= CHECKIN_REVIEW_AFTER_DAYS * DAY;
+  return !last(ev, 'journey_tap') && nowMs - at(asked) >= REMIND_AFTER_DAYS * DAY;
+}
 
 /** Pure: which orders get an ask or a reminder now. */
 function dueRequests({ orders, eventsByOrder = {}, tasters = [], now }) {
@@ -155,7 +165,7 @@ function dueRequests({ orders, eventsByOrder = {}, tasters = [], now }) {
       if (lastAskByPhone[ph] && nowMs - lastAskByPhone[ph] < PHONE_GAP_DAYS * DAY) continue;
       askedThisRun.add(ph);
       out.push({ order: o, kind: 'ask', founders: tasterPhones.has(ph) && !foundersSent.has(ph) });
-    } else if (!last(ev, 'review_reminded') && !last(ev, 'journey_tap') && nowMs - at(asked) >= REMIND_AFTER_DAYS * DAY) {
+    } else if (!last(ev, 'review_reminded') && reminderDue(ev, asked, nowMs)) {
       out.push({ order: o, kind: 'reminder', founders: false });
     }
   }
@@ -194,7 +204,7 @@ async function sweepRequests() {
         const names = flavoursFor(order).map((f) => f.name);
         const flavoursText = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names.join('');
         await wa.sendTemplateWithButtons(normPhone(order.customer_phone), TEMPLATE.checkin, 'en', [firstName(order) || 'there', order.order_id, flavoursText],
-          { quickReplies: ['loved', 'meh', 'wrong'].map((k) => `j3:${k}:${order.order_id}`), urlSuffix: token, urlIndex: 3 });
+          { quickReplies: ['loved', 'meh', 'wrong'].map((k) => `j3:${k}:${order.order_id}`), header: { type: 'image', link: journeyMedia.checkinImage() } });
       } else await wa.sendTemplateWithUrlButton(normPhone(order.customer_phone), founders ? TEMPLATE.founders : TEMPLATE.standard, 'en', [firstName(order) || 'there', order.order_id], token);
     }
     catch (e) { waResult = 'failed'; console.error(`[REVIEWS] WhatsApp ${kind} failed for ${order.order_id}:`, e.message); }

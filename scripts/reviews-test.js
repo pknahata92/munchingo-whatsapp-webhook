@@ -174,7 +174,12 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
     ok(buttons.length === 1 && plain.length === 0 && b[1] === 'munchingo_checkin_v1' && b[2] === 'en', 'flag on: the ask is the check-in template, English, no plain URL send');
     ok(b && JSON.stringify(b[3]) === JSON.stringify(['Asha', 'MNG-AAAA-1111', 'Atta Original and Atta Ajwain']), 'check-in params: first name, order id, Flavors text (' + JSON.stringify(b && b[3]) + ')');
     ok(b && JSON.stringify(b[4].quickReplies) === JSON.stringify(['j3:loved:MNG-AAAA-1111', 'j3:meh:MNG-AAAA-1111', 'j3:wrong:MNG-AAAA-1111']), 'three quick-reply payloads carry the order id');
-    ok(b && b[4].urlIndex === 3 && r.readToken(b[4].urlSuffix) === 'MNG-AAAA-1111', 'review link button at index 3 with the signed token');
+    ok(b && b[4].urlSuffix === undefined && b[4].urlIndex === undefined, 'R14: the check-in has no URL button (3 taps only)');
+    ok(b && b[4].header && b[4].header.type === 'image' && b[4].header.link === 'https://munchingo.com/media/checkin.jpg', 'the check-in carries the picture header (' + JSON.stringify(b && b[4].header) + ')');
+    const jm = require('../utils/journeyMedia');
+    ok(jm.MEDIA_BASE === 'https://munchingo.com/media/' && jm.checkinImage() === 'https://munchingo.com/media/checkin.jpg', 'journeyMedia: base and check-in picture');
+    ok(jm.reorderImage('atta-kesari').endsWith('reorder-atta-kesari.jpg') && jm.reorderImage(null).endsWith('reorder-all.jpg'), 'journeyMedia: reorder picture per slug, or all');
+    { const keep = process.env.JOURNEY_UNLOCK_VIDEO_URL; delete process.env.JOURNEY_UNLOCK_VIDEO_URL; ok(jm.unlockVideo() === null, 'unlock video is null when not set'); process.env.JOURNEY_UNLOCK_VIDEO_URL = 'https://x/y.mp4'; ok(jm.unlockVideo() === 'https://x/y.mp4', 'unlock video from env'); if (keep === undefined) delete process.env.JOURNEY_UNLOCK_VIDEO_URL; else process.env.JOURNEY_UNLOCK_VIDEO_URL = keep; }
     buttons.length = 0; logged.length = 0;
     store = [j3Order('MNG-AAAA-2222', { items: [{ slug: 'full-range-set', quantity: 1 }] })];
     await r.sweepRequests();
@@ -192,13 +197,29 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
     logged.push({ order_id: 'MNG-AAAA-5555', event: 'review_requested', created_at: ago(6), meta: { founders: false } });
     await r.sweepRequests();
     ok(buttons.length === 0 && plain.length === 1 && plain[0][1] === 'munchingo_review_request' && plain[0][3].length === 2, 'reminder keeps the URL-only review template with the flag on');
-    plain.length = 0; logged.length = 0;
-    logged.push({ order_id: 'MNG-AAAA-5555', event: 'review_requested', created_at: ago(6), meta: { founders: false } }, { order_id: 'MNG-AAAA-5555', event: 'journey_tap', created_at: ago(5), meta: {} });
-    await r.sweepRequests();
-    ok(plain.length === 0 && buttons.length === 0, 'the sweep reads journey_tap events: a tapped order gets no reminder');
+    // R14: flag on, the review link goes 3 days after the check-in to everyone, whatever they tapped
+    const remind = async (id, askedDays, evs) => {
+      buttons.length = 0; plain.length = 0; logged.length = 0;
+      store = [j3Order(id, { delivered_at: ago(askedDays + 4) })];
+      logged.push({ order_id: id, event: 'review_requested', created_at: ago(askedDays), meta: { founders: false } }, ...evs);
+      await r.sweepRequests();
+      return plain.length === 1 && plain[0][1] === 'munchingo_review_request' ? 'sent' : (plain.length === 0 ? 'none' : 'other');
+    };
+    ok(await remind('MNG-AAAA-7001', 3, [{ order_id: 'MNG-AAAA-7001', event: 'journey_tap', created_at: ago(2), meta: { kind: 'wrong' } }]) === 'sent', 'R14: checked in 3 days ago, tapped "wrong": still gets the review link');
+    ok(await remind('MNG-AAAA-7002', 2, [{ order_id: 'MNG-AAAA-7002', event: 'journey_tap', created_at: ago(1), meta: { kind: 'wrong' } }]) === 'none', 'R14: checked in 2 days ago: no review link yet');
+    ok(await remind('MNG-AAAA-7003', 3, []) === 'sent', 'R14: checked in 3 days ago, no tap: review link');
+    ok(await remind('MNG-AAAA-7004', 3, [{ order_id: 'MNG-AAAA-7004', event: 'review_received', created_at: ago(1), meta: {} }]) === 'none', 'R14: already reviewed: no link');
     delete process.env.JOURNEY_J3_ENABLED;
     buttons.length = 0; plain.length = 0; logged.length = 0;
     store = [j3Order('MNG-AAAA-6666')];
+    await r.sweepRequests();
+    { const id = 'MNG-AAAA-8001'; buttons.length = 0; plain.length = 0; logged.length = 0; store = [j3Order(id, { delivered_at: ago(7) })];
+      logged.push({ order_id: id, event: 'review_requested', created_at: ago(3), meta: { founders: false } });
+      await r.sweepRequests(); ok(plain.length === 0, 'flag off: 3 days after the ask is too early, the 6-day rule is unchanged');
+      buttons.length = 0; plain.length = 0; logged.length = 0; store = [j3Order(id, { delivered_at: ago(12) })];
+      logged.push({ order_id: id, event: 'review_requested', created_at: ago(6), meta: { founders: false } }, { order_id: id, event: 'journey_tap', created_at: ago(5), meta: {} });
+      await r.sweepRequests(); ok(plain.length === 0, 'flag off: a tapped order still gets no reminder (old rule)'); }
+    buttons.length = 0; plain.length = 0; logged.length = 0; store = [j3Order('MNG-AAAA-6666')];
     await r.sweepRequests();
     ok(buttons.length === 0 && plain.length === 1 && plain[0][1] === 'munchingo_review_request' && JSON.stringify(plain[0][3]) === JSON.stringify(['Asha', 'MNG-AAAA-6666']) && r.readToken(plain[0][4]) === 'MNG-AAAA-6666', 'flag off: the old URL-button call, unchanged');
     const wa = require('../utils/whatsapp'), axios = require('axios'), realPost = axios.post;
@@ -211,6 +232,8 @@ const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } 
     ok(c[1].parameters[0].payload === 'a:1' && c[4].sub_type === 'url' && c[4].index === '3' && c[4].parameters[0].text === 'TOK', 'helper: url button at urlIndex with the suffix');
     await wa.sendTemplateWithButtons('919810001111', 't', 'en', ['x'], { quickReplies: ['p'] });
     ok(body.template.components.length === 2, 'helper: no url component without a suffix');
+    await wa.sendTemplateWithButtons('919810001111', 'munchingo_checkin_v1', 'en', ['Asha', 'MNG-1', 'Atta Original'], { quickReplies: ['a:1', 'b:1', 'c:1'], header: { type: 'image', link: 'https://munchingo.com/media/checkin.jpg' } });
+    { const h = body.template.components; ok(h.length === 5 && h[0].type === 'header' && h[0].parameters[0].type === 'image' && h[0].parameters[0].image.link === 'https://munchingo.com/media/checkin.jpg' && h[1].type === 'body' && h[2].index === '0' && !h.some((x) => x.sub_type === 'url'), 'helper: header component comes first, then body, then 3 quick replies, no url button'); }
     axios.post = realPost;
     delete process.env.REVIEW_REQUESTS_ENABLED;
   }

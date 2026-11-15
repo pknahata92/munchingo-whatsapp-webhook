@@ -65,9 +65,11 @@ async function sendTemplateWithUrlButton(to, templateName, languageCode, bodyPar
   });
 }
 
-// ── Approved template with quick-reply buttons (payloads) and an optional URL button at urlIndex (J3 check-in) ──
-async function sendTemplateWithButtons(to, templateName, languageCode, bodyParams, { quickReplies = [], urlSuffix, urlIndex = quickReplies.length } = {}) {
-  const components = [{ type: 'body', parameters: (bodyParams || []).map((text) => ({ type: 'text', text: String(text) })) }];
+// ── Approved template with quick-reply buttons (payloads), an optional URL button at urlIndex and an optional image/video header ({ type, link }) ──
+async function sendTemplateWithButtons(to, templateName, languageCode, bodyParams, { quickReplies = [], urlSuffix, urlIndex = quickReplies.length, header } = {}) {
+  const components = [];
+  if (header) components.push({ type: 'header', parameters: [{ type: header.type, [header.type]: { link: header.link } }] });
+  components.push({ type: 'body', parameters: (bodyParams || []).map((text) => ({ type: 'text', text: String(text) })) });
   quickReplies.forEach((payload, i) => components.push({ type: 'button', sub_type: 'quick_reply', index: String(i), parameters: [{ type: 'payload', payload: String(payload) }] }));
   if (urlSuffix != null) components.push({ type: 'button', sub_type: 'url', index: String(urlIndex), parameters: [{ type: 'text', text: String(urlSuffix) }] });
   return sendMessage({
