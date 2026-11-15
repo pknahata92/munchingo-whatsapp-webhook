@@ -53,7 +53,7 @@ async function save(phone, fields, firstSource) {
     return { ok: true, old };
   } catch (e) {
     console.error('[CONTACTS] save failed for', phone, e.message);
-    return { ok: false, old: undefined };
+    return { ok: false, old: undefined, error: e.message };
   }
 }
 
@@ -111,7 +111,10 @@ async function handleOptIn(phone, yes, version = 'v2') {
 
 async function handleStop(phone) {
   const { wa, now } = D();
-  const r = await save(phone, { consent_marketing: false, consent_reminder: false, consent_at: new Date(now()).toISOString(), consent_text: 'STOP' }, 'stop');
+  const stop = { consent_marketing: false, consent_at: new Date(now()).toISOString(), consent_text: 'STOP' };
+  let r = await save(phone, { ...stop, consent_reminder: false }, 'stop');
+  // STOP must always land: before growth_journey_migration.sql adds consent_reminder, the same save without it.
+  if (!r.ok && /consent_reminder/.test(r.error || '')) r = await save(phone, stop, 'stop');
   if (!r.ok) return wa.sendText(phone, REPLY.failed);
   return wa.sendText(phone, REPLY.stop);
 }

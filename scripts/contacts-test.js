@@ -110,6 +110,21 @@ function fakes(startMs) {
   await c.handleOptIn('919877777777', true);
   ok(f.rows['919877777777'] && f.rows['919877777777'].consent_marketing === true && f.rows['919877777777'].first_source === 'button', 'a yes from a number we never saved (stale button) is still recorded');
 
+  // ── A8 fix 5: STOP still works on a database without the consent_reminder column (backend live before the migration) ──
+  for (const msg of ["Could not find the 'consent_reminder' column of 'contacts' in the schema cache", 'column "consent_reminder" of relation "contacts" does not exist']) {
+    const g = fakes(START); c.setDeps(g.deps);
+    const strict = (fn) => async (...a) => { const fields = a[a.length - 1] && typeof a[a.length - 1] === 'object' ? a[a.length - 1] : a[0]; if ('consent_reminder' in fields) throw new Error(msg); return fn(...a); };
+    g.deps.db.updateContact = strict(g.deps.db.updateContact); g.deps.db.insertContact = strict(g.deps.db.insertContact);
+    g.rows['919810000030'] = { phone: '919810000030', first_source: 'fair:2026-10-20', consent_marketing: true };
+    await c.handleStop('919810000030');
+    const r1 = g.rows['919810000030'];
+    ok(r1.consent_marketing === false && r1.consent_text === 'STOP' && r1.consent_at === new Date(START).toISOString() && !('consent_reminder' in r1), 'no column (' + msg.slice(0, 20) + '…): STOP is saved without consent_reminder (' + JSON.stringify(r1) + ')');
+    ok(g.sent[0] && g.sent[0].text === "Done, I won't send you these messages. You can still message us here any time.", 'and confirmed, never "didn\'t go through"');
+    await c.handleStop('919810000031');
+    ok(g.rows['919810000031'] && g.rows['919810000031'].consent_marketing === false && g.rows['919810000031'].first_source === 'stop' && /won't send/.test(g.sent[1].text), 'a STOP from a new number is kept too');
+  }
+  c.setDeps(f.deps);
+
   // ── inbound time: never throws, never creates a contact ──
   f = fakes(START); c.setDeps(f.deps);
   await c.touchInbound('919800000099');
