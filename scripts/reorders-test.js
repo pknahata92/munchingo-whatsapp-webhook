@@ -32,6 +32,7 @@ const contact = (over = {}) => ({ phone: ASHA, name: 'Asha', first_source: 'chec
 const ravi = (over = {}) => ({ phone: RAVI, name: 'Ravi Kumar', first_source: 'stall:2026-11-01', last_source: 'stall:2026-11-01', consent_marketing: true, consent_reminder: true, last_inbound_at: null, last_complaint_at: null, ...over });
 const input = (over = {}) => ({ orders: [order()], contacts: [contact()], sends: [], eventsByOrder: {}, subscriptionPhones: [], stallOrders: [], inStock: ALL, nowMs: NOW, ...over });
 const due = (over) => r.dueReorders(input(over));
+const plan = (over) => r.planReorders(input(over));
 const sentRow = (over = {}) => ({ phone: ASHA, template: 'munchingo_reorder_try', campaign: 'j6:' + OID, status: 'sent', error: null, sent_at: iso(NOW - 2 * DAY), ...over });
 
 // ── 1. who is due, and with what ──
@@ -41,6 +42,7 @@ eq(d[0] && d[0].template, 'munchingo_reorder_try', 'with an untried Flavor in st
 eq(d[0] && d[0].params, ['Asha', '2', 'Atta Kesari'], 'params: first name, boxes, the try Flavor\'s display name');
 eq(d[0] && d[0].campaign, 'j6:MNG-AAAA-1111', 'campaign j6:<order id>');
 eq(d[0] && d[0].orderId, OID, 'orderId is the order');
+eq(d[0] && d[0].claimId, OID, 'a web order is claimed by its order id');
 eq(d[0] && d[0].phone, ASHA, 'sent to the consented number');
 eq(d[0] && d[0].first, 'Asha', 'first name from the order');
 eq(d[0] && d[0].boxes, 2, 'boxes in that order');
@@ -84,6 +86,12 @@ d = due({ orders: [order({ customer_phone: '9810000001' })], contacts: [contact(
 eq(d.length === 1 && d[0].phone, ASHA, 'phones match on the last 10 digits, sent as 91 + 10 digits');
 eq(due({ orders: [order({ order_id: 'MNG-TEST-0001' })] }).length, 0, 'test orders are never reminded');
 eq(due({ orders: [order({ delivered_at: null })] }).length, 0, 'not delivered yet: nothing');
+let p = plan({ orders: [order({ items: [{ slug: 'atta-original', quantity: 1 }] })] });
+eq([p.due.length, p.skipped.too_small], [0, 1], 'skip: a 1-box order (never "Your 1 boxes"), reason too_small');
+p = plan({ orders: [order({ items: [{ slug: 'atta-original', quantity: 1 }, { slug: 'shipping', quantity: 1 }] })] });
+eq([p.due.length, p.skipped.too_small], [0, 1], 'the shipping line is not a box: still too_small');
+p = plan({ orders: [order({ items: [{ slug: 'full-range-set', quantity: 1 }], delivered_at: iso(NOW - 28 * DAY) })], inStock: new Set() });
+eq([p.due.length, p.skipped.sold_out], [0, 1], 'R25: a Set whose Flavors are all sold out: held (sold_out)');
 
 // ── 2. the skips, one line each ──
 eq(due({ contacts: [contact({ consent_reminder: false })] }).length, 0, 'skip: consent does not cover reminders (consent_reminder false)');
@@ -132,22 +140,42 @@ eq(d[0] && d[0].campaign, 'j6:stall:2026-11-01', 'stall campaign j6:stall:<day>'
 eq(d[0] && d[0].orderId, null, 'stall: no order id');
 eq(d[0] && d[0].header, { type: 'image', link: IMG(null) }, 'stall: the all-Flavors picture');
 eq(d[0] && d[0].urlSuffix, 'shop?' + UTM, 'stall without recorded lines: the shop link');
+eq(d[0] && d[0].claimId, 'j6:stall:2026-11-01:9810000002', 'stall: claimed as j6:stall:<day>:<last 10 digits>');
 eq(due({ orders: [], contacts: [ravi()], nowMs: STALL_DAY - DAY }).length, 0, 'stall contact on 21 Nov: not due');
 eq(due({ orders: [], contacts: [ravi()], nowMs: STALL_DAY + 30 * DAY }).length, 1, 'stall: 30 days overdue still due');
 eq(due({ orders: [], contacts: [ravi()], nowMs: STALL_DAY + 31 * DAY }).length, 0, 'stall: more than 30 days overdue: not sent');
-eq(due({ orders: [], contacts: [ravi({ first_source: 'fair:2026-11-01', last_source: 'fair:2026-11-01' })], nowMs: STALL_DAY }).length, 1, 'fair:<day> contacts too');
+p = plan({ orders: [], contacts: [ravi({ first_source: 'fair:2026-11-01', last_source: 'fair:2026-11-01' })], nowMs: STALL_DAY });
+eq([p.due.length, p.skipped.no_purchase], [0, 1], 'R27: fair:<day> with no stall sale linked to the phone: skipped (no_purchase)');
 eq(due({ orders: [], contacts: [ravi({ consent_reminder: false })], nowMs: STALL_DAY }).length, 0, 'stall skip: consent does not cover reminders');
 eq(due({ orders: [], contacts: [ravi({ first_source: 'join:2026-11-01', last_source: 'join:2026-11-01' })], nowMs: STALL_DAY }).length, 0, 'a JOIN contact with no order is not a stall buyer');
 const line = (mix, hamper = false) => ({ item: Object.keys(mix)[0], name: 'x', price: 200, hamper, mix });
 const sale = (lines, day = '2026-11-01') => ({ contact_phone: RAVI, day, sold_at: day + 'T09:30:00Z', lines });
+d = due({ orders: [], contacts: [ravi({ first_source: 'fair:2026-11-01', last_source: 'fair:2026-11-01' })], stallOrders: [sale([line({ kesari: 2 })])], nowMs: STALL_DAY });
+eq(d.map((x) => [x.campaign, x.urlSuffix]), [['j6:stall:2026-11-01', 'cart?add=atta-kesari:2&' + UTM]], 'R27: fair:<day> with a stall sale linked: due, cart from the sale');
+p = plan({ orders: [order({ customer_phone: RAVI, order_id: 'MNG-RAVI-2410', created_at: iso(STALL_DAY - 32 * DAY), delivered_at: iso(STALL_DAY - 28 * DAY) })], contacts: [ravi({ first_source: 'checkout:2026-10-20', last_source: 'fair:2026-11-01' })], nowMs: STALL_DAY });
+eq(p.due.map((x) => x.campaign), ['j6:MNG-RAVI-2410'], 'R27: a FAIR scan without a purchase does not count as ordering again (the web nudge goes)');
 d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ kesari: 2 }), line({ lite: 1 })])], nowMs: STALL_DAY });
 eq(d[0] && d[0].urlSuffix, 'cart?add=atta-kesari:2,atta-lite-sugar:1&' + UTM, 'stall lines on record: their Flavors as the cart');
 d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ kesari: 2 }), line({ lite: 1 })])], inStock: new Set(['atta-lite-sugar', 'atta-original']), nowMs: STALL_DAY });
-eq(d[0] && d[0].urlSuffix, 'cart?add=atta-lite-sugar:1&' + UTM, 'stall: a sold-out Flavor is left out of the cart');
+eq(d[0] && d[0].urlSuffix, 'cart?add=atta-lite-sugar:2&' + UTM, 'stall: a sold-out Flavor is left out, and the 1-box cart is topped up to 2 of the in-stock favourite');
+d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ original: 1 })])], nowMs: STALL_DAY });
+eq(d[0] && d[0].urlSuffix, 'cart?add=atta-original:2&' + UTM, 'stall: a 1-box sale is topped up to 2 boxes');
+d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ original: 1 }), line({ kesari: 1 })])], nowMs: STALL_DAY });
+eq(d[0] && d[0].urlSuffix, 'cart?add=atta-original:1,atta-kesari:1&' + UTM, 'stall: 2 boxes already: no top-up');
+d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ kesari: 1 }), line({ lite: 2 })])], inStock: new Set(['atta-kesari', 'atta-original']), nowMs: STALL_DAY });
+eq(d[0] && d[0].urlSuffix, 'cart?add=atta-kesari:2&' + UTM, 'stall: the favourite that is topped up is the in-stock one');
+p = plan({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ kesari: 2 }), line({ lite: 1 })])], inStock: new Set(['atta-original', 'atta-ajwain']), nowMs: STALL_DAY });
+eq([p.due.length, p.skipped.sold_out], [0, 1], 'R25: no Flavor from the stall sale in stock: held (sold_out), not the shop link');
+p = plan({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ original: 1, kesari: 1, ajwain: 1 }, true)])], inStock: new Set(['atta-lite-sugar']), nowMs: STALL_DAY });
+eq([p.due.length, p.skipped.sold_out], [0, 1], 'R25: a hamper whose Flavors are all sold out: held');
+d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ original: 1, kesari: 1, ajwain: 1 }, true)])], inStock: new Set(['atta-ajwain']), nowMs: STALL_DAY });
+eq(d[0] && d[0].urlSuffix, 'build-a-box?' + UTM, 'a hamper with one of its Flavors in stock: Build a box');
 d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ original: 1, kesari: 1, ajwain: 1 }, true)])], nowMs: STALL_DAY });
 eq(d[0] && d[0].urlSuffix, 'build-a-box?' + UTM, 'stall hamper: Build a box, never the hamper as singles');
-d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ kesari: 2 })])], inStock: new Set(), nowMs: STALL_DAY });
-eq(d[0] && d[0].urlSuffix, 'shop?' + UTM, 'stall: nothing in stock, the shop');
+p = plan({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ kesari: 2 })])], inStock: new Set(), nowMs: STALL_DAY });
+eq([p.due.length, p.skipped.sold_out], [0, 1], 'R25: stall, nothing in stock: held (sold_out)');
+p = plan({ orders: [], contacts: [ravi()], inStock: new Set(), nowMs: STALL_DAY });
+eq([p.due.length, p.skipped.sold_out], [0, 1], 'R25: stall with no lines and nothing in stock at all: held, not the shop link');
 d = due({ orders: [], contacts: [ravi()], stallOrders: [sale([line({ kesari: 2 })], '2026-10-20')], nowMs: STALL_DAY });
 eq(d[0] && d[0].urlSuffix, 'shop?' + UTM, 'stall lines from another day are not used');
 const webRavi = (over) => order({ order_id: 'MNG-RAVI-0511', customer_phone: RAVI, customer_name: 'Ravi Kumar', ...over });
@@ -161,6 +189,10 @@ eq(due({ orders: [], contacts: [ravi(), ravi({ phone: '9810000002' })], nowMs: S
 eq(due({ orders: [], contacts: [ravi()], subscriptionPhones: [RAVI], nowMs: STALL_DAY }).length, 0, 'stall skip: active subscriber');
 eq(due({ orders: [], contacts: [ravi({ last_complaint_at: iso(STALL_DAY - 10 * DAY) })], nowMs: STALL_DAY }).length, 0, 'stall skip: complaint in the last 30 days');
 eq(due({ orders: [], contacts: [ravi()], sends: [sentRow({ phone: RAVI, template: 'munchingo_reorder_same', campaign: 'j6:stall:2026-11-01' })], nowMs: STALL_DAY }).length, 0, 'stall skip: already sent for that stall day');
+const SCLAIM = 'j6:stall:2026-11-01:9810000002';
+eq(due({ orders: [], contacts: [ravi()], eventsByOrder: { [SCLAIM]: [{ order_id: SCLAIM, event: 'reorder_reminder' }] }, nowMs: STALL_DAY }).length, 0, 'stall: claimed and no failure on record (say the log write failed): not again');
+d = due({ orders: [], contacts: [ravi()], eventsByOrder: { [SCLAIM]: [{ order_id: SCLAIM, event: 'reorder_reminder' }] }, sends: [sentRow({ phone: RAVI, template: 'munchingo_reorder_same', campaign: 'j6:stall:2026-11-01', status: 'failed', error: '131049 x', sent_at: iso(STALL_DAY - 3 * DAY) })], nowMs: STALL_DAY });
+eq(d.length === 1 && d[0].retry, true, 'stall: claimed, then refused 72 h ago: one retry');
 
 // pure: the inputs are not changed
 const pureIn = input({ contacts: [contact(), ravi()], stallOrders: [sale([line({ kesari: 2 })])], nowMs: STALL_DAY });
@@ -181,7 +213,7 @@ function world({ orders = [order()], contacts = [contact()], sends = [], subs = 
     listOrderEventsByName: async (name, ids) => w.events.filter((e) => e.event === name && ids.includes(e.order_id)).map((e) => ({ ...e })),
     // Like Postgres with the unique index: one reorder_reminder (and one reorder_reminder_retry) per order.
     claimOrderEvent: async (ev) => { w.claims.push(ev); if (w.events.some((e) => e.order_id === ev.order_id && e.event === ev.event)) return false; w.events.push({ ...ev, created_at: iso(w.t) }); return true; },
-    insertMarketingSend: async (row) => { w.logged.push(row); w.sends.push({ ...row, sent_at: iso(w.t) }); },
+    insertMarketingSend: async (row) => { if (w.logDown) throw new Error('log down'); w.logged.push(row); w.sends.push({ ...row, sent_at: iso(w.t) }); },
     claimDigestDay: async (day) => { if (w.days.has(day)) return false; w.days.add(day); return true; },
     releaseDigestDay: async (day) => { w.released.push(day); w.days.delete(day); },
   };
@@ -191,7 +223,7 @@ function world({ orders = [order()], contacts = [contact()], sends = [], subs = 
     sendImage: async (to, link, caption) => { if (w.failWith) throw w.failWith; const m = id(); w.sent.push({ kind: 'image', to, link, caption, id: m }); return { messages: [{ id: m }] }; },
     sendText: async (to, text) => { w.sent.push({ kind: 'text', to, text }); return { messages: [{ id: id() }] }; },
   };
-  r.setDeps({ db, wa, now: () => w.t, inStock: async () => inStock, lang: async () => 'en' });
+  r.setDeps({ db, wa, now: () => w.t, inStock: async () => w.stock || inStock, lang: async () => 'en' });
   return w;
 }
 const metaErr = (code, message) => Object.assign(new Error('Request failed'), { response: { data: { error: { code, message } } } });
@@ -242,8 +274,14 @@ const metaErr = (code, message) => Object.assign(new Error('Request failed'), { 
   ok(!/atta-original/.test(so.urlSuffix || 'atta-original'), 'RF5: the sold-out favourite (Original) is not in the cart: ' + so.urlSuffix);
   eq(so.urlSuffix, 'cart?add=atta-kesari:2,atta-ajwain&' + UTM, 'RF5: the next Flavor from that order stands in, plus the try');
   eq(so.header, { type: 'image', link: IMG('atta-kesari') }, 'RF5: and the picture follows the stand-in');
-  d = due({ inStock: new Set(['atta-kesari']) });
-  ok(d.length === 1 && !/atta-original/.test(d[0].urlSuffix), 'RF5: a one-Flavor order whose Flavor sold out: still never in the cart (' + (d[0] && d[0].urlSuffix) + ')');
+  p = plan({ inStock: new Set(['atta-kesari']) });
+  eq([p.due.length, p.skipped.sold_out], [0, 1], 'R25: nothing from the last order in stock: held (sold_out), never "Same as last time" over another Flavor');
+  w = world({ inStock: new Set(['atta-kesari']) });
+  res = await r.sweepReorders();
+  eq([w.sent.length, w.claims.length, res.reasons.sold_out], [0, 0, 1], 'R25: a held reminder is not claimed or sent');
+  w.stock = ALL; w.t = NOW + DAY;
+  await r.sweepReorders();
+  eq([w.sent.length, (w.sent[0] || {}).name], [1, 'munchingo_reorder_try'], 'R25: checked again the next day: back in stock, it goes');
 
   // the window is open (they wrote in the last 23 h): free-form picture with the words and the link
   w = world({ contacts: [contact({ last_inbound_at: iso(NOW - 2 * HOUR) })] });
@@ -266,10 +304,19 @@ const metaErr = (code, message) => Object.assign(new Error('Request failed'), { 
   res = await r.sweepReorders();
   const st = w.sent[0] || {};
   eq([st.name, st.params, st.opts && st.opts.header, st.opts && st.opts.urlSuffix], ['munchingo_reorder_same', ['Ravi', 'Munchingo'], { type: 'image', link: IMG(null) }, 'shop?' + UTM], 'stall: same template, [Ravi, Munchingo], reorder-all.jpg, shop link');
-  eq(w.claims.length, 0, 'stall: no order to claim');
+  eq(w.claims, [{ actor_name: 'System', order_id: 'j6:stall:2026-11-01:9810000002', event: 'reorder_reminder', meta: {} }], 'stall: claimed before sending (j6:stall:<day>:<last10>, meta {})');
   eq(w.logged.map((l) => l.campaign), ['j6:stall:2026-11-01'], 'stall: logged with j6:stall:<day>');
   await r.sweepReorders();
   eq(w.sent.length, 1, 'stall: a second run the same day sends nothing');
+  w = world({ orders: [], contacts: [ravi()], now: STALL_DAY });
+  const [sa, sb] = await Promise.all([r.sweepReorders(), r.sweepReorders()]);
+  eq([w.sent.length, w.claims.length, sa.sent + sb.sent, sa.skipped + sb.skipped], [1, 2, 1, 1], 'stall: two overlapping runs send once (the second claim returns false)');
+  w = world({ orders: [], contacts: [ravi()], now: STALL_DAY });
+  w.logDown = true;
+  await r.sweepReorders();
+  w.logDown = false; w.t = STALL_DAY + DAY;
+  await r.sweepReorders();
+  eq(w.sent.length, 1, 'stall: the log write failed after a send: the next run does not send it again');
 
   // a failed send is logged, counted, and retried once after 48 h only for 131049
   w = world();

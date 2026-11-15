@@ -2,12 +2,15 @@
 // J6 reorder reminder (growth journey, 16 Nov 2026). Spec §6.1 (J6 row, "J6 cart", "J6 skips anyone who"), words §11.
 // One marketing nudge, about when the box is probably running low, timed by the size of the last delivered order:
 // 2 boxes or fewer: day 21; 3-4: day 28; 5 or more: day 35 (IST calendar days after delivery), and never more than 30 days late.
-// Stall and fair contacts: 21 days after their stall day. Only to contacts whose yes names the nudge (contacts.coversReminders).
+// Stall and fair contacts: 21 days after their stall day (a fair: contact only with a stall sale linked to the phone: typing FAIR
+// is not a purchase, R27). Only to contacts whose yes names the nudge (contacts.coversReminders).
+// Held, not sent, while nothing from the last purchase is in stock ("Same as last time" would not be true, R25): checked again
+// each day inside the 30-day window. A last order under 2 boxes gets no nudge.
 // The cart is reorderCart.cartLink (two of the favourite + one untried Flavor in stock; sold-out never in it; a Set opens Build a
 // box). Every send has the picture header Meta approved with the template (a send without it is rejected).
-// Once per order: each order is claimed on its timeline (reorder_reminder, unique per order) before anything is sent; a send
-// Meta refused gets ONE retry, after the 48 h cool-off (reorder_reminder_retry). Every send is logged in marketing_sends with
-// campaign j6:<order id> or j6:stall:<day>, so the shared cap (utils/marketingCap.js) counts it.
+// Once per order: each order (a stall reminder as j6:stall:<day>:<last10>) is claimed on the timeline (reorder_reminder, unique)
+// before anything is sent; a send Meta refused gets ONE retry, after the 48 h cool-off (reorder_reminder_retry). Every send is
+// logged in marketing_sends with campaign j6:<order id> or j6:stall:<day>, so the shared cap (utils/marketingCap.js) counts it.
 // The contact wrote in the last 23 h: the window is open, so the same words go as a picture with a caption (ruling R24).
 // Runs only with JOURNEY_J6_ENABLED=1, never in quiet hours. GET /internal/reorders (handleRequest) is called by pg_cron at 16:00
 // IST (scheduling_setup.sql).   Tests: scripts/reorders-test.js
@@ -23,6 +26,7 @@ const { reorderImage } = require('./journeyMedia');
 const DAY = 86_400_000, HOUR = 3_600_000, IST_MS = 5.5 * HOUR;
 const REORDER_DAYS = { small: 21, mid: 28, large: 35 };   // 2 boxes or fewer / 3-4 / 5 or more
 const STALL_DAYS = 21;
+const MIN_BOXES = 2;               // never "Your 1 boxes"; a stall cart is topped up to the site's 2-box minimum
 const OVERDUE_DAYS = 30;           // no nudge more than 30 days after it fell due
 const COMPLAINT_DAYS = 30;         // Something wasn't right: no marketing for 30 days
 const WINDOW_MS = 23 * HOUR;       // Meta's window is 24 h; an hour of margin
@@ -81,23 +85,45 @@ const boxesOf = (order) => Object.values(boxesBySlug(((order && order.items) || 
 const daysFor = (boxes) => (boxes <= 2 ? REORDER_DAYS.small : boxes <= 4 ? REORDER_DAYS.mid : REORDER_DAYS.large);
 const complainedRecently = (c, nowMs) => !!(c && c.last_complaint_at) && nowMs - at(c.last_complaint_at) < COMPLAINT_DAYS * DAY;
 
-/** The latest stall or fair day for this contact: its stall:/fair: sources and any stall sale linked to the phone. */
+/** The latest stall purchase day for this contact: its stall: sources, its fair: sources only when a stall sale is linked to the
+ *  phone (FAIR is typed by buyers and browsers alike, R27), and the days of those linked sales. */
 function stallDayOf(c, sales) {
-  const days = [c && c.first_source, c && c.last_source].map((s) => (String(s || '').match(SOURCE_DAY) || [])[2]).filter(Boolean);
+  const bought = !!(sales && sales.length);
+  const days = [];
+  for (const src of [c && c.first_source, c && c.last_source]) {
+    const m = String(src || '').match(SOURCE_DAY);
+    if (m && (m[1] === 'stall' || bought)) days.push(m[2]);
+  }
   for (const s of sales || []) if (/^\d{4}-\d{2}-\d{2}$/.test(String(s.day || ''))) days.push(s.day);
   return days.sort().pop() || null;
 }
+const fairVisit = (c) => [c && c.first_source, c && c.last_source].some((s) => /^fair:/.test(String(s || '')));
+const stallClaimId = (day, key) => `j6:stall:${day}:${key}`;
+function salesByPhone(stallOrders) {
+  const m = new Map();
+  for (const s of stallOrders || []) { const k = last10(s && s.contact_phone); if (!k) continue; if (!m.has(k)) m.set(k, []); m.get(k).push(s); }
+  return m;
+}
+/** The timeline ids a run may claim for stall contacts, so the sweep can read their claims before planning. */
+function stallClaimIds({ contacts = [], stallOrders = [] }) {
+  const salesBy = salesByPhone(stallOrders), out = new Set();
+  for (const c of contacts) { const k = last10(c && c.phone); const d = k && stallDayOf(c, salesBy.get(k)); if (d) out.add(stallClaimId(d, k)); }
+  return [...out];
+}
 
-/** The stall sale's Flavors as the "same as last time" cart. Sold-out Flavors left out; a hamper opens Build a box (never the
- *  hamper as singles, R20); nothing to put in the bag opens the shop. */
+/** The stall sale's Flavors as the "same as last time" cart, or null when none of them is in stock (held, R25). Sold-out Flavors
+ *  left out; under 2 boxes, the in-stock favourite (most boxes, a tie to the first in SLUGS) is topped up to 2; a hamper opens
+ *  Build a box (never the hamper as singles, R20). */
 function stallCart(lines, inStock) {
   const has = (s) => !!inStock && inStock.has(s);
-  if (!SLUGS.some(has)) return `shop?${UTM}`;
-  if (lines.some((l) => l && l.hamper)) return `build-a-box?${UTM}`;
   const boxes = {};
   for (const l of lines) for (const [k, n] of Object.entries((l && l.mix) || {})) if (STALL_SLUG[k] && n > 0) boxes[STALL_SLUG[k]] = (boxes[STALL_SLUG[k]] || 0) + n;
-  const parts = SLUGS.filter((s) => has(s) && boxes[s] > 0).map((s) => `${s}:${boxes[s]}`);
-  return parts.length ? `cart?add=${parts.join(',')}&${UTM}` : `shop?${UTM}`;
+  const kept = SLUGS.filter((s) => has(s) && boxes[s] > 0);
+  if (!kept.length) return null;
+  if (lines.some((l) => l && l.hamper)) return `build-a-box?${UTM}`;
+  const fav = kept.reduce((a, s) => (boxes[s] > boxes[a] ? s : a));
+  if (kept.reduce((n, s) => n + boxes[s], 0) < MIN_BOXES) boxes[fav] = MIN_BOXES;
+  return `cart?add=${kept.map((s) => `${s}:${boxes[s]}`).join(',')}&${UTM}`;
 }
 
 /** The shared gate, with every J6 wording (try, same, the free-form picture) counted as ONE message per campaign: a rerun after
@@ -109,6 +135,14 @@ function gate(key, sends, nowMs, campaign) {
   return mine.filter((s) => s.template === 'j6' && s.campaign === campaign && s.status === 'failed').length >= 2 ? 'blocked_twice' : 'ok';
 }
 const failedBefore = (key, sends, campaign) => sends.some((s) => last10(s.phone) === key && J6.has(s.template) && s.campaign === campaign && s.status === 'failed');
+/** Claimed before? -> null (done: the retry is spent, or the first try is not on record as failed, so it may have gone; never
+ *  twice) or { retry } (retry: the first try was refused, this is the one more). */
+function claimState(events, key, sends, campaign) {
+  const as = new Set((events || []).map((e) => e.event));
+  if (as.has(EVENT.retry)) return null;
+  const retry = as.has(EVENT.first);
+  return retry && !failedBefore(key, sends, campaign) ? null : { retry };
+}
 
 /** Pure. Who is due now, and every skip counted by reason: { due: [...], skipped: { reason: n }, checked }. */
 function planReorders({ orders = [], contacts = [], sends = [], eventsByOrder = {}, subscriptionPhones = [], stallOrders = [], inStock, nowMs }) {
@@ -128,8 +162,7 @@ function planReorders({ orders = [], contacts = [], sends = [], eventsByOrder = 
     if (!ordersBy.has(k)) ordersBy.set(k, []);
     ordersBy.get(k).push(o);
   }
-  const salesBy = new Map();
-  for (const s of stallOrders) { const k = last10(s && s.contact_phone); if (!k) continue; if (!salesBy.has(k)) salesBy.set(k, []); salesBy.get(k).push(s); }
+  const salesBy = salesByPhone(stallOrders);
 
   // ── web buyers: the newest delivered order per phone ──
   for (const [key, list] of ordersBy) {
@@ -139,6 +172,7 @@ function planReorders({ orders = [], contacts = [], sends = [], eventsByOrder = 
     const ref = delivered[0];
     const c = contactBy.get(key);
     const boxes = boxesOf(ref);
+    if (boxes < MIN_BOXES) { skip('too_small'); continue; }
     const deliveredDay = istDay(at(ref.delivered_at));
     const since = daysFrom(deliveredDay, today), wait = daysFor(boxes);
     if (since < wait) { skip('not_due'); continue; }
@@ -157,13 +191,11 @@ function planReorders({ orders = [], contacts = [], sends = [], eventsByOrder = 
     const campaign = 'j6:' + ref.order_id;
     const v = gate(key, sends, nowMs, campaign);
     if (v !== 'ok') { skip(v); continue; }
-    const claimedAs = new Set((eventsByOrder[ref.order_id] || []).map((e) => e.event));
-    if (claimedAs.has(EVENT.retry)) { skip('already_sent'); continue; }
-    // Claimed before: retry only when that try is on record as failed (a claim with no log row might have gone: never twice).
-    const retry = claimedAs.has(EVENT.first);
-    if (retry && !failedBefore(key, sends, campaign)) { skip('already_sent'); continue; }
+    const state = claimState(eventsByOrder[ref.order_id], key, sends, campaign);
+    if (!state) { skip('already_sent'); continue; }
     const history = [ref, ...list.filter((o) => o !== ref).sort((x, y) => at(y.created_at) - at(x.created_at))];
     const cart = cartLink({ orders: history, inStock, campaign: UTM_CAMPAIGN, medium: 'journey' });
+    if (!cart.favSlug) { skip('sold_out'); continue; }   // R25: nothing from that order in stock; not claimed, so checked again tomorrow
     const first = firstName(ref.customer_name) || firstName(c.name) || 'there';
     const tryName = cart.trySlug ? NAME[cart.trySlug] : null;
     due.push({
@@ -171,7 +203,7 @@ function planReorders({ orders = [], contacts = [], sends = [], eventsByOrder = 
       template: tryName ? TEMPLATE.try : TEMPLATE.same,
       params: tryName ? [first, String(boxes), tryName] : [first, String(boxes)],
       urlSuffix: cart.path, header: { type: 'image', link: reorderImage(cart.favSlug) },
-      campaign, orderId: ref.order_id, retry, lastInboundAt: c.last_inbound_at || null,
+      campaign, orderId: ref.order_id, claimId: ref.order_id, retry: state.retry, lastInboundAt: c.last_inbound_at || null,
     });
   }
 
@@ -179,10 +211,12 @@ function planReorders({ orders = [], contacts = [], sends = [], eventsByOrder = 
   const seen = new Set();   // one row per number, even if it is stored twice in two formats
   for (const c of contacts) {
     const key = last10(c && c.phone);
-    const day = key && !seen.has(key) && stallDayOf(c, salesBy.get(key));
-    if (!day) continue;
+    if (!key || seen.has(key)) continue;
+    const day = stallDayOf(c, salesBy.get(key));
+    if (!day && !fairVisit(c)) continue;
     seen.add(key);
     checked++;
+    if (!day) { skip('no_purchase'); continue; }   // R27: typed FAIR, no stall sale linked to the phone
     const since = daysFrom(day, today);
     if (since < STALL_DAYS) { skip('not_due'); continue; }
     if (since > STALL_DAYS + OVERDUE_DAYS) { skip('too_late'); continue; }
@@ -194,13 +228,18 @@ function planReorders({ orders = [], contacts = [], sends = [], eventsByOrder = 
     const campaign = 'j6:stall:' + day;
     const v = gate(key, sends, nowMs, campaign);
     if (v !== 'ok') { skip(v); continue; }
+    const claimId = stallClaimId(day, key);
+    const state = claimState(eventsByOrder[claimId], key, sends, campaign);
+    if (!state) { skip('already_sent'); continue; }
     const lines = (salesBy.get(key) || []).filter((s) => s.day === day).flatMap((s) => s.lines || []);
+    const urlSuffix = lines.length ? stallCart(lines, inStock) : SLUGS.some((s) => !!inStock && inStock.has(s)) ? `shop?${UTM}` : null;
+    if (!urlSuffix) { skip('sold_out'); continue; }   // R25: held, not the shop link under "Same as last time?"
     const first = firstName(c.name) || 'there';
     due.push({
       phone: normPhone(c.phone), first, boxes: null,
       template: TEMPLATE.same, params: [first, 'Munchingo'],
-      urlSuffix: lines.length ? stallCart(lines, inStock) : `shop?${UTM}`, header: { type: 'image', link: reorderImage(null) },
-      campaign, orderId: null, retry: false, lastInboundAt: c.last_inbound_at || null,
+      urlSuffix, header: { type: 'image', link: reorderImage(null) },
+      campaign, orderId: null, claimId, retry: state.retry, lastInboundAt: c.last_inbound_at || null,
     });
   }
   return { due, skipped, checked };
@@ -232,7 +271,7 @@ async function sweepReorders() {
     db.getPaidOrdersUpdatedSince(since), db.listMarketingContacts(), db.listMarketingSends(), db.listActiveSubscriptionPhones(), db.listStallOrdersWithPhone(since),
   ]);
   if (orders.length >= MAX_ROWS) return { blocked: `${orders.length} paid orders in ${LOOKBACK_DAYS} days fill one page: the reorder job needs paging before it can run safely.` };
-  const ids = orders.filter((o) => o.delivered_at).map((o) => o.order_id);
+  const ids = [...orders.filter((o) => o.delivered_at).map((o) => o.order_id), ...stallClaimIds({ contacts, stallOrders })];
   const eventsByOrder = {};
   for (const name of Object.values(EVENT)) {
     for (const e of ids.length ? await db.listOrderEventsByName(name, ids) : []) (eventsByOrder[e.order_id] = eventsByOrder[e.order_id] || []).push(e);
@@ -242,12 +281,10 @@ async function sweepReorders() {
   const reasons = { ...p.skipped };
   const res = { checked: p.checked, sent: 0, skipped: Object.values(reasons).reduce((a, b) => a + b, 0), failed: 0, reasons };
   for (const item of p.due) {
-    if (item.orderId) {
-      let claimed = false;
-      try { claimed = await db.claimOrderEvent({ actor_name: 'System', order_id: item.orderId, event: item.retry ? EVENT.retry : EVENT.first, meta: { campaign: item.campaign } }); }
-      catch (e) { console.error(`[REORDERS] could not claim ${item.orderId}, not sending:`, e.message); res.failed++; continue; }
-      if (!claimed) { res.skipped++; reasons.claimed_elsewhere = (reasons.claimed_elsewhere || 0) + 1; continue; }   // another run has it
-    }
+    let claimed = false;
+    try { claimed = await db.claimOrderEvent({ actor_name: 'System', order_id: item.claimId, event: item.retry ? EVENT.retry : EVENT.first, meta: item.orderId ? { campaign: item.campaign } : {} }); }
+    catch (e) { console.error(`[REORDERS] could not claim ${item.claimId}, not sending:`, e.message); res.failed++; continue; }
+    if (!claimed) { res.skipped++; reasons.claimed_elsewhere = (reasons.claimed_elsewhere || 0) + 1; continue; }   // another run has it
     const open = !!item.lastInboundAt && nowMs - at(item.lastInboundAt) < WINDOW_MS;
     const template = open ? TEMPLATE.freeform : item.template;
     let status = 'sent', error = null, waId = null;
@@ -294,4 +331,4 @@ async function handleRequest({ query = {} } = {}) {
   }
 }
 
-module.exports = { REORDER_DAYS, STALL_DAYS, TEMPLATE, EVENT, REPLIES, dueReorders, planReorders, sweepReorders, handleRequest, setDeps };
+module.exports = { REORDER_DAYS, STALL_DAYS, MIN_BOXES, TEMPLATE, EVENT, REPLIES, dueReorders, planReorders, stallClaimIds, sweepReorders, handleRequest, setDeps };

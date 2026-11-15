@@ -20,7 +20,8 @@ alter table suggestion_waits add column if not exists order_id text;
 -- journey_tap before this push, so there are no duplicates to trip it.
 create unique index if not exists order_events_journey_tap_once on order_events (order_id, event) where event = 'journey_tap';
 
--- order_events: one J6 reorder reminder per order, and at most one retry after Meta refused it (utils/reorders.js claims each with
+-- order_events: one J6 reorder reminder per order (a stall reminder is keyed j6:stall:<day>:<last 10 digits>; order_id has no
+-- foreign key), and at most one retry after Meta refused it (utils/reorders.js claims each with
 -- claimOrderEvent before sending; without this index the claim always succeeds and two overlapping runs could both send).
 -- Nothing writes these events before this push, so there are no duplicates to trip it.
 create unique index if not exists order_events_reorder_once on order_events (order_id, event) where event in ('reorder_reminder', 'reorder_reminder_retry');
