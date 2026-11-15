@@ -177,6 +177,15 @@ const T = 'munchingo_diwali_2026', V = 'https://munchingo.com/media/diwali-2026.
   r = await b.run({ template: T, mode: 'dry' });
   ok(r.to_send === 0 && r.already_sent === 1, 'the owner is still skipped when already sent');
 
+  // owner with two 131049 failures: held during the 48 h cool-off, sent once both are older than 48 h
+  const oF = (h) => ({ phone: '919999900000', template: T, campaign: null, status: 'failed', error: '131049 x', sent_at: new Date(NOW - h * 3_600_000).toISOString() });
+  w = world({ contacts: [], sends: [oF(30), oF(10)] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 0 && r.cooling_off === 1 && r.blocked_twice === 0, 'owner with two failures inside 48 h is cooling_off (got ' + JSON.stringify({ t: r.to_send, c: r.cooling_off, b: r.blocked_twice }) + ')');
+  w = world({ contacts: [], sends: [oF(100), oF(80)] });
+  r = await b.run({ template: T, mode: 'dry' });
+  ok(r.to_send === 1 && r.blocked_twice === 0, 'owner whose two failures are older than 48 h is still sent to');
+
   // retry at most once after 131049: two failures for the same template + campaign block the person
   const h131 = (h) => ({ phone: '919000000001', template: T, campaign: null, status: 'failed', error: '131049 x', sent_at: new Date(NOW - h * 3_600_000).toISOString() });
   w = world({ contacts: [C('919000000001', 'Asha')], sends: [h131(100), h131(80)] });

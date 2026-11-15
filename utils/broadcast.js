@@ -72,7 +72,8 @@ async function audience(template, sources, exclude = [], campaign = null) {
   const out = { list: [], already_sent: 0, over_cap: 0, skipped: 0, cooling_off: 0, blocked_twice: 0 };
   const seen = new Set([owner]);
   const verdict = (p) => { const v = gate(p); if (v !== 'ok') out[v]++; return v === 'ok'; };
-  // The owner is the live check on every send: skipped only if already sent or cooling off, never for the cap or blocked_twice.
+  // The owner is the live check on every send. Changed 15 Nov 2026: he used to be skipped on any non-ok verdict; now he is skipped
+  // ONLY for already_sent and cooling_off, and never for over_cap or blocked_twice.
   if (owner) { const v = gate(owner); if (v === 'already_sent' || v === 'cooling_off') out[v]++; else out.list.push({ phone: owner, first: 'Prashant' }); }
   const has = (c, list) => list.some((x) => [c.first_source, c.last_source].some((v) => String(v || '').startsWith(x)));
   const fromSource = (c) => (!sources.length || has(c, sources)) && !(exclude.length && has(c, exclude));

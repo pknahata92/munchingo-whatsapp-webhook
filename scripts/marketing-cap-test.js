@@ -23,6 +23,7 @@ ok(cap.slotFor({ phone: '+91 90000 00001', sends: [S(T)], nowMs: NOW, template: 
 ok(cap.slotFor({ phone: P, sends: [F131049(NOW - 3 * H, 'other', 'x')], nowMs: NOW, template: T, campaign: C }) === 'cooling_off', '131049 3 h ago cools off any template');
 ok(cap.slotFor({ phone: P, sends: [F131049(NOW - 49 * H)], nowMs: NOW, template: T, campaign: C }) === 'ok', 'after 48 h one 131049 can be retried');
 ok(cap.slotFor({ phone: P, sends: [{ ...F131049(NOW - 3 * H), error: '131026 undeliverable' }], nowMs: NOW, template: T, campaign: C }) === 'ok', 'other failures are not held');
+ok(cap.slotFor({ phone: P, sends: [F131049(NOW - 30 * H), F131049(NOW - 10 * H)], nowMs: NOW, template: T, campaign: C }) === 'cooling_off', 'two failures inside 48 h are cooling_off, not blocked_twice');
 ok(cap.slotFor({ phone: P, sends: [F131049(NOW - 72 * H), F131049(NOW - 60 * H)], nowMs: NOW, template: T, campaign: C }) === 'blocked_twice', 'retried at most once after 131049');
 ok(cap.slotFor({ phone: P, sends: [F131049(NOW - 72 * H), F131049(NOW - 60 * H, T, 'other')], nowMs: NOW, template: T, campaign: C }) === 'ok', 'two failures for different campaigns are not blocked_twice');
 
