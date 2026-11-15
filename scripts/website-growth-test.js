@@ -142,7 +142,7 @@ const page = (file, url, handler) => new JSDOM(fs.readFileSync(path.join(SITE, f
         const p = [...d.querySelectorAll('.v2-buy p')].find((e) => norm(e.textContent) === line);
         ok(!!p, file + ' has the approved "What you pay for" line in the buy block');
         const buy = d.querySelector('.v2-buy');
-        ok(p && buy.compareDocumentPosition(p) && p.compareDocumentPosition(d.getElementById('add')) & 4, file + ' the line sits before the add-to-bag button');
+        ok(p && !!(d.getElementById('add').compareDocumentPosition(p) & 4) && !!(p.compareDocumentPosition(d.querySelector('.v2-mov')) & 4), file + ' the line sits after the add-to-bag row (R31)');
       }
       ok(!/100\s*%/.test(html), file + ' has no "100%"');
     }
