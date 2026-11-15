@@ -66,7 +66,7 @@ async function sync(body) {
     const b = o.buyer;
     const phone = b && b.consent === true ? normalisePhone(b.phone) : null;
     rows.push({ id: o.id, day: v.day, customer_no: o.n, sold_at: new Date(o.t).toISOString(), pay: o.pay, lines: o.lines, total: o.lines.reduce((s, l) => s + l.price, 0), contact_phone: phone, deleted_at: null, updated_at: at });
-    if (phone) consented.push({ phone, name: String(b.name || '').trim().slice(0, 60) || null, text: String(b.consentText || '').slice(0, 300), day: v.day });
+    if (phone) consented.push({ phone, name: String(b.name || '').trim().slice(0, 60) || null, text: String(b.consentText || '').slice(0, 300), day: v.day, tickMs: o.t });
   }
   await db.upsertStallOrders(rows);
   const keep = new Set(v.orders.map((o) => o.id));
@@ -77,6 +77,11 @@ async function sync(body) {
   for (const c of consented) {
     try {
       const old = await db.getContact(c.phone);
+      // Every change on the iPad resends the whole day, so this runs again and again. A withdrawal AFTER this tick (STOP, or a No,
+      // recorded with its time by utils/contacts.js) wins over every re-sync; a STOP with no time always wins. A tick after the STOP
+      // is a fresh yes (as utils/checkoutOptIn.js).
+      const outAt = old && old.consent_marketing === false ? (Date.parse(old.consent_at) || (old.consent_text === 'STOP' ? Infinity : -Infinity)) : -Infinity;
+      if (outAt >= c.tickMs) continue;
       const source = 'stall:' + c.day;
       const fields = { consent_marketing: true, consent_at: at, consent_text: c.text || 'stall: ticked the marketing box', last_source: source, updated_at: at };
       if (old) await db.updateContact(c.phone, { ...fields, name: old.name || c.name });

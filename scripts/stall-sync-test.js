@@ -59,6 +59,39 @@ const CONSENT = 'OK to send me new Flavors and offers on WhatsApp? A few message
   await stall.sync({ ...snap, orders: [order('b5', 1, { buyer: buyer({ phone: '9833333333', name: 'Typed Name' }) })] });
   ok(store.contacts['919833333333'].consent_marketing === true && store.contacts['919833333333'].name === 'WA Name' && store.contacts['919833333333'].first_source === 'join:2026-10-25', 'existing contact: consent recorded, original name and first source kept');
 
+  // ── A8 fix 10: a re-sync never turns consent back on after a STOP (STOP is recorded as contacts.handleStop writes it) ──
+  {
+    const contacts = require('../utils/contacts');
+    const STOP_AT = Date.parse('2026-10-27T09:45:00Z');   // the tick (order t) is 09:30, the sync clock 10:00
+    contacts.setDeps({ db: { getContact: async (p) => store.contacts[p] || null, updateContact: async (p, f) => { Object.assign(store.contacts[p], f); return store.contacts[p]; }, insertContact: async (r) => { store.contacts[r.phone] = { ...r }; return r; } }, wa: { sendText: async () => {} }, now: () => STOP_AT });
+    const P = '919844444444', day = { ...snap, orders: [order('s1', 1, { buyer: buyer({ phone: '9844444444', name: 'Neha' }) })] };
+    await stall.sync(day);
+    ok(store.contacts[P] && store.contacts[P].consent_marketing === true, 'stall tick: consent on');
+    await contacts.handleStop(P);
+    ok(store.contacts[P].consent_marketing === false && store.contacts[P].consent_text === 'STOP', 'the buyer sends STOP at 09:45');
+    r = await stall.sync(day);   // the iPad resends the day (any later change)
+    ok(store.contacts[P].consent_marketing === false && store.contacts[P].consent_text === 'STOP' && store.contacts[P].consent_at === new Date(STOP_AT).toISOString(), 're-sync of the 09:30 tick after a 09:45 STOP: consent stays off, the STOP record untouched (' + JSON.stringify(store.contacts[P]) + ')');
+    ok(r.status === 200 && r.body.contacts === 0, 'and it is not counted as a contact saved');
+    // a new tick at the stall AFTER the STOP is a fresh yes
+    await stall.sync({ ...snap, orders: [day.orders[0], order('s2', 2, { t: Date.parse('2026-10-27T09:55:00Z'), buyer: buyer({ phone: '9844444444', name: 'Neha' }) })] });
+    ok(store.contacts[P].consent_marketing === true && store.contacts[P].consent_text === CONSENT, 'a tick at 09:55, after the STOP: consent on again with the stall words');
+    // a STOP before the tick does not block it
+    const Q = '919855555555';
+    store.contacts[Q] = { phone: Q, name: 'Old', first_source: 'join:2026-10-20', consent_marketing: false, consent_reminder: false, consent_at: '2026-10-20T00:00:00.000Z', consent_text: 'STOP' };
+    await stall.sync({ ...snap, orders: [order('s3', 1, { buyer: buyer({ phone: '9855555555' }) })] });
+    ok(store.contacts[Q].consent_marketing === true, 'a STOP on 20 Oct, then a tick on 27 Oct: consent on');
+    // a STOP record without a time: never turned back on
+    const R2 = '919866666666';
+    store.contacts[R2] = { phone: R2, first_source: 'stop', consent_marketing: false, consent_text: 'STOP' };
+    await stall.sync({ ...snap, orders: [order('s4', 1, { buyer: buyer({ phone: '9866666666' }) })] });
+    ok(store.contacts[R2].consent_marketing === false && store.contacts[R2].consent_text === 'STOP', 'a STOP with no time: a stall tick never overrides it');
+    // a No to the consent question after the tick also wins (any withdrawal after the tick, as utils/checkoutOptIn.js)
+    const N = '919877777777';
+    store.contacts[N] = { phone: N, first_source: 'stall:2026-10-27', consent_marketing: false, consent_reminder: false, consent_at: '2026-10-27T09:50:00.000Z', consent_text: contacts.CONSENT_QUESTION };
+    await stall.sync({ ...snap, orders: [order('s5', 1, { buyer: buyer({ phone: '9877777777' }) })] });
+    ok(store.contacts[N].consent_marketing === false, 'a No at 09:50 after the 09:30 tick: consent stays off');
+  }
+
   // the route and the key
   const app = express(); app.use(express.json({ limit: '1mb' })); app.use(require('../routes/stall'));
   const srv = http.createServer(app); await new Promise((res) => srv.listen(0, res)); const port = srv.address().port;
