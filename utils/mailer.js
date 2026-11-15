@@ -137,6 +137,47 @@ async function sendSuggestionAlert({ phone, name, text, order_id: orderId }) {
   if (error) throw new Error(error.message);
 }
 
+// The day-4 check-in (utils/journey.js). A "Something wasn't right" tap and the buyer's follow-up: subject and heading name the
+// order, so it never reads like a generic "wants a human" handoff.
+async function sendComplaintAlert({ customerPhone, customerName, orderId, message }) {
+  const title = `Something wasn't right: ${orderId}`;
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#B0413E;padding:22px 26px;"><h2 style="color:#fff;margin:0;font-size:20px;">&#9888;&#65039; ${escapeHtml(title)}</h2></div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(customerName) || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${escapeHtml(customerPhone)}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Order</td><td style="padding:4px 0;">${escapeHtml(orderId)}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;vertical-align:top;">Message</td><td style="padding:4px 0;white-space:pre-wrap;">${escapeHtml(message)}</td></tr>
+        </table>
+        <p style="margin:0;font-size:13px;color:#999;">Reply directly on WhatsApp: <a href="https://wa.me/${escapeHtml(customerPhone)}">+${escapeHtml(customerPhone)}</a></p>
+      </div>
+    </div>`;
+  const { error } = await resend.emails.send({ from: 'Munchingo Orders <orders@munchingo.com>', to: [process.env.NOTIFY_EMAIL], subject: title, html });
+  if (error) throw new Error(error.message);
+}
+
+// The check-in "Not quite for me" answer: plain feedback. No suggestion promise (that line belongs to suggestions only).
+async function sendCheckinFeedbackAlert({ phone, name, orderId, text }) {
+  const title = `Not quite for me: ${orderId}`;
+  const html = `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;border:1px solid #e0d0c0;border-radius:10px;overflow:hidden;">
+      <div style="background:#6B3A2A;padding:22px 26px;"><h2 style="color:#fff;margin:0;font-size:20px;">${escapeHtml(title)}</h2></div>
+      <div style="padding:22px 26px;background:#fffaf6;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px;">
+          <tr><td style="padding:4px 0;color:#888;width:110px;">Customer</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(name) || 'Unknown'}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">WhatsApp</td><td style="padding:4px 0;">+${escapeHtml(phone)}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;">Order</td><td style="padding:4px 0;">${escapeHtml(orderId)}</td></tr>
+          <tr><td style="padding:4px 0;color:#888;vertical-align:top;">Feedback</td><td style="padding:4px 0;white-space:pre-wrap;">${escapeHtml(text)}</td></tr>
+        </table>
+        <p style="margin:0;font-size:13px;color:#999;">Saved in Admin, More, Suggestions (as feedback). Reply on WhatsApp: <a href="https://wa.me/${escapeHtml(phone)}">+${escapeHtml(phone)}</a></p>
+      </div>
+    </div>`;
+  const { error } = await resend.emails.send({ from: 'Munchingo Orders <orders@munchingo.com>', to: [process.env.NOTIFY_EMAIL], subject: title, html });
+  if (error) throw new Error(error.message);
+}
+
 // Meta or Google no longer matches the admin (utils/channelSync.js): one email per episode. problems: [{ slug, name, text }].
 async function sendChannelSyncAlert({ channel, problems }) {
   const label = { meta: 'Meta', google: 'Google' }[channel] || String(channel || '');
@@ -492,4 +533,4 @@ async function sendBroadcastReplyAlert({ phone, name, template, text }) {
   console.log(`[MAILER] Broadcast reply alert sent for ${phone}`);
 }
 
-module.exports = { sendBroadcastReplyAlert, sendSuggestionAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendDeliveryEmail, sendLotReleasedEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };
+module.exports = { sendBroadcastReplyAlert, sendSuggestionAlert, sendComplaintAlert, sendCheckinFeedbackAlert, sendChannelSyncAlert, sendReviewRequestEmail, sendAdminCode, sendShippedEmail, sendPackedEmail, sendDeliveredEmail, sendOwnerRefundEmail, sendOrderEmail, sendCustomerConfirmationEmail, sendOwnerPaidEmail, sendHumanHandoffAlert, sendFeedbackAlert, sendBulkInquiryAlert, sendDailyDigestEmail, sendDeliveryEmail, sendLotReleasedEmail, sendContactFormEmail, sendSubscriptionRenewalEmail, sendRefundEmail, sendPaymentReminderEmail };

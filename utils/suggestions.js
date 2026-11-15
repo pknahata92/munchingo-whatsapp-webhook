@@ -9,6 +9,9 @@ const THANKS = "🙏 Thank you, it goes straight to Prashant. We read every one.
 const FAILED = "Sorry, that didn't go through on our side. Please send it again in a minute.";
 const WAIT_MS = 30 * 60000;
 const MAX_LEN = 1000;
+// The day-4 check-in (utils/journey.js) shares the suggestion_waits row: these kinds are its waits, answered within 24 h.
+const JOURNEY_KINDS = ['complaint', 'not_quite'];
+const JOURNEY_WAIT_MS = 24 * 3600000;
 
 let deps = null;
 function setDeps(d) { deps = d; } // tests only
@@ -28,7 +31,13 @@ function inlineSuggestion(text) {
 
 async function ask(phone) {
   const { db, wa, now } = D();
-  try { await db.setSuggestionWait(phone, new Date(now()).toISOString()); } catch (e) { console.error('[SUGGEST] could not remember the wait for', phone, e.message); }
+  let open = null;
+  try { open = await db.getSuggestionWait(phone); } catch (e) { /* unreadable: ask as before */ }
+  // An open check-in wait (under 24 h) stays: their next message is the check-in answer first (utils/journey.js).
+  const checkin = open && JOURNEY_KINDS.includes(open.kind) && now() - Date.parse(open.asked_at) < JOURNEY_WAIT_MS;
+  if (!checkin) {
+    try { await db.setSuggestionWait(phone, new Date(now()).toISOString()); } catch (e) { console.error('[SUGGEST] could not remember the wait for', phone, e.message); }
+  }
   return wa.sendText(phone, ASK);
 }
 
@@ -68,4 +77,4 @@ async function recordFeedback(phone, name, rating, comments) {
   catch (e) { console.error('[SUGGEST] feedback save failed for', phone, e.message); }
 }
 
-module.exports = { ASK, THANKS, FAILED, isAsk, inlineSuggestion, ask, capture, saveSuggestion, recordFeedback, setDeps };
+module.exports = { ASK, THANKS, FAILED, JOURNEY_KINDS, JOURNEY_WAIT_MS, isAsk, inlineSuggestion, ask, capture, saveSuggestion, recordFeedback, setDeps };

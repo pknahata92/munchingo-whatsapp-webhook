@@ -182,8 +182,10 @@ async function sendTyping(to) {
 }
 
 // ── Quick-reply button message ────────────────────────────────────────────────
-async function sendButtons(to, body, buttons) {
-  // buttons: [{ id, title }]  — max 3
+async function sendButtons(to, body, buttons, opts = {}) {
+  // buttons: [{ id, title }]  — max 3. opts.header = { type: 'video' | 'image' | 'document', link }: a media header on the
+  // same message, so it can never arrive after the words (utils/journey.js, the "unlock" clip).
+  const h = opts && opts.header;
   return sendMessage({
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -191,6 +193,7 @@ async function sendButtons(to, body, buttons) {
     type: 'interactive',
     interactive: {
       type: 'button',
+      ...(h && h.type && h.link ? { header: { type: h.type, [h.type]: { link: h.link } } } : {}),
       body: { text: body },
       action: {
         buttons: buttons.map((b) => ({

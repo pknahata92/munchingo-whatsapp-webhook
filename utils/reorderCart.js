@@ -2,10 +2,12 @@
 // Reorder cart link (16 Nov 2026, growth journey J4 and J6): the path after https://munchingo.com/ that refills a buyer's bag in
 // one tap. Two of their favourite plus one Flavor they have never had, when one is in stock; otherwise their last order again.
 // Sold-out Flavors never appear, and with nothing to put in the bag the link opens the shop. No discount, no Sets: the site's
-// cart link (js/cart-link.js, add=<slug>:<qty>,<slug>, utm tags kept) takes single boxes only, so Sets are opened into Flavors.
+// cart link (js/cart-link.js, add=<slug>:<qty>,<slug>, utm tags kept) takes single boxes only, so when the last order had a Set
+// the link opens Build a box instead of breaking the Set into singles (ruling R20).
 //   Tests: scripts/reorder-cart-test.js
 const { boxesBySlug } = require('./inventory');
 const { flavoursFor } = require('./reviews');
+const { isGiftSet } = require('./orderText');
 
 const SLUGS = ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'];   // tie-break order, and the order in the link
 
@@ -17,7 +19,8 @@ const boxesIn = (order) => boxesBySlug(((order && order.items) || []).map(withSl
  * { orders (that phone's paid orders, newest first), inStock: Set of slugs, campaign, medium: 'journey' | 'broadcast' }
  *   -> { path, trySlug, favSlug }
  * favSlug: the in-stock Flavor with the most boxes in the newest order (a tie goes to the first in SLUGS), or null when nothing
- * from that order is in stock (then "your usual" would not be true). trySlug: the first in-stock Flavor never bought, or null.
+ * from that order is in stock (then "your usual" would not be true). trySlug: the first in-stock Flavor never bought, or null
+ * (always null when the last order had a Set: that link is build-a-box?utm_...).
  */
 function cartLink({ orders, inStock, campaign, medium }) {
   const list = orders || [];
@@ -30,6 +33,8 @@ function cartLink({ orders, inStock, campaign, medium }) {
   for (const o of list) for (const [slug, boxes] of Object.entries(boxesIn(o))) if (boxes > 0) bought.add(slug);
   let favSlug = null;
   for (const s of SLUGS) if (has(s) && last[s] > 0 && (!favSlug || last[s] > last[favSlug])) favSlug = s;
+  if (!SLUGS.some(has)) return shop;
+  if (((list[0] && list[0].items) || []).some((it) => it && isGiftSet(it))) return { path: `build-a-box?${utm}`, trySlug: null, favSlug };
   const trySlug = SLUGS.find((s) => has(s) && !bought.has(s)) || null;
   const parts = trySlug
     ? [favSlug && `${favSlug}:2`, trySlug].filter(Boolean)

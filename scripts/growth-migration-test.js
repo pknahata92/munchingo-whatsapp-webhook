@@ -26,6 +26,9 @@ ok(!/\b(drop|delete|update)\b/.test(code), 'no drop, delete or update');
 const last = code.trim().split(';').filter((s) => s.trim()).pop();
 ok(/^\s*select/.test(last) && /information_schema\.columns/.test(last), 'ends with an information_schema read-back select');
 for (const [, c] of cols) ok(last.includes(`'${c}'`), `read-back lists ${c}`);
+ok(/create unique index if not exists order_events_journey_tap_once on order_events \(order_id, event\) where event = 'journey_tap'/.test(code), 'one journey_tap per order (unique index)');
+ok(/pg_indexes/.test(last) && last.includes("'order_events_journey_tap_once'"), 'read-back shows the journey_tap index too');
+ok(/should return 8 rows/i.test(sql), 'read-back says 8 rows (7 columns + the index)');
 
 const d = require('../utils/database');
 for (const f of ['touchInbound', 'listStallOrdersWithPhone', 'listActiveSubscriptionPhones', 'setSuggestionWait', 'getSuggestionWait', 'listMarketingContacts', 'listMarketingSends']) {

@@ -68,6 +68,20 @@ function fakes(startMs) {
     took = await s.capture('919810000007', 'Asha', 'the box was crushed');
     ok(took === false && f.rows.length === 0 && !cleared && f.sent.length === 0, `a ${kind} wait is not taken as a suggestion and is left in place`);
   }
+  // "Share a suggestion" while a check-in wait (under 24 h) is open: still ask, but leave the check-in wait in place.
+  for (const [age, kept] of [[3600000, true], [25 * 3600000, false]]) {
+    f = fakes(START); let stored = { phone: '919810000010', asked_at: new Date(START - age).toISOString(), kind: 'complaint', order_id: 'MNG-AAAA-1111' }, sets = 0;
+    f.deps.db.getSuggestionWait = async () => (stored ? { ...stored } : null);
+    f.deps.db.setSuggestionWait = async (phone, at, kind = 'suggestion', orderId = null) => { sets++; stored = { phone, asked_at: at, kind, order_id: orderId }; };
+    s.setDeps(f.deps);
+    await s.ask('919810000010');
+    ok(f.sent[0].text === s.ASK, `the question is still asked (complaint wait ${age / 3600000} h old)`);
+    ok(kept ? (sets === 0 && stored.kind === 'complaint' && stored.order_id === 'MNG-AAAA-1111') : (sets === 1 && stored.kind === 'suggestion'), kept ? 'a check-in wait under 24 h is not overwritten' : 'a check-in wait over 24 h old gives way to the suggestion wait');
+  }
+  f = fakes(START); f.deps.db.getSuggestionWait = async () => { throw new Error('db down'); }; s.setDeps(f.deps);
+  await s.ask('919810000011');
+  ok(f.waits['919810000011'] && f.sent[0].text === s.ASK, 'a wait that cannot be read does not stop the ask');
+  ok(Array.isArray(s.JOURNEY_KINDS) && s.JOURNEY_KINDS.join() === 'complaint,not_quite' && s.JOURNEY_WAIT_MS === 24 * 3600000, 'the check-in wait kinds and 24 h live here (utils/journey.js uses them)');
   f = fakes(START); f.deps.db.getSuggestionWait = async (phone) => ({ phone, asked_at: new Date(START).toISOString(), kind: null }); s.setDeps(f.deps);
   ok(await s.capture('919810000008', 'Om', 'smaller packs') === true && f.rows.length === 1, 'a wait with no kind is a suggestion wait (rows from before the migration)');
   f = fakes(START); f.deps.db.getSuggestionWait = async (phone) => ({ phone, asked_at: new Date(START).toISOString(), kind: 'suggestion' }); s.setDeps(f.deps);

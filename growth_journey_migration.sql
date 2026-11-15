@@ -20,10 +20,14 @@ alter table suggestion_waits add column if not exists order_id text;
 -- journey_tap before this push, so there are no duplicates to trip it.
 create unique index if not exists order_events_journey_tap_once on order_events (order_id, event) where event = 'journey_tap';
 
--- Read-back: should return 7 rows.
-select table_name, column_name, data_type
+-- Read-back: should return 8 rows (the 7 columns, and the journey_tap index with its definition).
+select table_name::text as table_name, column_name::text as column_name, data_type::text as data_type
 from information_schema.columns
 where (table_name = 'contacts' and column_name in ('last_inbound_at', 'consent_reminder', 'journey_declined_at', 'last_complaint_at'))
    or (table_name = 'marketing_sends' and column_name = 'campaign')
    or (table_name = 'suggestion_waits' and column_name in ('kind', 'order_id'))
-order by table_name, column_name;
+union all
+select tablename::text, indexname::text, indexdef::text
+from pg_indexes
+where tablename = 'order_events' and indexname = 'order_events_journey_tap_once'
+order by 1, 2;

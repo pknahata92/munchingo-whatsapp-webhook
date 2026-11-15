@@ -7,9 +7,9 @@
 const fs = require('fs'), path = require('path');
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) pass++; else { fail++; console.log('FAIL:', m); } };
-const flat = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+const show = (x) => JSON.stringify(x);
 
-// The approved words, verbatim (spec §11 and table C-W in global-constraints.md).
+// The approved words, verbatim (spec §11 and table C-W in global-constraints.md), as one line each.
 const W = {
   ask: "Glad to hear it. You've unlocked the good stuff. May I message you when a fresh batch leaves Bikaner, when a new Flavor lands, or a few weeks after an order, when your box is probably running low? At most 3 a month. Reply STOP any time and it stops.",
   r1: "Glad to hear it. You've unlocked the good stuff.",
@@ -24,11 +24,31 @@ const W = {
   c12: 'Thank you. I read every one myself.',
   c13: 'No problem. Thank you for telling me how it went.',
 };
+// EXACTLY what the buyer is sent: the same words with WhatsApp line breaks (ruling R15). Every send below is compared to these.
+const S = {
+  ask: "Glad to hear it.\nYou've unlocked the good stuff.\n\nMay I message you when a fresh batch leaves Bikaner, when a new Flavor lands, or a few weeks after an order, when your box is probably running low?\n\nAt most 3 a month. Reply STOP any time and it stops.",
+  r1: "Glad to hear it.\nYou've unlocked the good stuff.",
+  consented: (f) => `Thank you.\nYour usual is ready in one tap whenever you want it, with one ${f} added to try.`,
+  usual: 'Thank you.\nYour usual is ready in one tap whenever you want it.',   // §11 consented, try clause removed (accepted subset)
+  notQuite: 'Thanks for being honest.\nWhat would have made it right for you?\n\nOne line is enough. I read every reply.',
+  wrong: "I'm sorry.\nTell me what happened, and send a photo if a box arrived broken.\n\nI'll make it right, and I'll reply myself.",
+  c3: "Done.\nA few weeks after each order, I'll send one nudge when your box is probably running low.\n\nReply STOP any time.",
+  c7: "Done, you're on the list.",
+  c9: 'One more thing: may I also send one nudge when your box is probably running low?',
+  c10: 'No problem.\nThank you for telling me how it went.',
+  c11: "Thank you.\nIt's with me now, and I'll reply myself.",
+  c12: 'Thank you.\nI read every one myself.',
+  c13: 'No problem.\nThank you for telling me how it went.',
+  failed: "Sorry, that didn't go through on our side. Please try again in a minute.",
+};
+const reflow = (s) => s.replace(/\n+/g, ' ');   // only to prove S is W with line breaks; never used on a sent message
 const ASHA = '919810000001', OTHER = '919810000002', OWNER = '919999900000', OID = 'MNG-AAAA-1111';
 const START = Date.parse('2026-11-16T06:00:00Z');   // 11:30 IST, 16 Nov
 const DAY = 86400000;
 const LINK = 'https://munchingo.com/cart?add=atta-original:2,atta-kesari&utm_source=whatsapp&utm_medium=journey&utm_campaign=j4_reorder';
+const CART = S.consented('Atta Kesari') + '\n\n' + LINK;   // the whole consented message
 const FLAVOR_NAMES = /Original|Kesari|Ajwain|Sugar-Lite/;
+const VID = 'https://cdn.example.com/unlock.mp4';
 
 const journey = require('../utils/journey');
 const contacts = require('../utils/contacts');
@@ -36,13 +56,14 @@ const suggestions = require('../utils/suggestions');
 
 function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
   let t = START;
-  const rows = {}, waits = {}, events = [], sent = [], mails = [], saved = [], calls = [];
+  const rows = {}, waits = {}, events = [], sent = [], mails = [], saved = [], calls = [], pending = {};
   if (contact) rows[ASHA] = { phone: ASHA, first_source: 'fair:2026-10-01', ...contact };
   const ords = orders || [{ order_id: OID, customer_phone: ASHA, customer_name: 'Asha Rao', status: 'paid', created_at: '2026-11-08T05:00:00Z', delivered_at: '2026-11-12T05:00:00Z', items: [{ slug: 'atta-original', name: 'Atta Original', quantity: 2 }], delivery_address: { raw: 'B-2, Model Town, Delhi, Delhi - 110009', pincode: '110009' } }];
   const log = (n) => calls.push(n);
   const db = {
     getOrder: async (id) => { log('getOrder'); return ords.find((o) => o.order_id === id) || null; },
     getRecentOrders: async (phone, n = 3) => { log('getRecentOrders'); return ords.filter((o) => o.customer_phone === phone).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, n); },
+    getRecentPendingOrder: async (phone) => { log('getRecentPendingOrder'); return pending[phone] || null; },
     // Like Postgres with the unique indexes: one review ask / reminder / journey tap per order.
     claimOrderEvent: async (ev) => { log('claim'); if (['review_requested', 'review_reminded', 'journey_tap'].includes(ev.event) && events.some((e) => e.order_id === ev.order_id && e.event === ev.event)) return false; events.push(ev); return true; },
     logOrderEvent: async (ev) => { log('logOrderEvent'); events.push(ev); },
@@ -56,42 +77,39 @@ function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
   };
   const wa = {
     sendText: async (to, text) => { sent.push({ to, kind: 'text', text }); },
-    sendButtons: async (to, body, buttons) => { sent.push({ to, kind: 'buttons', text: body, buttons }); },
+    sendButtons: async (to, body, buttons, opts) => { sent.push({ to, kind: 'buttons', text: body, buttons, header: opts && opts.header }); },
     sendVideo: async (to, link, caption) => { sent.push({ to, kind: 'video', link, caption }); },
   };
   const mail = {
-    sendHumanHandoffAlert: async (x) => { mails.push({ kind: 'handoff', ...x }); },
-    sendSuggestionAlert: async (x) => { mails.push({ kind: 'suggestion', ...x }); },
+    sendComplaintAlert: async (x) => { mails.push({ kind: 'complaint', ...x }); },
+    sendCheckinFeedbackAlert: async (x) => { mails.push({ kind: 'feedback', ...x }); },
   };
   const now = () => t;
   journey.setDeps({ db, wa, mail, now, ownerPhone: () => owner, inStock: async () => new Set(inStock || ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar']), lang: async () => lang });
   contacts.setDeps({ db, wa, now });
   suggestions.setDeps({ db, wa, mail, now });
-  return { rows, waits, events, sent, mails, saved, calls, ords, db, wa, tick: (ms) => { t += ms; }, toBuyer: () => sent.filter((s) => s.to === ASHA), toOwner: () => sent.filter((s) => s.to === OWNER) };
+  return { rows, waits, events, sent, mails, saved, calls, ords, pending, db, wa, mail, tick: (ms) => { t += ms; }, toBuyer: () => sent.filter((s) => s.to === ASHA), toOwner: () => sent.filter((s) => s.to === OWNER) };
 }
+const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')');
 
 (async () => {
   delete process.env.JOURNEY_UNLOCK_VIDEO_URL;
-  const R = journey.REPLIES.en;
+  delete process.env.DELIVERY_NATIONWIDE;
 
-  // ── the words are the approved words (line breaks allowed, never other words) ──
-  ok(flat(R.askConsent) === W.ask, 'J4 consent ask = §11 "Loved it (not consented)"');
-  ok(flat(R.lovedNoAsk) === W.r1, 'R1: the first two sentences of the §11 text');
-  ok(flat(R.usualWithTry('Atta Kesari')) === W.consented('Atta Kesari'), '§11 "Loved it (consented)"');
-  ok(flat(R.notQuite) === W.notQuite && flat(R.wrong) === W.wrong, '§11 Not quite / Something wasn\'t right');
-  ok(flat(R.remindDone) === W.c3 && flat(R.onList) === W.c7 && flat(R.askReminder) === W.c9 && flat(R.alreadyAnswered) === W.c10, 'C3, C7, C9, C10');
-  ok(flat(R.complaintThanks) === W.c11 && flat(R.notQuiteThanks) === W.c12 && flat(R.declined) === W.c13, 'C11, C12, C13');
-  ok(/\n/.test(R.askConsent) && /\n/.test(R.lovedNoAsk) && /\n/.test(R.wrong), 'multi-sentence replies are broken into WhatsApp lines');
+  // ── the words: S is the approved words with line breaks, and the module sends S ──
+  for (const k of ['ask', 'r1', 'notQuite', 'wrong', 'c3', 'c7', 'c9', 'c10', 'c11', 'c12', 'c13']) ok(reflow(S[k]) === W[k], `${k}: the words are the approved words`);
+  ok(reflow(S.consented('Atta Kesari')) === W.consented('Atta Kesari'), 'consented: the approved words');
+  ok(reflow(S.usual) === W.consented('X').replace(', with one X added to try.', '.'), 'usual: the consented words without the try clause (accepted subset)');
   ok(Object.keys(journey.REPLIES).join() === 'en', 'one REPLIES map, English only for now (Hindi is data later)');
   const titles = [...journey.BUTTONS.consent, ...journey.BUTTONS.reminder];
   ok(titles.every((b) => b.title.length <= 20), 'every button title fits WhatsApp\'s 20 characters');
-  ok(JSON.stringify(journey.BUTTONS.consent) === JSON.stringify([{ id: 'j4_yes', title: 'Yes, keep me posted' }, { id: 'j4_no', title: 'No thanks' }]), 'consent buttons j4_yes / j4_no');
-  ok(JSON.stringify(journey.BUTTONS.reminder) === JSON.stringify([{ id: 'j4_remind_yes', title: 'Yes, remind me' }, { id: 'j4_remind_no', title: 'No thanks' }]), 'reminder buttons j4_remind_yes / j4_remind_no');
+  ok(show(journey.BUTTONS.consent) === show([{ id: 'j4_yes', title: 'Yes, keep me posted' }, { id: 'j4_no', title: 'No thanks' }]), 'consent buttons j4_yes / j4_no');
+  ok(show(journey.BUTTONS.reminder) === show([{ id: 'j4_remind_yes', title: 'Yes, remind me' }, { id: 'j4_remind_no', title: 'No thanks' }]), 'reminder buttons j4_remind_yes / j4_remind_no');
 
-  // ── any other id is not ours, and costs no database call ──
+  // ── any other id is not ours ──
   let w = world();
   for (const id of ['btn_products', 'optin_yes', 'j3:bogus:' + OID, 'j3:loved:', 'j4_maybe', '', null]) ok(await journey.handleTap(ASHA, id, 'Asha') === false, 'not a journey id: ' + id);
-  ok(w.calls.length === 0 && w.sent.length === 0, 'unknown ids touch nothing');
+  ok(w.sent.length === 0 && w.calls.every((c) => c === 'getWait'), 'unknown ids send nothing and only look for a check-in wait to drop (' + show(w.calls) + ')');
 
   // ── Review Focus 2: someone else's order reveals nothing ──
   w = world();
@@ -99,7 +117,7 @@ function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
   ok(await journey.handleTap(OTHER, 'j3:wrong:' + OID, 'Ravi') === false, 'also for Something wasn\'t right');
   ok(await journey.handleTap(ASHA, 'j3:loved:MNG-ZZZZ-9999', 'Asha') === false, 'an order that does not exist returns false');
   ok(w.sent.length === 0 && w.mails.length === 0, 'nothing is sent to anyone');
-  ok(!w.sent.concat(w.mails).some((s) => JSON.stringify(s).includes(OID) || FLAVOR_NAMES.test(JSON.stringify(s))), 'no order id and no Flavor name leaves the bot');
+  ok(!w.sent.concat(w.mails).some((s) => show(s).includes(OID) || FLAVOR_NAMES.test(show(s))), 'no order id and no Flavor name leaves the bot');
   ok(w.events.length === 0 && Object.keys(w.waits).length === 0 && Object.keys(w.rows).length === 0, 'and nothing is claimed, waited on or saved');
   w = world({ orders: [{ order_id: OID, customer_phone: '9810000001', status: 'paid', created_at: '2026-11-08T05:00:00Z', items: [{ slug: 'atta-original', quantity: 2 }], delivery_address: { pincode: '110009' } }] });
   ok(await journey.handleTap(ASHA, 'j3:meh:' + OID, 'Asha') === true, 'the same number stored without 91 is still the buyer (last 10 digits)');
@@ -108,57 +126,75 @@ function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
   w = world();
   ok(await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha') === true, 'Loved it is handled');
   let b = w.toBuyer();
-  ok(b.length === 1 && b[0].kind === 'buttons' && b[0].text === R.askConsent, 'the §11 consent ask is sent (' + JSON.stringify(b) + ')');
-  ok(JSON.stringify(b[0].buttons) === JSON.stringify(journey.BUTTONS.consent), 'with Yes, keep me posted / No thanks');
-  ok(!w.sent.some((s) => /cart\?|shop\?/.test(s.text || '')), 'no link before consent');
+  only(b, 'not consented');
+  ok(b[0].kind === 'buttons' && b[0].text === S.ask && b[0].header === undefined, 'the §11 consent ask, exactly, no header without the video env');
+  ok(show(b[0].buttons) === show(journey.BUTTONS.consent), 'with Yes, keep me posted / No thanks');
+  ok(!w.sent.some((s) => /cart\?|shop\?|build-a-box/.test(s.text || '')), 'no link before consent');
   ok(w.events.length === 1 && w.events[0].event === 'journey_tap' && w.events[0].order_id === OID && w.events[0].meta.kind === 'loved', 'the first tap is claimed as journey_tap { kind: loved }');
 
   // ── Yes: consent saved word for word, then C7, then the cart ──
   ok(await journey.handleTap(ASHA, 'j4_yes', 'Asha') === true, 'j4_yes is handled');
   const c = w.rows[ASHA];
   ok(c && c.consent_marketing === true && c.consent_reminder === true, 'Yes saves marketing AND reminder consent');
-  ok(c.consent_text === R.askConsent, 'consent_text is the exact question that was sent');
-  ok(c.consent_at === new Date(START).toISOString() && c.first_source === 'journey:2026-11-16' && c.last_source === 'journey:2026-11-16', 'with its time and source journey:<IST day> (' + JSON.stringify(c) + ')');
+  ok(c.consent_text === S.ask, 'consent_text is exactly the question that was sent');
+  ok(c.consent_at === new Date(START).toISOString() && c.first_source === 'journey:2026-11-16' && c.last_source === 'journey:2026-11-16', 'with its time and source journey:<IST day> (' + show(c) + ')');
   b = w.toBuyer().slice(1);
-  ok(b.length === 2 && flat(b[0].text) === W.c7, 'C7 first');
-  ok(b[1].kind === 'text' && b[1].text.includes(LINK), 'then the reorder cart: Original x2 + Kesari to try, utm j4_reorder (' + (b[1] && b[1].text) + ')');
-  ok(flat(b[1].text).startsWith(W.consented('Atta Kesari')), 'with the §11 consented words naming the try Flavor');
+  ok(b.length === 2 && b[0].text === S.c7, 'C7 first, exactly');
+  ok(b[1].kind === 'text' && b[1].text === CART, 'then exactly the consented words + the cart (Original x2 + Kesari to try, utm j4_reorder): ' + show(b[1] && b[1].text));
 
   // ── Review Focus 1: a second Loved it sends no second link; Something wasn't right after Loved it still reaches Prashant ──
   const before = w.sent.length;
   ok(await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha') === true, 'a second Loved it is handled');
   b = w.sent.slice(before);
-  ok(b.length === 1 && flat(b[0].text) === W.c10, 'it gets C10 only');
-  ok(!b.some((s) => /cart\?/.test(s.text || '')), 'and no second link');
-  ok(await journey.handleTap(ASHA, 'j3:meh:' + OID, 'Asha') === true && flat(w.sent[w.sent.length - 1].text) === W.c10 && !w.waits[ASHA], 'a later Not quite also gets C10, no question');
+  ok(b.length === 1 && b[0].text === S.c10, 'it gets exactly C10, and no second link');
+  ok(await journey.handleTap(ASHA, 'j3:meh:' + OID, 'Asha') === true && w.sent[w.sent.length - 1].text === S.c10 && !w.waits[ASHA], 'a later Not quite also gets C10, no question');
   const n0 = w.sent.length;
   ok(await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha') === true, 'Something wasn\'t right after Loved it is handled');
   const ownerMsg = w.toOwner().map((s) => s.text).join('\n');
   ok(ownerMsg.includes(OID) && ownerMsg.includes('Asha') && ownerMsg.includes('+' + ASHA) && ownerMsg.includes('https://wa.me/' + ASHA), 'Prashant gets a WhatsApp alert with the order, name, number and wa.me link (' + ownerMsg + ')');
-  ok(w.mails.some((m) => m.kind === 'handoff' && m.customerPhone === ASHA && String(m.orderLine).includes(OID)), 'and an email alert');
-  ok(w.sent.slice(n0).some((s) => s.to === ASHA && flat(s.text) === W.wrong), 'the buyer gets the §11 apology');
+  ok(w.mails.some((m) => m.kind === 'complaint' && m.customerPhone === ASHA && m.orderId === OID), 'and a "Something wasn\'t right" email');
+  ok(w.sent.slice(n0).filter((s) => s.to === ASHA).map((s) => s.text).join('|') === S.wrong, 'the buyer gets exactly the §11 apology');
   ok(w.waits[ASHA] && w.waits[ASHA].kind === 'complaint' && w.waits[ASHA].order_id === OID, 'a complaint wait is set for that order');
   ok(w.events.some((e) => e.event === 'journey_complaint' && e.order_id === OID), 'the order timeline logs journey_complaint');
   ok(w.rows[ASHA].last_complaint_at === new Date(START).toISOString(), 'the contact gets last_complaint_at (no marketing for 30 days)');
 
-  // ── Review Focus 4: the next message, a photo, goes to Prashant ──
+  // ── Review Focus 4: the next message, a photo, goes to Prashant and onto the order timeline ──
   const o0 = w.toOwner().length, m0 = w.mails.length;
   ok(await journey.captureReply(ASHA, 'Asha', 'image', '') === true, 'a photo after Something wasn\'t right is captured');
   const fwd = w.toOwner().slice(o0).map((s) => s.text).join('\n');
   ok(fwd.includes('[sent a photo]') && fwd.includes(OID) && fwd.includes('https://wa.me/' + ASHA), 'forwarded to Prashant with [sent a photo], the order id and the wa.me link (' + fwd + ')');
-  ok(w.mails.slice(m0).some((m) => m.kind === 'handoff' && String(m.message).includes('[sent a photo]') && String(m.orderLine).includes(OID)), 'and emailed');
-  ok(flat(w.toBuyer().pop().text) === W.c11, 'the buyer is thanked with C11');
+  ok(w.mails.slice(m0).some((m) => m.kind === 'complaint' && String(m.message).includes('[sent a photo]') && m.orderId === OID), 'and emailed');
+  ok(w.events.some((e) => e.event === 'journey_complaint_followup' && e.order_id === OID && e.meta.media === 'image'), 'kept on the order timeline as journey_complaint_followup { media }');
+  ok(w.toBuyer().pop().text === S.c11, 'the buyer is thanked with exactly C11');
   ok(!w.waits[ASHA], 'the wait is cleared');
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'hi') === false, 'the message after that goes to the bot as usual');
 
-  // ── a typed complaint is quoted; STOP and other waits are left alone; 24 h ──
+  // ── a complaint follow-up that reached nobody is never confirmed, and is still kept ──
+  w = world({ owner: '' });
+  await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
+  w.mail.sendComplaintAlert = async () => { throw new Error('mail down'); };
+  const nb = w.toBuyer().length;
+  ok(await journey.captureReply(ASHA, 'Asha', 'text', 'The box was crushed') === true, 'captured even when Prashant cannot be reached');
+  ok(w.toBuyer().length === nb, 'no C11: "It\'s with me now" is never sent when it reached nobody');
+  ok(w.events.some((e) => e.event === 'journey_complaint_followup' && e.meta.text === 'The box was crushed'), 'the text is on the order timeline');
+  w = world();
+  await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
+  await journey.captureReply(ASHA, 'Asha', 'text', 'x'.repeat(1500));
+  const fu = w.events.find((e) => e.event === 'journey_complaint_followup');
+  ok(fu && fu.meta.text.length === 1000, 'the timeline keeps at most 1,000 characters');
+  w = world({ owner: '' });
+  await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
+  ok(w.toOwner().length === 0 && w.mails.some((m) => m.kind === 'complaint'), 'no OWNER_PHONE: the email still goes');
+  await journey.captureReply(ASHA, 'Asha', 'text', 'crushed');
+  ok(w.toBuyer().pop().text === S.c11, 'email alone reaching Prashant is enough for C11');
+
+  // ── a typed complaint is quoted; STOP, reactions and other waits are left alone; 24 h ──
   w = world({ contact: { consent_marketing: true } });
   await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'STOP') === false && w.waits[ASHA], 'STOP is never taken as the complaint; the wait stays');
   ok(await journey.captureReply(ASHA, 'Asha', 'reaction', '') === false && w.waits[ASHA], 'a reaction is not an answer');
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'The box was crushed') === true, 'typed complaint captured');
   ok(w.toOwner().pop().text.includes('"The box was crushed"'), 'the text is quoted to Prashant');
-  ok(!w.sent.some((s) => s.kind === 'video'), 'Something wasn\'t right never carries a video');
   w = world();
   await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
   ok(Object.keys(w.rows).length === 0, 'Something wasn\'t right never creates a contact (last_complaint_at is update only)');
@@ -169,143 +205,218 @@ function world({ contact, orders, inStock, owner = OWNER, lang = 'en' } = {}) {
   w = world();
   await w.db.setSuggestionWait(ASHA, new Date(START).toISOString());
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'make a jaggery one') === false && w.waits[ASHA], 'a suggestion wait belongs to suggestions.js: not taken, left in place');
-  w = world({ owner: '' });
-  await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
-  ok(w.toOwner().length === 0 && w.mails.some((m) => m.kind === 'handoff'), 'no OWNER_PHONE: the email still goes');
 
-  // ── Not quite for me: one question, the answer saved as feedback and emailed ──
+  // ── an order in progress, other buttons and "Share a suggestion" never lose the buyer's message ──
   w = world();
-  ok(await journey.handleTap(ASHA, 'j3:meh:' + OID, 'Asha') === true && flat(w.toBuyer()[0].text) === W.notQuite, 'Not quite gets the §11 question');
+  await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
+  w.pending[ASHA] = { order_id: 'MNG-WAPP-0001', status: 'pending_address' };
+  const o2 = w.toOwner().length;
+  ok(await journey.captureReply(ASHA, 'Asha', 'text', 'Flat 12, Sector 15, Delhi 110017') === false, 'a buyer typing an address for an order in progress keeps the bot');
+  ok(w.waits[ASHA] && w.waits[ASHA].kind === 'complaint' && w.toOwner().length === o2, 'and the complaint wait stays, nothing forwarded');
+  delete w.pending[ASHA];
+  ok(await journey.captureReply(ASHA, 'Asha', 'text', 'Box was crushed') === true, 'once the order is done the next message is the complaint again');
+  for (const k of ['wrong', 'meh']) {
+    w = world();
+    await journey.handleTap(ASHA, `j3:${k}:${OID}`, 'Asha');
+    ok(await journey.handleTap(ASHA, 'btn_products', 'Asha') === false, `another button after ${k} is not ours`);
+    ok(!w.waits[ASHA], `and it drops the ${k} wait, so the next message goes to the bot`);
+  }
+  w = world();
+  await w.db.setSuggestionWait(ASHA, new Date(START).toISOString());
+  await journey.handleTap(ASHA, 'btn_faq', 'Asha');
+  ok(w.waits[ASHA] && w.waits[ASHA].kind === 'suggestion', 'another button leaves a suggestion wait alone');
+  w = world();
+  await journey.handleTap(ASHA, 'j3:wrong:' + OID, 'Asha');
+  await suggestions.ask(ASHA);
+  ok(w.waits[ASHA].kind === 'complaint' && w.toBuyer().pop().text === suggestions.ASK, '"Share a suggestion" still asks, but leaves the open complaint wait');
+  ok(await journey.captureReply(ASHA, 'Asha', 'text', 'The box was crushed') === true && w.toOwner().pop().text.includes('"The box was crushed"'), 'so the next message still reaches Prashant as the complaint');
+
+  // ── Not quite for me: one question, the answer saved as feedback and emailed (no suggestion promise) ──
+  w = world();
+  ok(await journey.handleTap(ASHA, 'j3:meh:' + OID, 'Asha') === true && w.toBuyer()[0].text === S.notQuite, 'Not quite gets exactly the §11 question');
   ok(w.waits[ASHA] && w.waits[ASHA].kind === 'not_quite' && w.waits[ASHA].order_id === OID, 'a not_quite wait is set');
   ok(w.toOwner().length === 0 && w.mails.length === 0, 'nobody is alerted yet');
   ok(await journey.captureReply(ASHA, 'Asha', 'text', 'Too sweet for me') === true, 'the answer is captured');
-  ok(w.saved.length === 1 && w.saved[0].kind === 'feedback' && w.saved[0].text === '[check-in ' + OID + '] Too sweet for me', 'saved as feedback with the check-in order (' + JSON.stringify(w.saved) + ')');
-  ok(w.mails.some((m) => m.kind === 'suggestion' && m.text === '[check-in ' + OID + '] Too sweet for me' && m.order_id === OID), 'and emailed to Prashant');
-  ok(flat(w.toBuyer().pop().text) === W.c12 && !w.waits[ASHA], 'thanked with C12, wait cleared');
+  ok(w.saved.length === 1 && w.saved[0].kind === 'feedback' && w.saved[0].text === '[check-in ' + OID + '] Too sweet for me', 'saved as feedback with the check-in order (' + show(w.saved) + ')');
+  ok(w.mails.length === 1 && w.mails[0].kind === 'feedback' && w.mails[0].text === '[check-in ' + OID + '] Too sweet for me' && w.mails[0].orderId === OID, 'emailed to Prashant as plain feedback');
+  ok(w.toBuyer().pop().text === S.c12 && !w.waits[ASHA], 'thanked with exactly C12, wait cleared');
   w = world();
   await journey.handleTap(ASHA, 'j3:meh:' + OID, 'Asha');
   await journey.captureReply(ASHA, 'Asha', 'video', 'see');
   ok(w.saved[0].text === '[check-in ' + OID + '] [sent a video] "see"', 'media in a not-quite answer is noted (' + (w.saved[0] && w.saved[0].text) + ')');
-  ok(!w.sent.some((s) => s.kind === 'video'), 'Not quite never carries a video');
 
   // ── Loved it from a consented buyer ──
   w = world({ contact: { consent_marketing: true, consent_reminder: false } });
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   b = w.toBuyer();
-  ok(b.length === 2 && b[0].kind === 'text' && b[0].text.includes(LINK) && flat(b[0].text).startsWith(W.consented('Atta Kesari')), 'consented, no reminder yes: the cart first');
-  ok(b[1].kind === 'buttons' && flat(b[1].text) === W.c9 && JSON.stringify(b[1].buttons) === JSON.stringify(journey.BUTTONS.reminder), 'then C9 with Yes, remind me / No thanks');
+  ok(b.length === 2 && b[0].kind === 'text' && b[0].text === CART, 'consented, no reminder yes: exactly the cart message first');
+  ok(b[1].kind === 'buttons' && b[1].text === S.c9 && show(b[1].buttons) === show(journey.BUTTONS.reminder), 'then exactly C9 with Yes, remind me / No thanks');
   w = world({ contact: { consent_marketing: true, consent_reminder: true } });
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   b = w.toBuyer();
-  ok(b.length === 1 && b[0].text.includes(LINK), 'covers reminders: the cart only, utm_campaign=j4_reorder');
+  ok(b.length === 1 && b[0].text === CART, 'covers reminders: exactly the cart message, utm_campaign=j4_reorder');
+  w = world({ contact: { consent_marketing: true, consent_reminder: true }, orders: [{ order_id: OID, customer_phone: ASHA, status: 'paid', created_at: '2026-11-08T05:00:00Z', items: [{ slug: 'atta-original', quantity: 2 }, { slug: 'atta-kesari', quantity: 1 }, { slug: 'atta-ajwain', quantity: 1 }, { slug: 'atta-lite-sugar', quantity: 1 }], delivery_address: { pincode: '110009' } }] });
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  b = w.toBuyer();
+  ok(b.length === 1 && b[0].text === S.usual + '\n\nhttps://munchingo.com/cart?add=atta-original:2,atta-kesari:1,atta-ajwain:1,atta-lite-sugar:1&utm_source=whatsapp&utm_medium=journey&utm_campaign=j4_reorder', 'everything tried: exactly the usual words and the last order again: ' + show(b));
   w = world({ contact: { consent_marketing: true, consent_reminder: true }, orders: [{ order_id: OID, customer_phone: ASHA, status: 'paid', created_at: '2026-11-08T05:00:00Z', items: [{ slug: 'full-range-set', quantity: 1 }], delivery_address: { pincode: '110009' } }] });
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   b = w.toBuyer();
-  ok(b.length === 1 && flat(b[0].text).startsWith('Thank you. Your usual is ready in one tap whenever you want it.') && !/added to try/.test(b[0].text) && b[0].text.includes('cart?add=atta-original:1,atta-kesari:1,atta-ajwain:1,atta-lite-sugar:1&'), 'everything tried: the usual again, without the try words');
+  ok(b.length === 1 && b[0].text === S.usual + '\n\nhttps://munchingo.com/build-a-box?utm_source=whatsapp&utm_medium=journey&utm_campaign=j4_reorder', 'a Set last time: the usual words and Build a box (R20): ' + show(b));
   w = world({ contact: { consent_marketing: true, consent_reminder: true }, inStock: [] });
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   b = w.toBuyer();
-  ok(b.length === 1 && flat(b[0].text) === W.r1 && !/https?:/.test(b[0].text), 'nothing in stock: thanks only (R1 words), no link');
+  ok(b.length === 1 && b[0].text === S.r1, 'nothing in stock: exactly the R1 thanks, no link');
   w = world({ contact: { consent_marketing: true, consent_reminder: false }, orders: [{ order_id: OID, customer_phone: ASHA, status: 'paid', created_at: '2026-11-08T05:00:00Z', items: [{ slug: 'atta-original', quantity: 2 }], delivery_address: { raw: 'A-1, Civil Lines, Jaipur, Rajasthan - 302006' } }] });
-  delete process.env.DELIVERY_NATIONWIDE;
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   b = w.toBuyer();
-  ok(b.length === 1 && flat(b[0].text) === W.r1, 'last order outside Delhi NCR: no reorder link and no reminder ask, only the thanks');
+  ok(b.length === 1 && b[0].text === S.r1, 'last order outside Delhi NCR: no reorder link and no reminder ask, only the R1 thanks');
   w = world({ contact: { consent_marketing: true, consent_reminder: true }, lang: 'hi' });
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  ok(flat(w.toBuyer()[0].text).startsWith(W.consented('Atta Kesari')), 'a Hindi chooser gets English until Hindi words are approved');
+  ok(w.toBuyer()[0].text === CART, 'a Hindi chooser gets English until Hindi words are approved');
 
-  // ── Loved it after STOP, or after No thanks within 90 days: R1 only ──
-  w = world({ contact: { consent_marketing: false, consent_reminder: false, consent_text: 'STOP', consent_at: '2026-11-01T00:00:00Z' } });
-  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  b = w.toBuyer();
-  ok(b.length === 1 && b[0].kind === 'text' && b[0].text === R.lovedNoAsk, 'after STOP: exactly "Glad to hear it. You\'ve unlocked the good stuff." (R1)');
-  w = world({ contact: { consent_marketing: false, journey_declined_at: new Date(START - 10 * DAY).toISOString() } });
-  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === R.lovedNoAsk, 'declined 10 days ago: R1, not asked again');
-  w = world({ contact: { consent_marketing: false, journey_declined_at: new Date(START - 100 * DAY).toISOString() } });
-  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === R.askConsent, 'declined 100 days ago: asked again');
+  // ── Loved it after STOP (ever), or a No within 90 days (J4 No thanks or any consent No, R19): R1 only ──
+  const lovedTo = async (contact) => { const x = world({ contact }); await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha'); return x.toBuyer(); };
+  b = await lovedTo({ consent_marketing: false, consent_reminder: false, consent_text: 'STOP', consent_at: new Date(START - 200 * DAY).toISOString() });
+  ok(b.length === 1 && b[0].kind === 'text' && b[0].text === S.r1, 'STOP 200 days ago: exactly R1, never asked again');
+  b = await lovedTo({ consent_marketing: false, journey_declined_at: new Date(START - 10 * DAY).toISOString() });
+  ok(b.length === 1 && b[0].text === S.r1, 'J4 No thanks 10 days ago: R1');
+  b = await lovedTo({ consent_marketing: false, journey_declined_at: new Date(START - 100 * DAY).toISOString() });
+  ok(b.length === 1 && b[0].text === S.ask, 'J4 No thanks 100 days ago: asked again');
+  b = await lovedTo({ consent_marketing: false, consent_at: new Date(START - 10 * DAY).toISOString(), consent_text: contacts.CONSENT_QUESTION });
+  ok(b.length === 1 && b[0].text === S.r1, 'a JOIN / FAIR No thanks 10 days ago counts as a No (R19): R1');
+  b = await lovedTo({ consent_marketing: false, consent_at: new Date(START - 100 * DAY).toISOString(), consent_text: contacts.CONSENT_QUESTION });
+  ok(b.length === 1 && b[0].text === S.ask, 'a JOIN / FAIR No thanks 100 days ago: asked again');
 
   // ── No thanks, the reminder buttons, Remind me to reorder ──
   w = world();
-  ok(await journey.handleTap(ASHA, 'j4_no', 'Asha') === true && flat(w.toBuyer()[0].text) === W.c13, 'j4_no gets C13');
+  ok(await journey.handleTap(ASHA, 'j4_no', 'Asha') === true && w.toBuyer()[0].text === S.c13, 'j4_no gets exactly C13');
   ok(w.rows[ASHA] && w.rows[ASHA].journey_declined_at === new Date(START).toISOString() && w.rows[ASHA].consent_marketing !== true && w.rows[ASHA].first_source === 'journey:2026-11-16', 'and the No is stored (journey_declined_at), with no consent');
-  w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_text: 'v1' } });
+  const OLD_AT = '2026-10-01T00:00:00.000Z';
+  w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_text: 'v1', consent_at: OLD_AT } });
   ok(await journey.handleTap(ASHA, 'j4_remind_yes', 'Asha') === true, 'j4_remind_yes is handled');
-  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === R.askReminder + ' | Yes, remind me' && w.rows[ASHA].consent_marketing === true, 'reminder consent saved with C9 + " | Yes, remind me"');
-  ok(w.sent.length === 0, 'j4_remind_yes sends nothing (table: no reply)');
-  w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_text: 'v1' } });
-  ok(await journey.handleTap(ASHA, 'j4_remind_no', 'Asha') === true && w.sent.length === 0 && w.rows[ASHA].consent_reminder === false && w.rows[ASHA].consent_text === 'v1', 'j4_remind_no: handled, nothing sent, nothing changed');
+  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === S.c9 + ' | Yes, remind me' && w.rows[ASHA].consent_marketing === true, 'reminder consent saved with C9 + " | Yes, remind me"');
+  ok(w.rows[ASHA].consent_at === OLD_AT, 'consent_at is not overwritten (R6-fix)');
+  only(w.toBuyer(), 'j4_remind_yes reply');
+  ok(w.toBuyer()[0].text === S.c3, 'j4_remind_yes replies exactly C3 (R18)');
+  w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_text: 'v1', consent_at: OLD_AT } });
+  ok(await journey.handleTap(ASHA, 'j4_remind_no', 'Asha') === true && w.rows[ASHA].consent_reminder === false && w.rows[ASHA].consent_text === 'v1' && w.rows[ASHA].consent_at === OLD_AT, 'j4_remind_no: handled, nothing changed');
+  ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === S.c13, 'j4_remind_no replies exactly C13 (R18)');
   w = world({ contact: { consent_marketing: false, consent_text: 'STOP' } });
-  ok(await journey.handleTap(ASHA, 'j4_remind_yes', 'Asha') === false && w.rows[ASHA].consent_reminder === undefined, 'j4_remind_yes without marketing consent changes nothing');
-  w = world({ contact: { consent_marketing: true, consent_reminder: false } });
+  ok(await journey.handleTap(ASHA, 'j4_remind_yes', 'Asha') === false && w.rows[ASHA].consent_reminder === undefined && w.sent.length === 0, 'j4_remind_yes without marketing consent changes nothing');
+  w = world({ contact: { consent_marketing: true, consent_reminder: false, consent_at: OLD_AT } });
   ok(await journey.handleTap(ASHA, 'j7_remind', 'Asha') === true, 'j7_remind is handled for a consented contact');
-  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === 'j7_remind: Remind me to reorder', 'it saves reminder consent with its own text');
-  ok(w.toBuyer().length === 1 && flat(w.toBuyer()[0].text) === W.c3, 'and replies C3');
+  ok(w.rows[ASHA].consent_reminder === true && w.rows[ASHA].consent_text === 'j7_remind: Remind me to reorder' && w.rows[ASHA].consent_at === OLD_AT, 'it saves reminder consent with its own text, consent_at untouched');
+  ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === S.c3, 'and replies exactly C3');
   for (const contact of [undefined, { consent_marketing: false }]) {
     w = world({ contact });
-    ok(await journey.handleTap(ASHA, 'j7_remind', 'Asha') === false && w.sent.length === 0 && (!w.rows[ASHA] || w.rows[ASHA].consent_reminder === undefined), 'j7_remind without marketing consent: false, nothing saved (' + JSON.stringify(contact) + ')');
+    ok(await journey.handleTap(ASHA, 'j7_remind', 'Asha') === false && w.sent.length === 0 && (!w.rows[ASHA] || w.rows[ASHA].consent_reminder === undefined), 'j7_remind without marketing consent: false, nothing saved (' + show(contact) + ')');
   }
 
   // ── a consent that could not be saved is never confirmed ──
   w = world();
   w.db.insertContact = async () => { throw new Error('db down'); };
   await journey.handleTap(ASHA, 'j4_yes', 'Asha');
-  ok(w.toBuyer().length === 1 && /didn't go through/.test(w.toBuyer()[0].text) && !w.sent.some((s) => /on the list|cart\?/.test(s.text || '')), 'a Yes that failed to save: the try-again line, no C7, no link');
+  ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === S.failed, 'a Yes that failed to save: exactly the try-again line, no C7, no link');
 
-  // ── the unlock video (owner, 16 Nov): before every first Loved it reply, never otherwise ──
-  const VID = 'https://cdn.example.com/unlock.mp4';
-  const firstLovedCases = [
-    ['not consented', {}],
-    ['consented, no reminder', { contact: { consent_marketing: true, consent_reminder: false } }],
-    ['covers reminders', { contact: { consent_marketing: true, consent_reminder: true } }],
-    ['STOP (R1)', { contact: { consent_marketing: false, consent_text: 'STOP' } }],
-  ];
+  // ── the unlock video rides IN the first Loved it reply (R17), never otherwise ──
   process.env.JOURNEY_UNLOCK_VIDEO_URL = VID;
-  for (const [label, opts] of firstLovedCases) {
-    w = world(opts);
-    await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-    b = w.toBuyer();
-    ok(b.length >= 2 && b[0].kind === 'video' && b[0].link === VID && !b[0].caption, 'video first, no caption: ' + label);
-    ok(b[1].kind !== 'video' && b.slice(1).every((s) => s.kind !== 'video'), 'then the words, exactly as without the video: ' + label);
-  }
+  const HDR = show({ type: 'video', link: VID });
   w = world();
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  b = w.toBuyer();
+  only(b, 'video, not consented');
+  ok(b[0].kind === 'buttons' && show(b[0].header) === HDR && b[0].text === S.ask && show(b[0].buttons) === show(journey.BUTTONS.consent), 'not consented: ONE button message, the clip as its header, the ask as its body');
+  w = world({ contact: { consent_marketing: true, consent_reminder: false } });
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  b = w.toBuyer();
+  only(b, 'video, consented without reminder');
+  ok(b[0].kind === 'buttons' && show(b[0].header) === HDR && b[0].text === CART + '\n\n' + S.c9 && show(b[0].buttons) === show(journey.BUTTONS.reminder), 'consented, no reminder: ONE button message, clip header, the cart words + C9 as the body: ' + show(b[0]));
+  w = world({ contact: { consent_marketing: true, consent_reminder: true } });
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  b = w.toBuyer();
+  only(b, 'video, covers reminders');
+  ok(b[0].kind === 'video' && b[0].link === VID && b[0].caption === CART, 'covers reminders: the clip with the cart message as its caption');
+  w = world({ contact: { consent_marketing: false, consent_text: 'STOP' } });
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  b = w.toBuyer();
+  only(b, 'video, STOP');
+  ok(b[0].kind === 'video' && b[0].link === VID && b[0].caption === S.r1, 'R1: the clip with exactly the R1 words as its caption');
+  // a failed clip falls back to the plain messages, exactly as without the video
+  w = world();
+  w.wa.sendButtons = async (to, body, buttons, opts) => { if (opts && opts.header) throw new Error('media fetch failed'); w.sent.push({ to, kind: 'buttons', text: body, buttons }); };
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  b = w.toBuyer();
+  ok(b.length === 1 && b[0].kind === 'buttons' && b[0].text === S.ask && b[0].header === undefined, 'header refused: the plain consent ask');
+  w = world({ contact: { consent_marketing: true, consent_reminder: false } });
+  w.wa.sendButtons = async (to, body, buttons, opts) => { if (opts && opts.header) throw new Error('media fetch failed'); w.sent.push({ to, kind: 'buttons', text: body, buttons }); };
+  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
+  b = w.toBuyer();
+  ok(b.length === 2 && b[0].text === CART && b[1].text === S.c9, 'header refused, consented: the cart message, then C9, as without the video');
+  w = world({ contact: { consent_marketing: true, consent_reminder: true } });
   w.wa.sendVideo = async () => { throw new Error('media fetch failed'); };
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  ok(w.toBuyer().length === 1 && w.toBuyer()[0].text === R.askConsent, 'a video that fails to send never blocks the reply');
+  b = w.toBuyer();
+  ok(b.length === 1 && b[0].kind === 'text' && b[0].text === CART, 'video refused: the plain cart message');
+  // never on a repeat, Not quite, Something wasn't right or Yes
   w = world();
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
   const v0 = w.sent.length;
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  ok(!w.sent.slice(v0).some((s) => s.kind === 'video'), 'a repeat Loved it gets no video');
+  ok(!w.sent.slice(v0).some((s) => s.kind === 'video' || s.header), 'a repeat Loved it gets no video');
   for (const k of ['meh', 'wrong']) {
     w = world();
     await journey.handleTap(ASHA, `j3:${k}:${OID}`, 'Asha');
-    ok(!w.sent.some((s) => s.kind === 'video'), `${k} never sends a video`);
+    await journey.captureReply(ASHA, 'Asha', 'text', 'answer');
+    ok(!w.sent.some((s) => s.kind === 'video' || s.header), `${k} never sends a video`);
   }
   w = world();
   await journey.handleTap(ASHA, 'j4_yes', 'Asha');
-  ok(!w.sent.some((s) => s.kind === 'video'), 'Yes, keep me posted gets no second video');
+  ok(!w.sent.some((s) => s.kind === 'video' || s.header), 'Yes, keep me posted gets no second video');
   process.env.JOURNEY_UNLOCK_VIDEO_URL = '   ';
   w = world();
   await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  ok(w.toBuyer().length === 1 && w.toBuyer()[0].kind === 'buttons', 'a blank JOURNEY_UNLOCK_VIDEO_URL: only the words');
+  ok(w.toBuyer().length === 1 && w.toBuyer()[0].header === undefined && w.toBuyer()[0].text === S.ask, 'a blank JOURNEY_UNLOCK_VIDEO_URL: exactly as without the video');
   delete process.env.JOURNEY_UNLOCK_VIDEO_URL;
-  w = world();
-  await journey.handleTap(ASHA, 'j3:loved:' + OID, 'Asha');
-  ok(w.toBuyer().length === 1 && w.toBuyer()[0].kind === 'buttons', 'JOURNEY_UNLOCK_VIDEO_URL unset: only the words');
 
-  // ── whatsapp.js sendVideo: same shape as sendImage, no live call ──
+  // ── whatsapp.js: sendVideo, and sendButtons with a media header (no live call) ──
   {
     const wa = require('../utils/whatsapp'), axios = require('axios'), realPost = axios.post;
     let body = null;
     axios.post = async (url, payload) => { body = payload; return { data: { messages: [{ id: 'x' }] } }; };
     await wa.sendVideo(ASHA, VID);
-    ok(body && body.type === 'video' && body.to === ASHA && body.video.link === VID && body.video.caption === undefined && body.messaging_product === 'whatsapp', 'sendVideo posts a video message by link (' + JSON.stringify(body) + ')');
+    ok(body && body.type === 'video' && body.to === ASHA && body.video.link === VID && body.video.caption === undefined && body.messaging_product === 'whatsapp', 'sendVideo posts a video message by link (' + show(body) + ')');
     await wa.sendVideo(ASHA, VID, 'hi');
     ok(body.video.caption === 'hi', 'sendVideo passes a caption when given');
+    await wa.sendButtons(ASHA, 'Body', [{ id: 'a', title: 'A' }], { header: { type: 'video', link: VID } });
+    ok(show(body.interactive.header) === show({ type: 'video', video: { link: VID } }) && body.interactive.body.text === 'Body' && body.interactive.action.buttons[0].reply.id === 'a', 'sendButtons with opts.header puts the clip in the button message header (' + show(body.interactive) + ')');
+    await wa.sendButtons(ASHA, 'Body', [{ id: 'a', title: 'A' }]);
+    ok(!('header' in body.interactive), 'sendButtons without opts is unchanged (no header)');
     axios.post = realPost;
+  }
+
+  // ── mailer.js: the two check-in emails (resend stubbed, nothing sent) ──
+  {
+    const root = path.join(__dirname, '..');
+    const resendPath = require.resolve('resend', { paths: [path.join(root, 'utils')] });
+    const mailerPath = require.resolve(path.join(root, 'utils/mailer.js'));
+    const keep = { resend: require.cache[resendPath], mailer: require.cache[mailerPath], to: process.env.NOTIFY_EMAIL };
+    const emails = [];
+    require.cache[resendPath] = { id: resendPath, filename: resendPath, loaded: true, exports: { Resend: class { constructor() { this.emails = { send: async (p) => { emails.push(p); return { error: null }; } }; } } } };
+    delete require.cache[mailerPath]; process.env.NOTIFY_EMAIL = 'owner@example.test';
+    const mailer = require(mailerPath);
+    await mailer.sendComplaintAlert({ customerPhone: ASHA, customerName: 'Asha <b>', orderId: OID, message: 'The box was "crushed"' });
+    const e = emails[0] || {};
+    ok(e.subject === "Something wasn't right: " + OID, 'complaint email subject: ' + show(e.subject));
+    ok(String(e.html).includes('Something wasn&#39;t right: ' + OID) && !/wants a human/i.test(String(e.subject) + e.html), 'complaint email heading names the order, not "Customer wants a human"');
+    ok(String(e.html).includes('Asha &lt;b&gt;') && String(e.html).includes('The box was &quot;crushed&quot;') && String(e.html).includes('https://wa.me/' + ASHA) && show(e.to) === show(['owner@example.test']), 'escaped, with the wa.me link, to NOTIFY_EMAIL');
+    await mailer.sendCheckinFeedbackAlert({ phone: ASHA, name: 'Asha', orderId: OID, text: '[check-in ' + OID + '] Too sweet & dry' });
+    const g = emails[1] || {};
+    ok(g.subject === 'Not quite for me: ' + OID && String(g.html).includes('Too sweet &amp; dry'), 'not-quite email: subject names the order, text escaped');
+    ok(!/taste it first|free/i.test(String(g.html)), 'not-quite email carries no "taste it first, free" promise');
+    if (keep.resend) require.cache[resendPath] = keep.resend; else delete require.cache[resendPath];
+    if (keep.mailer) require.cache[mailerPath] = keep.mailer; else delete require.cache[mailerPath];
+    if (keep.to === undefined) delete process.env.NOTIFY_EMAIL; else process.env.NOTIFY_EMAIL = keep.to;
   }
 
   // ── wiring ──

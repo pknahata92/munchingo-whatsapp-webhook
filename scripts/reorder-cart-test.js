@@ -44,10 +44,20 @@ eq(r.path, 'cart?add=atta-original:2,atta-kesari:1,atta-ajwain:1,atta-lite-sugar
 eq(r.trySlug, null, 'no try -> trySlug null');
 r = cart.cartLink({ orders: [O({ 'atta-original': 2, 'atta-kesari': 2 })], inStock: new Set(['atta-original']), campaign: 'c', medium: 'journey' });
 eq(r.path, 'cart?add=atta-original:2&' + UTM('c'), 'a sold-out Flavor is left out of the repeat cart');
-r = cart.cartLink({ orders: [O({}, [{ slug: 'full-range-set', quantity: 1 }])], inStock: ALL, campaign: 'c', medium: 'journey' });
-eq(r.path, 'cart?add=atta-original:1,atta-kesari:1,atta-ajwain:1,atta-lite-sugar:1&' + UTM('c'), 'a Set is opened into single boxes (the cart link takes singles only)');
-r = cart.cartLink({ orders: [O({}, [{ slug: 'trio-gift-set-kesari-lite-sugar-original', quantity: 1 }, { slug: 'shipping', quantity: 1 }])], inStock: ALL, campaign: 'c', medium: 'journey' });
-eq(r.path, 'cart?add=atta-original:2,atta-ajwain&' + UTM('c'), 'a Trio counts its three Flavors (one each, tie -> Original); the shipping line is not a box');
+// ── a Set in the last order: Build a box, never the Set broken into singles (ruling R20) ──
+r = cart.cartLink({ orders: [O({}, [{ slug: 'full-range-set', quantity: 1 }])], inStock: ALL, campaign: 'j4_reorder', medium: 'journey' });
+eq(r.path, 'build-a-box?utm_source=whatsapp&utm_medium=journey&utm_campaign=j4_reorder', 'a Full Range Set: the Build a box page');
+eq(r.trySlug, null, 'a Set: no try');
+eq(r.favSlug, 'atta-original', 'a Set: the favourite is still named (its Flavors, tie -> Original)');
+r = cart.cartLink({ orders: [O({ 'atta-kesari': 2 }, [{ slug: 'trio-gift-set-kesari-lite-sugar-original', quantity: 1 }, { slug: 'shipping', quantity: 1 }])], inStock: ALL, campaign: 'c', medium: 'broadcast' });
+eq(r.path, 'build-a-box?' + UTM('c', 'broadcast'), 'a Trio next to single boxes: still Build a box (medium and campaign as given)');
+eq(r.favSlug, 'atta-kesari', 'favourite counts the Trio\'s Flavors with the singles (Kesari 3)');
+r = cart.cartLink({ orders: [O({ 'atta-original': 2 }), O({}, [{ slug: 'full-range-set', quantity: 1 }])], inStock: ALL, campaign: 'c', medium: 'journey' });
+eq(r.path, 'cart?add=atta-original:2&' + UTM('c'), 'a Set only in an OLDER order: the newest order decides (and its Flavors count as tried)');
+r = cart.cartLink({ orders: [O({}, [{ slug: 'full-range-set', quantity: 1 }])], inStock: new Set(), campaign: 'c', medium: 'journey' });
+eq(r.path, 'shop?' + UTM('c'), 'a Set with nothing in stock: the shop');
+r = cart.cartLink({ orders: [O({ 'atta-original': 1 }, [{ slug: 'shipping', quantity: 1 }])], inStock: new Set(['atta-original']), campaign: 'c', medium: 'journey' });
+eq(r.path, 'cart?add=atta-original:1&' + UTM('c'), 'the shipping line is not a box and not a Set');
 
 // ── odd inputs ──
 r = cart.cartLink({ orders: [O({}, [{ product_retailer_id: 'w2w5ynf2m5', quantity: 2 }])], inStock: ALL, campaign: 'c', medium: 'journey' });
