@@ -740,9 +740,13 @@ app.post('/webhook', async (req, res) => {
     // When this person last wrote to us (updates an existing contact only; never throws, never creates one).
     try { await require('./utils/contacts').touchInbound(from); } catch (_) {}
 
-    // Replies to a broadcast within 3 days go to Prashant (name, number, text), not the bot menu. Not stored.
+    // A buyer answering the day-4 check-in (what went wrong, or what would have made it right; text or a photo) goes to
+    // Prashant first. Then replies to a broadcast within 3 days go to Prashant (name, number, text), not the bot menu. Not stored.
     {
       const replyText = type === 'text' ? message.text?.body : (message[type]?.caption || '');
+      try {
+        if (await require('./utils/journey').captureReply(from, contactName, type, replyText)) return;
+      } catch (e) { console.error('[JOURNEY] check-in reply capture failed:', e.message); }
       try {
         if (await require('./utils/broadcastReplies').maybeForward({ from, name: contactName, type, text: replyText })) return;
       } catch (e) { console.error('[REPLY] forward check failed:', e.message); }

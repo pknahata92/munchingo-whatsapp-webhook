@@ -257,6 +257,17 @@ async function sendImage(to, imageUrl, caption) {
   });
 }
 
+// ── Video message (by public link; caption optional) ──────────────────────────
+async function sendVideo(to, videoUrl, caption) {
+  return sendMessage({
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'video',
+    video: { link: videoUrl, caption },
+  });
+}
+
 module.exports = { sendTemplateWithUrlButton,
   sendTemplateWithButtons,
   sendTemplateWithHeader,
@@ -269,6 +280,7 @@ module.exports = { sendTemplateWithUrlButton,
   sendList,
   sendCatalog,
   sendImage,
+  sendVideo,
   markRead,
   sendTyping,
 };

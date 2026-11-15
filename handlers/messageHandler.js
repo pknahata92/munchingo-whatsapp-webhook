@@ -3,6 +3,7 @@
 const wa = require('../utils/whatsapp');
 const contacts = require('../utils/contacts');
 const suggestions = require('../utils/suggestions');
+const journey = require('../utils/journey');
 const { wantsHuman } = require('../utils/handoff');
 const { getStoredLang, setLang, HINDI_ENABLED } = require('../utils/langPrefs');
 const { sendFeedbackAlert, sendBulkInquiryAlert } = require('../utils/mailer');
@@ -725,6 +726,8 @@ async function routeText(to, text, name) {
 
   // ── 00. Marketing opt-out and sign-up keywords (e.g. FAIR from the stall QR) — before everything else ──
   if (contacts.isStop(text)) return contacts.handleStop(to);
+  // ── 00a. An answer to the day-4 check-in (Something wasn't right / Not quite) goes to Prashant (utils/journey.js) ──
+  if (await journey.captureReply(to, name, 'text', text)) return;
   // ── 00b. Suggestions: a waiting answer first, then the keyword (suggest / idea), or one typed inline ("idea: ...") ──
   if (await suggestions.capture(to, name, text)) return;
   const inlineIdea = suggestions.inlineSuggestion(text);
@@ -947,6 +950,9 @@ async function routeInteractive(to, interactive, name) {
   let buttonId;
   if (type === 'button_reply')    buttonId = interactive.button_reply?.id;
   else if (type === 'list_reply') buttonId = interactive.list_reply?.id;
+
+  // Check-in taps (j3:...), the consent / reminder buttons (j4_...) and Remind me to reorder (j7_remind): utils/journey.js.
+  if (buttonId && (await journey.handleTap(to, buttonId, name))) return;
 
   switch (buttonId) {
     case 'lang_en':

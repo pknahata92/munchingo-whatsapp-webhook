@@ -1,5 +1,5 @@
--- Growth journey (15 Nov 2026). Run in Supabase BEFORE pushing growth-journey (SQL editor). Safe to run twice; adds columns only.
--- Order-linked WhatsApp journey: reminder consent, last inbound time, campaign tag on broadcasts, typed chat waits.
+-- Growth journey (15 Nov 2026). Run in Supabase BEFORE pushing growth-journey (SQL editor). Safe to run twice; adds columns and indexes only.
+-- Order-linked WhatsApp journey: reminder consent, last inbound time, campaign tag on broadcasts, typed chat waits, one tap per order.
 
 -- contacts: when they last wrote to us, the separate yes for the running-low nudge, and the two "leave me alone" marks.
 alter table contacts add column if not exists last_inbound_at timestamptz;
@@ -14,6 +14,11 @@ create index if not exists marketing_sends_template_campaign_idx on marketing_se
 -- suggestion_waits: one table now holds several kinds of "waiting for their next message", optionally tied to an order.
 alter table suggestion_waits add column if not exists kind text not null default 'suggestion';
 alter table suggestion_waits add column if not exists order_id text;
+
+-- order_events: one journey_tap per order (utils/journey.js claims the first check-in tap with claimOrderEvent, which only
+-- returns false on a unique-index clash; without this a second Loved it would get a second cart link). Nothing writes
+-- journey_tap before this push, so there are no duplicates to trip it.
+create unique index if not exists order_events_journey_tap_once on order_events (order_id, event) where event = 'journey_tap';
 
 -- Read-back: should return 7 rows.
 select table_name, column_name, data_type

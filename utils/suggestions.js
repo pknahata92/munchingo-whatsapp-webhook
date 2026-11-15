@@ -55,6 +55,7 @@ async function capture(phone, name, text) {
   let wait = null;
   try { wait = await db.getSuggestionWait(phone); } catch (e) { console.error('[SUGGEST] could not read the wait for', phone, e.message); return false; }
   if (!wait) return false;
+  if (wait.kind && wait.kind !== 'suggestion') return false;   // a check-in wait (complaint / not_quite): utils/journey.js owns it, leave it
   try { await db.clearSuggestionWait(phone); } catch (e) { console.error('[SUGGEST] could not clear the wait for', phone, e.message); }
   if (now() - Date.parse(wait.asked_at) > WAIT_MS) return false;
   await saveSuggestion(phone, name, text);

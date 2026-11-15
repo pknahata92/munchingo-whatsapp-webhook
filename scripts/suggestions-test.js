@@ -59,6 +59,19 @@ function fakes(startMs) {
   ok(took === false && f.rows.length === 0 && !f.waits['919810000002'], 'after 30 minutes the next message is NOT taken, and the wait is cleared');
   f = fakes(START); s.setDeps(f.deps);
   ok(await s.capture('919810000003', 'X', 'hello') === false && f.rows.length === 0, 'no wait, nothing taken');
+  // Journey waits (check-in complaint / not quite, utils/journey.js) share the row: not a suggestion, and left in place (ruling R11).
+  for (const kind of ['complaint', 'not_quite']) {
+    f = fakes(START); let cleared = false;
+    f.deps.db.getSuggestionWait = async (phone) => ({ phone, asked_at: new Date(START).toISOString(), kind, order_id: 'MNG-AAAA-1111' });
+    f.deps.db.clearSuggestionWait = async () => { cleared = true; };
+    s.setDeps(f.deps);
+    took = await s.capture('919810000007', 'Asha', 'the box was crushed');
+    ok(took === false && f.rows.length === 0 && !cleared && f.sent.length === 0, `a ${kind} wait is not taken as a suggestion and is left in place`);
+  }
+  f = fakes(START); f.deps.db.getSuggestionWait = async (phone) => ({ phone, asked_at: new Date(START).toISOString(), kind: null }); s.setDeps(f.deps);
+  ok(await s.capture('919810000008', 'Om', 'smaller packs') === true && f.rows.length === 1, 'a wait with no kind is a suggestion wait (rows from before the migration)');
+  f = fakes(START); f.deps.db.getSuggestionWait = async (phone) => ({ phone, asked_at: new Date(START).toISOString(), kind: 'suggestion' }); s.setDeps(f.deps);
+  ok(await s.capture('919810000009', 'Om', 'smaller packs') === true && f.rows.length === 1, 'kind suggestion is taken as before');
 
   // ── inline, long text, failures ──
   f = fakes(START); s.setDeps(f.deps);
