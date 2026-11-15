@@ -293,6 +293,7 @@ async function handleTap(phone, payloadId, name) {
  *  reply. Any failure leaves today's "[sent a photo]" note, already sent. No owner-window check exists in the code, so the image
  *  is sent anyway and a WhatsApp rejection is just a logged failure. Never logs bytes or the phone. */
 async function forwardPhoto(mediaId, orderId, phone) {
+  try {
   const { wa, mail, ownerPhone } = D();
   let img;
   try { img = await wa.downloadMedia(mediaId); } catch (e) { console.error(`[JOURNEY] complaint photo on ${orderId} not downloaded:`, e.message); return; }
@@ -305,6 +306,7 @@ async function forwardPhoto(mediaId, orderId, phone) {
     });
   }
   await send('owner photo email', () => mail.sendComplaintPhoto({ customerPhone: digits(phone), orderId, buffer: img.buffer, mimeType: img.mimeType }));
+  } catch (e) { console.error(`[JOURNEY] complaint photo on ${orderId} could not be forwarded:`, e.message); }
 }
 
 /** The buyer's next message after Something wasn't right / Not quite (within 24 h). True when it was taken. Never throws. */

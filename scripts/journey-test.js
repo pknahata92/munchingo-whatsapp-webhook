@@ -200,6 +200,9 @@ const only = (b, m) => ok(b.length === 1, m + ' (one message: ' + show(b) + ')')
     ok(w.toOwner().some((s) => s.text && s.text.includes('[sent a photo]')) && w.mails.some((m) => m.kind === 'complaint' && String(m.message).includes('[sent a photo]')), 'A5c: failed download falls back to the text note (WhatsApp and email)');
     ok(w.toBuyer().pop().text === S.c11, 'A5c: and the buyer still gets C11');
 
+    w = await setup(); w.wa.downloadMedia = () => { throw new TypeError('sync boom'); };
+    ok(await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1') === true && w.toBuyer().pop().text === S.c11, 'A5c: even a synchronous throw inside the forward never reaches captureReply');
+
     w = await setup(); w.media.failSend = true; w.media.failMail = true;
     ok(await journey.captureReply(ASHA, 'Asha', 'image', '', 'M1') === true && w.toBuyer().pop().text === S.c11, 'A5c: WhatsApp image and photo email both failing never break the reply');
 

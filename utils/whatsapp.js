@@ -158,13 +158,21 @@ async function uploadMedia(buffer, mimeType, filename) {
 // Capped and timed out so a stuck download never holds the buyer's reply. Throws on anything unusable. Never logs bytes.
 const MEDIA_MAX_BYTES = 5 * 1024 * 1024;
 const MEDIA_IMAGE_TYPES = /^image\/(jpeg|png|webp)$/i;
+// The returned url must stay on Meta: https and the host exactly graph.facebook.com, fbsbx.com or a dot-suffix of fbsbx.com.
+function isMetaMediaUrl(raw) {
+  let u; try { u = new URL(String(raw)); } catch (e) { return false; }
+  if (u.protocol !== 'https:' || u.username || u.password) return false;
+  const h = u.hostname.toLowerCase();
+  return h === 'graph.facebook.com' || h === 'fbsbx.com' || h.endsWith('.fbsbx.com');
+}
 async function downloadMedia(mediaId) {
   const auth = { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` };
   const meta = await axios.get(`${BASE_URL}/${encodeURIComponent(mediaId)}`, { headers: auth, timeout: 8000 });
   const { url, mime_type: mimeType, file_size: size } = meta.data || {};
   if (!url || !MEDIA_IMAGE_TYPES.test(String(mimeType || ''))) throw new Error('not a supported image');
+  if (!isMetaMediaUrl(url)) throw new Error('media url is not on Meta');   // the bearer token never goes elsewhere
   if (Number(size) > MEDIA_MAX_BYTES) throw new Error('image too large');
-  const res = await axios.get(url, { headers: auth, responseType: 'arraybuffer', timeout: 15000, maxContentLength: MEDIA_MAX_BYTES, maxBodyLength: MEDIA_MAX_BYTES });
+  const res = await axios.get(url, { headers: auth, responseType: 'arraybuffer', timeout: 15000, maxRedirects: 0, maxContentLength: MEDIA_MAX_BYTES, maxBodyLength: MEDIA_MAX_BYTES });
   const buffer = Buffer.from(res.data);
   if (buffer.length > MEDIA_MAX_BYTES) throw new Error('image too large');
   return { buffer, mimeType: String(mimeType).toLowerCase() };

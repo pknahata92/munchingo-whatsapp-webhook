@@ -86,15 +86,25 @@ const opts = { quickReplies: ['j7_remind'], urlIndex: 1, urlSuffix: 'shop?utm_so
 
   // A5c: downloadMedia is two GETs (meta, then the url), same bearer; images only, 5 MB cap
   {
-    const gets = []; let metaResp = { url: 'https://lookaside.example/x', mime_type: 'image/jpeg', file_size: 100 };
-    axios.get = async (url, cfg) => { gets.push({ url, cfg }); return url.includes('lookaside') ? { data: Buffer.from('IMG') } : { data: metaResp }; };
+    const gets = []; let metaResp = { url: 'https://lookaside.fbsbx.com/x', mime_type: 'image/jpeg', file_size: 100 };
+    axios.get = async (url, cfg) => { gets.push({ url, cfg }); return cfg.responseType === 'arraybuffer' ? { data: Buffer.from('IMG') } : { data: metaResp }; };
     const r = await wa.downloadMedia('MID1');
-    ok(gets.length === 2 && gets[0].url.endsWith('/MID1') && gets[1].url === 'https://lookaside.example/x', 'downloadMedia: GET /{id} then GET the returned url');
+    ok(gets.length === 2 && gets[0].url.endsWith('/MID1') && gets[1].url === 'https://lookaside.fbsbx.com/x', 'downloadMedia: GET /{id} then GET the returned url');
     ok(gets.every((g) => g.cfg.headers.Authorization === 'Bearer x' && g.cfg.timeout > 0), 'downloadMedia: bearer token and a timeout on both calls');
     ok(r.buffer.toString() === 'IMG' && r.mimeType === 'image/jpeg', 'downloadMedia: returns { buffer, mimeType }');
-    metaResp = { url: 'https://lookaside.example/x', mime_type: 'video/mp4', file_size: 100 };
+    ok(gets[1].cfg.maxContentLength === 5 * 1024 * 1024 && gets[1].cfg.maxRedirects === 0, 'downloadMedia: second GET capped at 5 MB and follows no redirect');
+    for (const bad of ['https://evil.example/x', 'https://fbsbx.com.evil.io/x', 'https://evilfbsbx.com/x', 'http://lookaside.fbsbx.com/x', 'https://graph.facebook.com.evil.io/x', 'https://lookaside.fbsbx.com@evil.io/x', 'not a url']) {
+      gets.length = 0; metaResp = { url: bad, mime_type: 'image/jpeg', file_size: 100 };
+      ok(await wa.downloadMedia('M').then(() => false, () => true) && gets.length === 1, 'downloadMedia: rejects ' + bad + ' and never makes the second GET');
+    }
+    for (const good of ['https://lookaside.fbsbx.com/x', 'https://scontent.xx.fbsbx.com/x', 'https://graph.facebook.com/v21.0/x']) {
+      gets.length = 0; metaResp = { url: good, mime_type: 'image/jpeg', file_size: 100 };
+      ok(await wa.downloadMedia('M').then(() => true, () => false) && gets.length === 2, 'downloadMedia: allows ' + good);
+    }
+    metaResp = { url: 'https://lookaside.fbsbx.com/x', mime_type: 'image/jpeg', file_size: 100 };
+    metaResp = { url: 'https://lookaside.fbsbx.com/x', mime_type: 'video/mp4', file_size: 100 };
     ok(await wa.downloadMedia('M').then(() => false, () => true), 'downloadMedia: rejects a non-image');
-    metaResp = { url: 'https://lookaside.example/x', mime_type: 'image/png', file_size: 6 * 1024 * 1024 };
+    metaResp = { url: 'https://lookaside.fbsbx.com/x', mime_type: 'image/png', file_size: 6 * 1024 * 1024 };
     ok(await wa.downloadMedia('M').then(() => false, () => true), 'downloadMedia: rejects over 5 MB');
     reset(); await wa.sendImageById('91999', 'OUT1', 'MNG-1');
     ok(calls[0].payload.type === 'image' && calls[0].payload.image.id === 'OUT1' && calls[0].payload.image.caption === 'MNG-1', 'sendImageById: image by id with caption');
