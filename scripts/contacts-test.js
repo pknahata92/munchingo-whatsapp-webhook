@@ -17,6 +17,7 @@ function fakes(startMs) {
         getContact: async (phone) => (rows[phone] ? { ...rows[phone] } : null),
         // Strict like Postgres: a new row must carry first_source (NOT NULL); an existing row is changed with an update only.
         insertContact: async (row) => { if (rows[row.phone]) throw new Error('duplicate key'); if (!row.first_source) throw new Error('null value in column "first_source"'); rows[row.phone] = { ...row }; return rows[row.phone]; },
+        touchInbound: async (phone, at) => { if (rows[phone]) rows[phone].last_inbound_at = at; },
         updateContact: async (phone, fields) => { if (!rows[phone]) throw new Error('no such contact'); if ('first_source' in fields && !fields.first_source) throw new Error('null first_source'); rows[phone] = { ...rows[phone], ...fields }; return rows[phone]; },
       },
       wa: {
@@ -50,7 +51,7 @@ function fakes(startMs) {
     ok(g.rows['919810000003'].first_source === 'join:2026-10-25' && g.sent[0].kind === 'buttons', 'a JOIN sign-up is saved as join:<IST day> and asked the same question'); c.setDeps(f.deps); }
   let m = f.sent[0];
   ok(f.sent.length === 1 && m.kind === 'buttons' && m.to === '919810000001', 'one button message is sent back');
-  ok(m.body === c.CONSENT_QUESTION && /^Thanks for stopping by Munchingo! 🍪/.test(m.body) && !/picking/.test(m.body) && /Reply STOP any time/.test(m.body) && /Flavors/.test(m.body), 'the consent question is the agreed wording (fits buyers and browsers)');
+  ok(m.body === c.CONSENT_QUESTION && /^Thanks for stopping by Munchingo! 🍪/.test(m.body) && !/picking/.test(m.body) && /Reply STOP any time/.test(m.body) && /Flavor/.test(m.body) && /a few weeks after an order, when your box is probably running low\?/.test(m.body) && /At most 3 a month/.test(m.body) && !/offers/.test(m.body), 'the consent question is the new wording that names the reorder nudge');
   ok(JSON.stringify(m.buttons) === JSON.stringify([{ id: 'optin_yes', title: 'Yes, keep me posted' }, { id: 'optin_no', title: 'No thanks' }]), 'two buttons: yes and no');
   ok(m.buttons.every((b) => b.title.length <= 20), 'button titles fit WhatsApp\'s 20-character limit');
 
@@ -58,12 +59,13 @@ function fakes(startMs) {
   f.tick(60 * 1000);
   await c.handleOptIn('919810000001', true);
   row = f.rows['919810000001'];
+  ok(row.consent_reminder === true, 'yes to the new question also sets consent_reminder');
   ok(row.consent_marketing === true && row.consent_at === new Date(START + 60000).toISOString() && row.consent_text === c.CONSENT_QUESTION, 'yes records consent, the time and the exact question asked');
   ok(f.sent[1].kind === 'buttons' && /on the list/.test(f.sent[1].body) && JSON.stringify(f.sent[1].buttons) === JSON.stringify([{ id: 'btn_products', title: '🛒 Browse Products' }]), 'yes gets a thank-you with a Browse Products button');
   await c.handleOptIn('919810000001', false);
   row = f.rows['919810000001'];
-  ok(row.consent_marketing === false && row.consent_text === c.CONSENT_QUESTION, 'no records a refusal');
-  ok(f.sent[2].kind === 'buttons' && /won't send offers/.test(f.sent[2].body) && JSON.stringify(f.sent[2].buttons) === JSON.stringify([{ id: 'btn_products', title: '🛒 Browse Products' }]), 'no gets a polite reply with a Browse Products button');
+  ok(row.consent_marketing === false && row.consent_reminder === false && row.consent_text === c.CONSENT_QUESTION, 'no records a refusal (and no reminder consent)');
+  ok(f.sent[2].kind === 'buttons' && /No problem, I won't send these\. Enjoy them\. 🍪/.test(f.sent[2].body) && JSON.stringify(f.sent[2].buttons) === JSON.stringify([{ id: 'btn_products', title: '🛒 Browse Products' }]), 'no gets a polite reply with a Browse Products button');
 
   // ── coming back on another day keeps the first source and the earlier answer ──
   await c.handleOptIn('919810000001', true);
@@ -77,12 +79,42 @@ function fakes(startMs) {
   // ── STOP ──
   await c.handleStop('919810000001');
   row = f.rows['919810000001'];
-  ok(row.consent_marketing === false && row.consent_text === 'STOP', 'STOP withdraws consent and says how');
-  ok(/won't send you offers/.test(f.sent[f.sent.length - 1].text), 'STOP is confirmed');
+  ok(row.consent_marketing === false && row.consent_reminder === false && row.consent_text === 'STOP', 'STOP withdraws consent and the reminder consent, and says how');
+  ok(f.sent[f.sent.length - 1].text === "Done, I won't send you these messages. You can still message us here any time.", 'STOP is confirmed (C6)');
   await c.handleStop('919899999999');
   ok(f.rows['919899999999'] && f.rows['919899999999'].consent_marketing === false && f.rows['919899999999'].first_source === 'stop', 'STOP from an unknown number is kept as a do-not-message record');
   await c.handleOptIn('919877777777', true);
   ok(f.rows['919877777777'] && f.rows['919877777777'].consent_marketing === true && f.rows['919877777777'].first_source === 'button', 'a yes from a number we never saved (stale button) is still recorded');
+
+  // ── inbound time: never throws, never creates a contact ──
+  f = fakes(START); c.setDeps(f.deps);
+  await c.touchInbound('919800000099');
+  ok(Object.keys(f.rows).length === 0, 'touchInbound on an unknown phone inserts nothing');
+  f.rows['919800000098'] = { phone: '919800000098', first_source: 'x' };
+  await c.touchInbound('919800000098');
+  ok(f.rows['919800000098'].last_inbound_at === new Date(START).toISOString(), 'touchInbound stamps an existing contact with now');
+  f.deps.db.touchInbound = async () => { throw new Error('db down'); };
+  let tThrew = false; try { await c.touchInbound('919800000098'); } catch (e) { tThrew = true; }
+  ok(!tThrew, 'touchInbound never throws');
+
+  // ── coversReminders ──
+  ok(c.coversReminders({ consent_marketing: true, consent_reminder: true }) === true, 'coversReminders: both true');
+  ok(c.coversReminders({ consent_marketing: true, consent_reminder: false }) === false && c.coversReminders({ consent_marketing: false, consent_reminder: true }) === false && c.coversReminders(null) === false && c.coversReminders({ consent_marketing: true }) === false, 'coversReminders: false unless both are true');
+
+  // ── notify (waitlist outside the delivery area) ──
+  ok(c.signupSource('NOTIFY - Jaipur') === 'notify' && c.signupSource('notify') === 'notify' && c.signupSource('notify me later') === null, 'notify is a keyword');
+  f = fakes(START); c.setDeps(f.deps);
+  await c.handleSignup('919800000010', 'Meera', 'notify', 'NOTIFY - Jaipur');
+  row = f.rows['919800000010'];
+  ok(row && row.first_source === 'waitlist:jaipur:2026-10-25' && row.last_source === 'waitlist:jaipur:2026-10-25' && !('consent_marketing' in row) && !('consent_reminder' in row), 'NOTIFY - Jaipur saves the waitlist source and never sets consent (' + JSON.stringify(row) + ')');
+  ok(f.sent[0].kind === 'text' && f.sent[0].text === 'Noted. I\'ll message you once when we deliver to Jaipur, and nothing else.', 'C8 reply names the city as typed, capitalised');
+  await c.handleSignup('919800000011', 'Ravi', 'notify', 'notify - navi mumbai');
+  ok(f.rows['919800000011'].first_source === 'waitlist:navi mumbai:2026-10-25' && /deliver to Navi mumbai,/.test(f.sent[1].text), 'a lower-case city is capitalised in the reply');
+  await c.handleSignup('919800000012', 'Sam', 'notify', 'NOTIFY');
+  ok(f.rows['919800000012'].first_source === 'waitlist:unknown:2026-10-25' && /deliver to your city,/.test(f.sent[2].text), 'no city: source waitlist:unknown, reply says your city');
+  f.rows['919800000013'] = { phone: '919800000013', first_source: 'fair:2026-10-20', consent_marketing: true };
+  await c.handleSignup('919800000013', 'Old', 'notify', 'NOTIFY - Pune');
+  ok(f.rows['919800000013'].first_source === 'fair:2026-10-20' && f.rows['919800000013'].last_source === 'waitlist:pune:2026-10-25' && f.rows['919800000013'].consent_marketing === true, 'an existing contact keeps first source and consent');
 
   // ── a database failure never leaves the buyer without a reply ──
   f = fakes(START); f.deps.db.insertContact = f.deps.db.updateContact = async () => { throw new Error('db down'); }; c.setDeps(f.deps);

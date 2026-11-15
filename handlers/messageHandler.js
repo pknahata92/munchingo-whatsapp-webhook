@@ -731,7 +731,7 @@ async function routeText(to, text, name) {
   if (inlineIdea) return suggestions.saveSuggestion(to, name, inlineIdea);
   if (suggestions.isAsk(text)) return suggestions.ask(to);
   const signup = contacts.signupSource(text);
-  if (signup) return contacts.handleSignup(to, name, signup);
+  if (signup) return contacts.handleSignup(to, name, signup, text);
 
   // ── 0a. Anyone asking for a person (owner, agent, "call me", Hindi too): alert the owner with their details ──
   if (wantsHuman(text)) return sendHumanHandoff(to, name, text);

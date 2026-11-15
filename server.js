@@ -737,6 +737,9 @@ app.post('/webhook', async (req, res) => {
     // Mark as read (double blue tick)
     await wa.markRead(msgId).catch(() => {});
 
+    // When this person last wrote to us (updates an existing contact only; never throws, never creates one).
+    try { await require('./utils/contacts').touchInbound(from); } catch (_) {}
+
     // Replies to a broadcast within 3 days go to Prashant (name, number, text), not the bot menu. Not stored.
     {
       const replyText = type === 'text' ? message.text?.body : (message[type]?.caption || '');
