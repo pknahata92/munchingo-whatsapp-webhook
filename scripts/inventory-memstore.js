@@ -44,7 +44,7 @@ function memStore(trackingFrom) {
     });
   };
   const lotRow = (r, deliveryId) => ({ delivery_id: deliveryId || null, supplier_batch: null, bake_date: null, best_before: null, status: 'hold', released_at: null, released_by: null, check_weight_g: null, check_note: null, reject_reason: null, hold_reason: null, unit_cost_paise: null, aliases: [], created_at: new Date().toISOString(), ...r, delivery_id: r.delivery_id ?? deliveryId ?? null, status: r.status ?? 'hold', aliases: r.aliases ?? [] });   // defaults after the spread, like the SQL coalesce
-  const writeMoves = (rows) => rows.forEach((r) => mv.push({ id: ++id, created_at: new Date().toISOString(), reverses_id: null, ...r }));
+  const writeMoves = (rows) => { const ts = new Date().toISOString(); rows.forEach((r) => mv.push({ id: ++id, created_at: ts, reverses_id: null, ...r })); };   // one insert = one timestamp, like the database's now()
   const uniq = (r) => `${r.ref}|${r.item_slug}|${r.lot_code || ''}|${r.type}`;
   return {
     mv,

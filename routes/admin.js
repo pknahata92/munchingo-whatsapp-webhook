@@ -32,6 +32,7 @@ router.get('/admin/pdf.min.js', (req, res) => res.set({ 'Cache-Control': 'public
 router.get('/admin/pdf.worker.min.js', (req, res) => res.set({ 'Cache-Control': 'public, max-age=86400', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(PDFJS, 'pdf.worker.min.js')));
 router.get('/admin/pdf-lib.min.js', (req, res) => res.set({ 'Cache-Control': 'public, max-age=86400', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(LIB));
 router.get('/admin/pickfooter.js', (req, res) => res.set({ 'Cache-Control': 'no-cache', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(__dirname, '..', 'admin', 'pickfooter.js')));
+router.get('/admin/historygroups.js', (req, res) => res.set({ 'Cache-Control': 'no-cache', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(__dirname, '..', 'admin', 'historygroups.js')));
 router.get('/admin/labelsheet.js', (req, res) => res.set({ 'Cache-Control': 'no-cache', 'Content-Type': 'application/javascript; charset=utf-8' }).sendFile(path.join(__dirname, '..', 'admin', 'labelsheet.js')));
 
 router.get('/admin/logo.png', (req, res) => res.set('Cache-Control', 'public, max-age=86400').sendFile(path.join(__dirname, '..', 'assets', 'logo-tm.png')));

@@ -37,7 +37,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .sechead{margin:18px 2px 6px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .sechead:first-child{margin-top:4px}.sechead.await{color:var(--tx-amber)}.sechead.with{color:var(--tx-green)}
 .linebtns{display:flex;gap:6px;align-items:center;flex-shrink:0;margin-left:auto}
-.hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
+.hgroup{border:1px solid var(--line,#e3ddd2);border-radius:10px;margin:8px 0;padding:6px 10px}.ghead{padding:4px 0 2px}.ghead small{display:block}.hgroup .line{padding-left:10px;border-top:1px dashed var(--line,#e3ddd2)}.hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
 .sechead small{display:block;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink2);font-size:12px;margin-top:1px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
 .b-late{background:#B3261E;color:#fff}.card.late{border-left:5px solid #B3261E}.meta.late{color:var(--tx-red);font-weight:600}.b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
@@ -229,6 +229,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 <script src="/admin/pdf.min.js" defer></script>
 <script src="/admin/labelsheet.js" defer></script>
 <script src="/admin/pickfooter.js" defer></script>
+<script src="/admin/historygroups.js" defer></script>
 <script>
 (function () {
   'use strict';
@@ -2094,17 +2095,33 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
   }
   function invHistory() {
     var types = HIST_TYPES[invHistFilter];
-    api('/admin/api/inventory/history?limit=60' + (types ? '&types=' + types : '')).then(function (j) {
+    api('/admin/api/inventory/history?limit=200' + (types ? '&types=' + types : '')).then(function (j) {
       if (!j.ok) return toast(j.error || 'Failed');
       var LBL = { RECEIVE: 'Received', DAMAGED: 'Damaged', SALE: 'Sold (packed)', SALE_UNDO: 'Sale undone', USE: 'Used', SAMPLE: 'Sample', GIFT: 'Given away', EXHIBITION: 'Taken to event', EXHIBITION_RETURN: 'Back from event', OFFLINE_SALE: 'Sold offline', EVENT_SALE: 'Sold at event', RETURN: 'Return', COUNT_FIX: 'Count fix', REVERSAL: 'Reversed' };
       var chips = h('div', { class: 'chips' }, [['all', 'All'], ['received', 'Received'], ['out', 'Taken out'], ['sales', 'Sales']].map(function (c) { return h('button', { class: 'chip' + (invHistFilter === c[0] ? ' on' : ''), type: 'button', onclick: function () { invHistFilter = c[0]; invHistory(); } }, c[1]); }));
-      var lines = j.movements.map(function (m) {
-        var can = !m.reversed && m.delivery_id == null && ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX'].indexOf(m.type) >= 0;
-        return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (LBL[m.type] || m.type) + (m.reversed ? ' · Cancelled' : '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'EVENT_SALE'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (m.lot_code ? ' · lot ' + m.lot_code : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : ''))),
-          h('div', { class: 'linebtns' }, !m.reversed && m.delivery_id == null && m.type === 'RECEIVE' ? h('button', { class: 'btn small', onclick: function () { correctReceipt(m); } }, 'Correct') : null,
-          can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null));
+      // One take-out, hamper sale or receipt is one entry: the ledger keeps a row per flavour and lot, shown here together (admin/historygroups.js).
+      var CAN = ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX'];
+      var what = function (m, flag, lot) {   // label, who/what for, note, time and person: a single line and an entry's heading read the same
+        return (LBL[m.type] || m.type) + (flag || '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'EVENT_SALE'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (lot ? ' · lot ' + lot : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : '');
+      };
+      var buttons = function (m) {
+        var can = !m.reversed && m.delivery_id == null && CAN.indexOf(m.type) >= 0;
+        return h('div', { class: 'linebtns' }, !m.reversed && m.delivery_id == null && m.type === 'RECEIVE' ? h('button', { class: 'btn small', onclick: function () { correctReceipt(m); } }, 'Correct') : null,
+          can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
+      };
+      var single = function (m) {
+        return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, what(m, m.reversed ? ' · Cancelled' : '', m.lot_code))), buttons(m));
+      };
+      var G = window.MunchingoHistoryGroups;
+      var entries = G ? G.group(j.movements, { truncated: j.movements.length >= 200 }) : j.movements.map(function (m) { return { rows: [m] }; });
+      var lines = entries.slice(0, 60).map(function (e) {
+        if (e.rows.length === 1) return single(e.rows[0]);
+        var m0 = e.rows[0], flag = e.allReversed ? ' · Cancelled' : e.someReversed ? ' · partly cancelled' : '';
+        return h('div', { class: 'hgroup' },
+          h('div', { class: 'ghead' }, h('b', {}, e.total + ' boxes: ' + e.boxes.map(function (b) { return b.slug + ' ' + b.qty; }).join(', ')), h('small', {}, what(m0, flag, null))),
+          e.rows.map(function (m) { return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (m.reversed ? 'Cancelled' : '') + (m.lot_code ? (m.reversed ? ' · ' : '') + 'lot ' + m.lot_code : ''))), buttons(m)); }));
       });
-      invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), chips, section('Latest 60 lines', lines.length ? lines : h('p', { class: 'muted' }, 'Nothing here.'))]);
+      invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), chips, section('Latest ' + lines.length + (lines.length === 1 ? ' entry' : ' entries'), lines.length ? lines : h('p', { class: 'muted' }, 'Nothing here.'))]);
     });
   }
   // ── Shipping labels from the orders: the server fetches each Delhivery label, this page lays them out on 13 x 19 in (see labelsheet.js) ──

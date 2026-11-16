@@ -2,6 +2,8 @@
 // Checks for the redesigned admin, one block per plan task. Each is an async function run by admin-ui-test.js.
 module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
   const list = [];
+  // A History line inside a grouped entry carries only its flavour and lot; the label, buyer, note and time are on the entry's heading.
+  const ent = (l) => { const n = l.closest('.hgroup') || l; return n.textContent.replace(/\s+/g, ' ').trim(); };
   const vis = (el) => !!el && !el.hidden && !el.closest('[hidden]');
 
   // Task 1: shell, tabs, header
@@ -141,7 +143,12 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(/Sold at events/.test(text(q('#viewStock'))), 'Where did it go shows Sold at events');
     click(byText('#viewStock button', /^Back$/)); await until(() => qa('#viewStock .line').length >= 4, 3000, 'back');
     click(byText('#viewStock button', /^History$/)); await until(() => /Stock history/.test(text(q('#viewStock'))), 4000, 'history');
-    ok(qa('#viewStock .line').some((l) => /Sold at event/.test(text(l)) && /Diwali Fair, Sector 15/.test(text(l))), 'history labels the lines Sold at event, with the event');
+    ok(qa('#viewStock .line').some((l) => /Sold at event/.test(ent(l)) && /Diwali Fair, Sector 15/.test(ent(l))), 'history labels the lines Sold at event, with the event');
+    // 16 Nov 2026: one take-out is one entry in History, with its flavours inside (the ledger keeps a row per flavour)
+    const grp = qa('#viewStock .hgroup').filter((g) => /Diwali Fair, Sector 15/.test(text(g)));
+    ok(grp.length === 1, 'History shows the several-flavour take-out as ONE entry (saw ' + grp.length + ')');
+    ok(grp.length === 1 && /5 boxes/.test(text(grp[0])) && /atta-kesari/.test(text(grp[0])) && /atta-original/.test(text(grp[0])) && /Sold at event/.test(text(grp[0])), 'the entry names the event, the total (5 boxes) and both flavours');
+    ok(grp.length === 1 && grp[0].querySelectorAll('.line').length === 2, 'the two lines stay inside the entry, each with its own Reverse button');
     ok(o.errors.length === 0, 'no page errors on the multi take-out (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
   });
@@ -436,9 +443,9 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     click(byText('#viewStock button', /^History$/)); await until(() => /Stock history/.test(text(q('#viewStock'))), 4000, 'the history page');
     const chips = qa('#viewStock .chip').map((c) => text(c));
     ok(['All', 'Received', 'Taken out', 'Sales'].every((c) => chips.includes(c)), 'History has filter chips All, Received, Taken out, Sales (saw: ' + chips.join('|') + ')');
-    click(byText('#viewStock .chip', /^Received$/)); await until(() => qa('#viewStock .line').length >= 2 && qa('#viewStock .line').every((l) => /Received/.test(text(l))), 4000, 'only received lines');
+    click(byText('#viewStock .chip', /^Received$/)); await until(() => qa('#viewStock .line').length >= 2 && qa('#viewStock .line').every((l) => /Received/.test(ent(l))), 4000, 'only received lines');
     let lines = qa('#viewStock .line');
-    ok(lines.length >= 2 && lines.every((l) => /Received/.test(text(l))), 'the Received chip lists only receipts (' + lines.length + ' lines)');
+    ok(lines.length >= 2 && lines.every((l) => /Received/.test(ent(l))), 'the Received chip lists only receipts (' + lines.length + ' lines)');
     const btn = (l, re) => Array.from(l.querySelectorAll('button')).find((b) => re.test(text(b)));
     ok(lines.every((l) => !!btn(l, /^Correct$/)), 'every receipt has a Correct button');
     ok(!!byText('#viewStock .chip.on', /^Received$/), 'the chosen chip is shown as selected');
@@ -475,12 +482,12 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     // Wait for the history to redraw for the chosen chip (it reloads from the server), not a fixed time: a 300 ms sleep
     // read the previous view on a slow run, and the late redraw then hit the closed window (flaky until 29 Oct 2026).
     const shown = (chip, linesOk) => until(() => !!byText('#viewStock .chip.on', chip) && linesOk(qa('#viewStock .line')), 5000, 'the history to show ' + chip);
-    click(byText('#viewStock .chip', /^Received$/)); await shown(/^Received$/, (ls) => ls.length >= 2 && ls.every((l) => /Received/.test(text(l)))).catch(() => {});
+    click(byText('#viewStock .chip', /^Received$/)); await shown(/^Received$/, (ls) => ls.length >= 2 && ls.every((l) => /Received/.test(ent(l)))).catch(() => {});
     lines = qa('#viewStock .line').filter((l) => /atta-lite-sugar/.test(text(l)));
     const oldLine = lines.find((l) => /\+33/.test(text(l))), newLine = lines.find((l) => /\+36/.test(text(l)));
     ok(!!oldLine && /Cancelled/.test(text(oldLine)) && !btn(oldLine, /^(Correct|Reverse)$/), 'the old receipt now says Cancelled and offers no Correct or Reverse (' + (oldLine ? text(oldLine).slice(0, 80) : 'missing') + ')');
     ok(!!newLine && !!btn(newLine, /^Correct$/), 'the new receipt is there, and can itself be corrected');
-    click(byText('#viewStock .chip', /^All$/)); await shown(/^All$/, (ls) => ls.some((l) => !/Received/.test(text(l)))).catch(() => {});
+    click(byText('#viewStock .chip', /^All$/)); await shown(/^All$/, (ls) => ls.some((l) => !/Received/.test(ent(l)))).catch(() => {});
     ok(qa('#viewStock .line').some((l) => /Reversed/.test(text(l))), 'the All view shows the reversing lines too');
     ok(o.errors.length === 0, 'no page errors on stock history (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
