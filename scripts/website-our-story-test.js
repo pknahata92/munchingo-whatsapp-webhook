@@ -67,7 +67,8 @@ const img = art.querySelector('figure img');
 ok(img, 'the article has a photo');
 if (img) {
   const src = img.getAttribute('src');
-  ok(src === 'images/bikaner-baking.webp' && fs.existsSync(path.join(SITE, src)), 'photo is images/bikaner-baking.webp (Bikaner shoot, photo 6) and exists');
+  ok(src === 'images/bikaner-baking.webp' && fs.existsSync(path.join(SITE, src)), 'photo is images/bikaner-baking.webp (Bikaner shoot photo 1, cropped 4:3 above the camera rig) and exists');
+  ok(img.getAttribute('width') === '1400' && img.getAttribute('height') === '1050', 'photo is the 4:3 crop (1400x1050)');
   ok(fs.existsSync(path.join(SITE, src)) && fs.statSync(path.join(SITE, src)).size < 200 * 1024, 'photo file under 200 KB');
   ok(+img.getAttribute('width') > 0 && +img.getAttribute('height') > 0, 'photo has width and height');
   ok(norm(img.getAttribute('alt')).length >= 20, 'photo has a real alt text');
