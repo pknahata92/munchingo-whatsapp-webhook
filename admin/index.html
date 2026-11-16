@@ -37,7 +37,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .sechead{margin:18px 2px 6px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .sechead:first-child{margin-top:4px}.sechead.await{color:var(--tx-amber)}.sechead.with{color:var(--tx-green)}
 .linebtns{display:flex;gap:6px;align-items:center;flex-shrink:0;margin-left:auto}
-.hgroup{border:1px solid var(--line,#e3ddd2);border-radius:10px;margin:8px 0;padding:6px 10px}.ghead{padding:4px 0 2px}.ghead small{display:block}.hgroup .line{padding-left:10px;border-top:1px dashed var(--line,#e3ddd2)}.relabel{margin:6px 0}.relabel label{display:block;margin-top:6px}.relabel input,.relabel select{width:100%;box-sizing:border-box}.hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
+.hcard{border:1px solid var(--line,#e3ddd2);border-radius:12px;margin:10px 0;padding:12px 14px}.hcard.hsingle{display:block}.hcard .ttl{font-weight:700;font-size:15px;line-height:1.3}.hcard small{display:block;margin-top:3px}.hcard .meta{opacity:.65}.hcard .acts{margin-top:10px}.hcard.gone{opacity:.55}.lnk{background:none;border:0;color:inherit;text-decoration:underline;padding:10px 0 2px;font-size:13px;cursor:pointer;opacity:.85}.hlines{margin-top:8px}.hlines .line{padding:8px 0 8px 10px;border-top:1px dashed var(--line,#e3ddd2)}.relabel{margin:6px 0}.relabel label{display:block;margin-top:6px}.relabel input,.relabel select{width:100%;box-sizing:border-box}.hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
 .sechead small{display:block;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink2);font-size:12px;margin-top:1px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
 .b-late{background:#B3261E;color:#fff}.card.late{border-left:5px solid #B3261E}.meta.late{color:var(--tx-red);font-weight:600}.b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
@@ -2101,23 +2101,33 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       var chips = h('div', { class: 'chips' }, [['all', 'All'], ['received', 'Received'], ['out', 'Taken out'], ['sales', 'Sales']].map(function (c) { return h('button', { class: 'chip' + (invHistFilter === c[0] ? ' on' : ''), type: 'button', onclick: function () { invHistFilter = c[0]; invHistory(); } }, c[1]); }));
       // One take-out, hamper sale or receipt is one entry: the ledger keeps a row per flavour and lot, shown here together (admin/historygroups.js).
       var CAN = ['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX'];
-      var what = function (m, flag, lot) {   // label, who/what for, note, time and person: a single line and an entry's heading read the same
-        return (LBL[m.type] || m.type) + (flag || '') + (m.ref && ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'EVENT_SALE'].indexOf(m.type) >= 0 ? ' · ' + m.ref : '') + (m.type === 'OFFLINE_SALE' ? ' · ' + (m.party || '') + (m.ref ? ' · invoice ' + m.ref : '') : '') + (lot ? ' · lot ' + lot : '') + (m.note ? ' · ' + m.note : '') + ' · ' + when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : '');
+      // The page is built to be calm: one card per entry. Bold title (what happened and for whom), the boxes under it, who and when in a
+      // lighter line, then at most two or three buttons. The flavour lines of a multi-flavour entry are folded away behind "See the N lines".
+      var WHO_REF = ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'EVENT_SALE'];
+      var parts = function (m, flag, lot) {
+        var who = m.type === 'OFFLINE_SALE' ? (m.party || '') : (m.ref && WHO_REF.indexOf(m.type) >= 0 ? m.ref : '');
+        return { title: (LBL[m.type] || m.type) + (who ? ' · ' + who : '') + (flag || ''),
+          detail: [m.type === 'OFFLINE_SALE' && m.ref ? 'invoice ' + m.ref : '', lot ? 'lot ' + lot : '', m.note || ''].filter(Boolean).join(' · '),
+          meta: when(m.created_at) + (m.actor_name ? ' · ' + m.actor_name : '') };
       };
-      var buttons = function (m) {
-        var can = !m.reversed && m.delivery_id == null && CAN.indexOf(m.type) >= 0;
-        return h('div', { class: 'linebtns' }, !m.reversed && m.delivery_id == null && m.type === 'RECEIVE' ? h('button', { class: 'btn small', onclick: function () { correctReceipt(m); } }, 'Correct') : null,
-          can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
+      var canReverse = function (m) { return !m.reversed && m.delivery_id == null && CAN.indexOf(m.type) >= 0; };
+      var reverseOne = function (m, label) {
+        return h('button', { class: 'btn ghost small', type: 'button', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, label);
       };
+      var correctBtn = function (m) { return !m.reversed && m.delivery_id == null && m.type === 'RECEIVE' ? h('button', { class: 'btn small', type: 'button', onclick: function () { correctReceipt(m); } }, 'Correct') : null; };
+      // Per-line buttons, shown only inside the folded flavour lines of an entry.
+      var buttons = function (m) { return h('div', { class: 'linebtns' }, correctBtn(m), canReverse(m) ? reverseOne(m, 'Cancel line') : null); };
       // Whole-entry actions: cancel every live line in one save, or change who/what it was for (cancel + rewrite, stock does not move).
       var OUT = ['USE', 'DAMAGED', 'SAMPLE', 'GIFT', 'EVENT_SALE', 'OFFLINE_SALE'];   // event lines (EXHIBITION) are looked after by Event return, so no whole-entry actions on them
       var OUTLBL = { EVENT_SALE: 'Sold at an exhibition or event', SAMPLE: 'Sample or tasting', GIFT: 'Given away to someone', EXHIBITION: 'Taken to an exhibition or event', OFFLINE_SALE: 'Sold offline (bulk order or hamper)', DAMAGED: 'Damaged or not okay', USE: 'Used' };
       var entryActs = function (e) {
+        var single = e.rows.length === 1, m1 = e.rows[0];
         var liveRows = e.rows.filter(function (m) { return !m.reversed && m.delivery_id == null && CAN.indexOf(m.type) >= 0 && m.type !== 'EXHIBITION' && m.type !== 'EXHIBITION_RETURN'; });
-        if (!liveRows.length) return null;
-        var ids = liveRows.map(function (m) { return m.id; }), m0 = liveRows[0], box = h('div', {});
-        var bits = [e.rows.length < 2 ? null : h('button', { class: 'btn ghost small', type: 'button', onclick: function (ev) { var why = prompt('Cancel this whole entry (' + ids.length + ' line' + (ids.length === 1 ? '' : 's') + ')? Why? (reversing lines are added; nothing is deleted)'); if (!why) return; ev.target.disabled = true; api('/admin/api/inventory/reverse-entry', { method: 'POST', body: { ids: ids, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed ' + r.reversed + ' lines' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse whole entry')];
-        if (OUT.indexOf(m0.type) >= 0 && liveRows.every(function (m) { return m.qty < 0 && OUT.indexOf(m.type) >= 0; })) bits.push(h('button', { class: 'btn ghost small', type: 'button', onclick: function () {
+        var ids = liveRows.map(function (m) { return m.id; }), m0 = liveRows[0] || m1, box = h('div', {});
+        var bits = [];
+        if (single) { bits.push(correctBtn(m1)); if (canReverse(m1)) bits.push(reverseOne(m1, 'Cancel entry')); }
+        else if (liveRows.length) bits.push(h('button', { class: 'btn ghost small', type: 'button', onclick: function (ev) { var why = prompt('Cancel this whole entry (' + ids.length + ' line' + (ids.length === 1 ? '' : 's') + ')? Why? (reversing lines are added; nothing is deleted)'); if (!why) return; ev.target.disabled = true; api('/admin/api/inventory/reverse-entry', { method: 'POST', body: { ids: ids, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed ' + r.reversed + ' lines' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Cancel entry'));
+        if (liveRows.length && OUT.indexOf(m0.type) >= 0 && liveRows.every(function (m) { return m.qty < 0 && OUT.indexOf(m.type) >= 0; })) bits.push(h('button', { class: 'btn ghost small', type: 'button', onclick: function () {
           if (box.firstChild) { box.textContent = ''; return; }
           var type = h('select', { 'data-role': 'rl-type' }, OUT.filter(function (t) { return t !== 'USE'; }).concat(m0.type === 'USE' ? ['USE'] : []).map(function (t) { return h('option', { value: t, selected: t === m0.type }, OUTLBL[t]); }));
           var who = h('input', { 'data-role': 'rl-who', value: (m0.type === 'OFFLINE_SALE' ? m0.party : m0.ref) || '', placeholder: 'who or which event' });
@@ -2129,21 +2139,23 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
             api('/admin/api/inventory/relabel-entry', { method: 'POST', body: { ids: ids, type: type.value, who: who.value, invoice: inv.value, note: note.value, reason: why.value } }).then(function (r) { save.disabled = false; if (!r.ok) return toast(r.error || 'Failed', 6000); toast('Changed. Stock did not move.', 5000); invHistory(); });
           } }, 'Save change');
           box.appendChild(h('div', { class: 'relabel' }, h('p', { class: 'muted' }, 'Stock does not move. The old lines are cancelled and the same boxes are written again with the new details.'), h('label', {}, 'What happened'), type, h('label', {}, 'Who or which event'), who, h('label', {}, 'Invoice number (sold offline only)'), inv, h('label', {}, 'Note'), note, h('label', {}, 'Why'), why, h('div', { class: 'acts' }, save, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { box.textContent = ''; } }, 'Cancel'))));
-        } }, 'Change who or what'));
-        return h('div', {}, h('div', { class: 'acts' }, bits), box);
-      };
-      var single = function (m) {
-        var acts = entryActs({ rows: [m] });
-        return h('div', { class: 'hsingle' }, h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, what(m, m.reversed ? ' · Cancelled' : '', m.lot_code))), buttons(m)), m.reversed || OUT.indexOf(m.type) < 0 ? null : acts);
+        } }, 'Change details'));
+        var row = bits.filter(Boolean);
+        return row.length ? h('div', {}, h('div', { class: 'acts' }, row), box) : null;
       };
       var G = window.MunchingoHistoryGroups;
       var entries = G ? G.group(j.movements, { truncated: j.movements.length >= 200 }) : j.movements.map(function (m) { return { rows: [m] }; });
       var lines = entries.slice(0, 60).map(function (e) {
-        if (e.rows.length === 1) return single(e.rows[0]);
-        var m0 = e.rows[0], flag = e.allReversed ? ' · Cancelled' : e.someReversed ? ' · partly cancelled' : '';
-        return h('div', { class: 'hgroup' },
-          h('div', { class: 'ghead' }, h('b', {}, e.total + ' boxes: ' + e.boxes.map(function (b) { return b.slug + ' ' + b.qty; }).join(', ')), h('small', {}, what(m0, flag, null)), entryActs(e)),
-          e.rows.map(function (m) { return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (m.reversed ? 'Cancelled' : '') + (m.lot_code ? (m.reversed ? ' · ' : '') + 'lot ' + m.lot_code : ''))), buttons(m)); }));
+        if (e.rows.length === 1) {
+          var m = e.rows[0], p = parts(m, m.reversed ? ' · Cancelled' : '', m.lot_code);
+          return h('div', { class: 'hcard hsingle line hline' + (m.reversed ? ' gone' : '') }, h('div', { class: 'ttl' }, p.title), h('small', { class: 'sub' }, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug + (p.detail ? ' · ' + p.detail : '')), h('small', { class: 'meta' }, p.meta), entryActs(e));
+        }
+        var m0 = e.rows[0], flag = e.allReversed ? ' · Cancelled' : e.someReversed ? ' · partly cancelled' : '', pg = parts(m0, flag, null), n = e.rows.length;
+        var lineBox = h('div', { class: 'hlines', hidden: true }, e.rows.map(function (m) { return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (m.reversed ? 'Cancelled' : '') + (m.lot_code ? (m.reversed ? ' · ' : '') + 'lot ' + m.lot_code : ''))), buttons(m)); }));
+        var tog = h('button', { class: 'lnk', type: 'button', onclick: function () { lineBox.hidden = !lineBox.hidden; tog.textContent = lineBox.hidden ? 'See the ' + n + ' lines' : 'Hide the lines'; } }, 'See the ' + n + ' lines');
+        return h('div', { class: 'hcard hgroup' + (e.allReversed ? ' gone' : '') },
+          h('div', { class: 'ghead' }, h('div', { class: 'ttl' }, pg.title), h('small', { class: 'sub' }, e.total + ' boxes' + (pg.detail ? ' · ' + pg.detail : '')), h('small', { class: 'meta' }, pg.meta), h('small', { class: 'sub' }, e.boxes.map(function (b) { return b.slug + ' ' + b.qty; }).join(', ')), entryActs(e), tog),
+          lineBox);
       });
       invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), chips, section('Latest ' + lines.length + (lines.length === 1 ? ' entry' : ' entries'), lines.length ? lines : h('p', { class: 'muted' }, 'Nothing here.'))]);
     });

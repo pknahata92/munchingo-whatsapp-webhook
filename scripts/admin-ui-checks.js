@@ -148,13 +148,26 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     const grp = qa('#viewStock .hgroup').filter((g) => /Diwali Fair, Sector 15/.test(text(g)));
     ok(grp.length === 1, 'History shows the several-flavour take-out as ONE entry (saw ' + grp.length + ')');
     ok(grp.length === 1 && /5 boxes/.test(text(grp[0])) && /atta-kesari/.test(text(grp[0])) && /atta-original/.test(text(grp[0])) && /Sold at event/.test(text(grp[0])), 'the entry names the event, the total (5 boxes) and both flavours');
-    ok(grp.length === 1 && grp[0].querySelectorAll('.line').length === 2, 'the two lines stay inside the entry, each with its own Reverse button');
+    ok(grp.length === 1 && grp[0].querySelectorAll('.line').length === 2, 'the two lines stay inside the entry, each with its own Cancel line button');
+    // 17 Nov 2026: the calm layout. One card per entry with a bold title, boxes, and who and when; flavour lines are folded away
+    const card = grp[0];
+    ok(card && card.classList.contains('hcard') && /Sold at event · Diwali Fair, Sector 15/.test(text(card.querySelector('.ttl'))), 'the card title reads kind and event: Sold at event · Diwali Fair, Sector 15');
+    ok(card && /^5 boxes/.test(text(card.querySelector('.sub'))) && !!card.querySelector('.meta'), 'under it: the boxes, then who and when in a lighter line');
+    const lineBox = card && card.querySelector('.hlines');
+    ok(!!lineBox && lineBox.hidden === true, 'the flavour lines are folded away at first');
+    const tog = card && Array.from(card.querySelectorAll('button')).find((b) => /^See the 2 lines$/.test(text(b)));
+    ok(!!tog, 'a "See the 2 lines" link opens them');
+    ok(card && Array.from(card.querySelectorAll('button')).filter((b) => !b.closest('.hlines') && !b.closest('.relabel')).map((b) => text(b)).join('|') === 'Cancel entry|Change details|See the 2 lines', 'the card itself shows only Cancel entry, Change details and the See-lines link (saw ' + (card ? Array.from(card.querySelectorAll('button')).filter((b) => !b.closest('.hlines')).map((b) => text(b)).join('|') : '') + ')');
+    if (tog) { click(tog); await sleep(100); }
+    ok(lineBox && lineBox.hidden === false && /^Hide the lines$/.test(text(tog)), 'tapping it shows the lines and the link reads Hide the lines');
+    if (tog) { click(tog); await sleep(100); }
+    ok(lineBox && lineBox.hidden === true, 'and tapping again folds them away');
     // 16 Nov 2026: change who an entry was for (stock must not move), then cancel the whole entry in one tap
     const eg = () => qa('#viewStock .hgroup').filter((g) => /Diwali Fair, Sector 1[56]/.test(text(g)) && !/Cancelled/.test(text(g.querySelector('.ghead'))));
     const gOne = grp[0]; const btn = (root, re) => Array.from(root.querySelectorAll('button')).find((b) => re.test(text(b)));
-    ok(!!btn(gOne.querySelector('.ghead'), /^Reverse whole entry$/) && !!btn(gOne.querySelector('.ghead'), /^Change who or what$/), 'the entry has Reverse whole entry and Change who or what');
+    ok(!!btn(gOne.querySelector('.ghead'), /^Cancel entry$/) && !!btn(gOne.querySelector('.ghead'), /^Change details$/), 'the entry has Cancel entry and Change details');
     const k1 = await onHand('atta-kesari'), o1 = await onHand('atta-original');
-    click(btn(gOne.querySelector('.ghead'), /^Change who or what$/)); await sleep(150);
+    click(btn(gOne.querySelector('.ghead'), /^Change details$/)); await sleep(150);
     const rf = qa('#viewStock .hgroup [data-role]').reduce((a, e) => { a[e.getAttribute('data-role')] = e; return a; }, {});
     ok(rf['rl-type'] && rf['rl-who'] && rf['rl-reason'] && rf['rl-who'].value === 'Diwali Fair, Sector 15' && rf['rl-type'].value === 'EVENT_SALE', 'the change form opens filled with the current event and kind');
     set(rf['rl-who'], 'Diwali Fair, Sector 16'); set(rf['rl-reason'], 'wrong sector');
@@ -164,8 +177,8 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(e16.length === 1 && /5 boxes/.test(text(e16[0])), 'History shows the new entry: Sector 16, 5 boxes');
     ok(qa('#viewStock .hgroup').some((g) => /Sector 15/.test(text(g)) && /Cancelled/.test(text(g))), 'and the old Sector 15 entry stays, shown as cancelled');
     let asked = ''; o.win.prompt = (m) => { asked = m; return 'entered twice'; };
-    click(btn(e16[0].querySelector('.ghead'), /^Reverse whole entry$/)); await until(async () => (await onHand('atta-kesari')) === k1 + 3, 5000, 'stock to come back').catch(() => {});
-    ok(/whole entry/i.test(asked) && await onHand('atta-kesari') === k1 + 3 && await onHand('atta-original') === o1 + 2, 'Reverse whole entry puts all 5 boxes back with one tap');
+    click(btn(e16[0].querySelector('.ghead'), /^Cancel entry$/)); await until(async () => (await onHand('atta-kesari')) === k1 + 3, 5000, 'stock to come back').catch(() => {});
+    ok(/whole entry/i.test(asked) && await onHand('atta-kesari') === k1 + 3 && await onHand('atta-original') === o1 + 2, 'Cancel entry puts all 5 boxes back with one tap');
     await until(() => eg().length === 0, 3000, 'the entry to read cancelled').catch(() => {});
     ok(eg().length === 0, 'no live Diwali Fair entry is left (the cancelled ones say Cancelled)');
     ok(o.errors.length === 0, 'no page errors on the multi take-out (' + o.errors.join(' | ').slice(0, 200) + ')');
@@ -504,7 +517,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     click(byText('#viewStock .chip', /^Received$/)); await shown(/^Received$/, (ls) => ls.length >= 2 && ls.every((l) => /Received/.test(ent(l)))).catch(() => {});
     lines = qa('#viewStock .line').filter((l) => /atta-lite-sugar/.test(text(l)));
     const oldLine = lines.find((l) => /\+33/.test(text(l))), newLine = lines.find((l) => /\+36/.test(text(l)));
-    ok(!!oldLine && /Cancelled/.test(text(oldLine)) && !btn(oldLine, /^(Correct|Reverse)$/), 'the old receipt now says Cancelled and offers no Correct or Reverse (' + (oldLine ? text(oldLine).slice(0, 80) : 'missing') + ')');
+    ok(!!oldLine && /Cancelled/.test(text(oldLine)) && !btn(oldLine, /^(Correct|Cancel entry|Cancel line)$/), 'the old receipt now says Cancelled and offers no Correct or Cancel (' + (oldLine ? text(oldLine).slice(0, 80) : 'missing') + ')');
     ok(!!newLine && !!btn(newLine, /^Correct$/), 'the new receipt is there, and can itself be corrected');
     click(byText('#viewStock .chip', /^All$/)); await shown(/^All$/, (ls) => ls.some((l) => !/Received/.test(ent(l)))).catch(() => {});
     ok(qa('#viewStock .line').some((l) => /Reversed/.test(text(l))), 'the All view shows the reversing lines too');
