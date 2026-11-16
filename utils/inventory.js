@@ -515,17 +515,69 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
     await store.updateItem(slug, { low_level: n }); return { ok: true };
   }
 
+  // Why a line cannot be cancelled by hand, or null when it can. Shared by reverse() and the whole-entry actions.
+  async function reverseBlock(m, isOwner) {
+    if (m.type === 'REVERSAL' || m.type === 'SALE' || m.type === 'SALE_UNDO') return new StockError(m.type === 'REVERSAL' ? 'A reversal cannot be reversed. Enter the correct line instead.' : 'Sales are handled by the order. Use Undo on the order.', 409);
+    if (m.delivery_id != null) return new StockError('This line came from a delivery. Use Correct whole delivery or Fix lot.', 409);
+    if (m.reverses_id || await store.reversalOf(m.id)) return new StockError('This line was already reversed.', 409);
+    if (!isOwner && Date.now() - Date.parse(m.created_at) > REVERSE_FREE_MS) return new StockError('Only the owner can reverse a line older than a day.', 403);
+    return null;
+  }
+  const reversalRow = (m, rs, actor) => ({ item_slug: m.item_slug, qty: -m.qty, type: 'REVERSAL', lot_code: m.lot_code, best_before: m.best_before, ref: m.ref, note: rs, reverses_id: m.id, ...who(actor) });
+  // The lines of one entry, each checked; any problem refuses the whole thing so nothing is half done.
+  async function entryLines(ids, isOwner) {
+    const list = [...new Set((Array.isArray(ids) ? ids : []).map(Number))];
+    if (!list.length) throw new StockError('No lines chosen.');
+    if (list.length > 200) throw new StockError('Too many lines in one entry.');
+    const lines = [];
+    for (const id of list) {
+      const m = Number.isInteger(id) ? await store.movement(id) : null;
+      if (!m) throw new StockError('No such line.', 404);
+      const block = await reverseBlock(m, isOwner); if (block) throw block;
+      lines.push(m);
+    }
+    return lines;
+  }
+
   // Cancel one earlier line by adding its opposite. Within 24 h anyone can; later only the owner. A line can be reversed once.
   async function reverse({ id, reason, actor, isOwner }) {
     const m = await store.movement(id);
     if (!m) throw new StockError('No such line.', 404);
-    if (m.type === 'REVERSAL' || m.type === 'SALE' || m.type === 'SALE_UNDO') throw new StockError(m.type === 'REVERSAL' ? 'A reversal cannot be reversed. Enter the correct line instead.' : 'Sales are handled by the order. Use Undo on the order.', 409);
-    if (m.delivery_id != null) throw new StockError('This line came from a delivery. Use Correct whole delivery or Fix lot.', 409);
-    if (m.reverses_id || await store.reversalOf(id)) throw new StockError('This line was already reversed.', 409);
+    const block = await reverseBlock(m, isOwner); if (block) throw block;
     const rs = cleanText(reason, 300); if (!rs) throw new StockError('Add a short reason.');
-    if (!isOwner && Date.now() - Date.parse(m.created_at) > REVERSE_FREE_MS) throw new StockError('Only the owner can reverse a line older than a day.', 403);
-    await store.insert([{ item_slug: m.item_slug, qty: -m.qty, type: 'REVERSAL', lot_code: m.lot_code, best_before: m.best_before, ref: m.ref, note: rs, reverses_id: m.id, ...who(actor) }]);
+    await store.insert([reversalRow(m, rs, actor)]);
     return { ok: true };
+  }
+
+  // Cancel every line of one entry in a single save (all of it or none). The lines come from History's grouped entry.
+  async function reverseEntry({ ids, reason, actor, isOwner }) {
+    const rs = cleanText(reason, 300); if (!rs) throw new StockError('Add a short reason.');
+    const lines = await entryLines(ids, isOwner);
+    await store.insert(lines.map((m) => reversalRow(m, rs, actor)));
+    return { ok: true, reversed: lines.length };
+  }
+
+  // Change who or what an entry was for (a gift that was billed after all, a wrong buyer, a missing invoice number) without moving stock.
+  // Rows are never edited: each old line is cancelled and the same boxes (same lot, same best before) are written again with the new
+  // label, all in one save. The history keeps the old label, the cancellation and the new line.
+  async function relabelEntry({ ids, type, who: whoFor, invoice, note, reason, actor, isOwner }) {
+    if (!TYPES_OUT[type]) throw new StockError('Choose what happened: used, damaged, sample, gift, event or sold offline.');
+    const forWhom = cleanText(whoFor, 80);
+    if (NEEDS_WHO[type] && !forWhom) throw new StockError(NEEDS_WHO[type]);
+    const inv = cleanText(invoice, 40);
+    if (type === 'OFFLINE_SALE' && !inv) throw new StockError('Enter the invoice number (write PENDING if it is not made yet and fix it later).');
+    const rs = cleanText(reason, 300); if (!rs) throw new StockError('Add a short reason.');
+    const lines = await entryLines(ids, isOwner);
+    const rows = [];
+    for (const m of lines) {
+      if (!TYPES_OUT[m.type] || !(m.qty < 0)) throw new StockError('Only lines taken out of stock can be relabelled.', 409);
+      const nt = note == null ? (m.note || null) : (cleanText(note, 300) || null);
+      if (type === 'DAMAGED' && !nt) throw new StockError('Add a short note on what was wrong.');
+      const base = type === 'OFFLINE_SALE' ? { type, note: nt, ref: inv, party: forWhom } : { type, note: nt, ref: forWhom || null, party: null };
+      rows.push(reversalRow(m, rs, actor), { ...base, item_slug: m.item_slug, qty: m.qty, lot_code: m.lot_code, best_before: m.best_before, ...who(actor) });
+    }
+    await store.insert(rows);
+    return { ok: true, lines: lines.length };
   }
 
   // The damaged boxes written in the same save as a receipt: same product and lot, same moment, the receipt's note (or the standard one), not yet cancelled.
@@ -728,7 +780,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Only boxes the website may sell count (released or legacy lots, before their website stop date).
   async function sellable() { const [items, rows, committed, ctx] = await Promise.all([store.items(), store.byLot(), store.committed(), lotContext(store, now())]); return computeSellable(items, rows, committed, ctx); }
 
-  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, removeItem, setLevel, reverse, history, planForOrder, packingNext, deductForOrder, restoreForOrder, needsLot, assignLot };
+  return { overview, sellable, receive, receipt, renameLot, take, takeMany, offlineHamper, flow, count, eventReturn, setLow, addItem, removeItem, setLevel, reverse, reverseEntry, relabelEntry, history, planForOrder, packingNext, deductForOrder, restoreForOrder, needsLot, assignLot };
 }
 
 // ── Real storage (Supabase) ───────────────────────────────────────────────────

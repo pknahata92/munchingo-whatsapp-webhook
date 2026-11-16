@@ -496,6 +496,23 @@ async function login(email) {
       ok(rv.s === 409 && rv.j.error === FROM, 'cancelling a delivery line is refused, even for the owner (' + rv.s + ' ' + rv.j.error + ')');
       ok((await call('/inventory', o.token)).j.items.find((i) => i.slug === 'atta-ajwain').on_hand === before, 'and nothing was written');
     }
+    // 16 Nov 2026: whole-entry Reverse and Relabel over HTTP: sign-in needed, all lines in one save, stock back / unmoved
+    {
+      const tm = await call('/inventory/take-many', s.token, { type: 'GIFT', who: 'Entry Test', boxes: { 'atta-original': 1, 'atta-ajwain': 1 } });
+      ok(tm.s === 200 && tm.j.ok, 'setup: a two-flavour gift is saved (' + tm.s + ' ' + tm.j.error + ')');
+      const ent = ((await call('/inventory/history?types=GIFT&limit=20', s.token)).j.movements || []).filter((m) => m.ref === 'Entry Test' && !m.reversed);
+      const ids = ent.map((m) => m.id); const onh = async () => (await call('/inventory', o.token)).j.items.filter((i) => /atta-(original|ajwain)/.test(i.slug)).reduce((n, i) => n + i.on_hand, 0);
+      const h0 = await onh();
+      ok(ids.length === 2, 'setup: the gift is two ledger lines');
+      ok((await call('/inventory/reverse-entry', null, { ids, reason: 'x' })).s === 401 && (await call('/inventory/relabel-entry', null, { ids, type: 'GIFT', who: 'x', reason: 'x' })).s === 401, 'both entry actions need a session');
+      const rl = await call('/inventory/relabel-entry', s.token, { ids, type: 'GIFT', who: 'Entry Test Two', reason: 'new name' });
+      ok(rl.s === 200 && rl.j.ok && rl.j.lines === 2 && await onh() === h0, 'relabel works over HTTP and stock does not move (' + rl.s + ' ' + rl.j.error + ')');
+      ok((await call('/inventory/reverse-entry', s.token, { ids, reason: 'again' })).s === 409, 'the old lines cannot be reversed again after a relabel');
+      const ids2 = ((await call('/inventory/history?types=GIFT&limit=20', s.token)).j.movements || []).filter((m) => m.ref === 'Entry Test Two' && !m.reversed).map((m) => m.id);
+      const rv = await call('/inventory/reverse-entry', s.token, { ids: ids2, reason: 'mistake' });
+      ok(rv.s === 200 && rv.j.reversed === 2 && await onh() === h0 + 2, 'reverse-entry cancels both lines in one request and the boxes come back (' + rv.s + ' ' + rv.j.error + ')');
+      ok((await call('/inventory/reverse-entry', s.token, { ids: [], reason: 'x' })).s === 400, 'no lines is a plain 400');
+    }
     // delivery page, prefill (registered before :id), lots list, lot page, search
     const pre = await call('/stock/deliveries/prefill', s.token);
     ok(pre.s === 200 && pre.j.ok && pre.j.rates && pre.j.rates['atta-original'] === 85 && pre.j.freight, 'prefill answers (not read as a delivery id): ' + pre.s + ' ' + JSON.stringify(pre.j).slice(0, 120));

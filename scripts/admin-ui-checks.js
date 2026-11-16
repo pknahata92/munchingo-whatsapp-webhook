@@ -149,6 +149,25 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     ok(grp.length === 1, 'History shows the several-flavour take-out as ONE entry (saw ' + grp.length + ')');
     ok(grp.length === 1 && /5 boxes/.test(text(grp[0])) && /atta-kesari/.test(text(grp[0])) && /atta-original/.test(text(grp[0])) && /Sold at event/.test(text(grp[0])), 'the entry names the event, the total (5 boxes) and both flavours');
     ok(grp.length === 1 && grp[0].querySelectorAll('.line').length === 2, 'the two lines stay inside the entry, each with its own Reverse button');
+    // 16 Nov 2026: change who an entry was for (stock must not move), then cancel the whole entry in one tap
+    const eg = () => qa('#viewStock .hgroup').filter((g) => /Diwali Fair, Sector 1[56]/.test(text(g)) && !/Cancelled/.test(text(g.querySelector('.ghead'))));
+    const gOne = grp[0]; const btn = (root, re) => Array.from(root.querySelectorAll('button')).find((b) => re.test(text(b)));
+    ok(!!btn(gOne.querySelector('.ghead'), /^Reverse whole entry$/) && !!btn(gOne.querySelector('.ghead'), /^Change who or what$/), 'the entry has Reverse whole entry and Change who or what');
+    const k1 = await onHand('atta-kesari'), o1 = await onHand('atta-original');
+    click(btn(gOne.querySelector('.ghead'), /^Change who or what$/)); await sleep(150);
+    const rf = qa('#viewStock .hgroup [data-role]').reduce((a, e) => { a[e.getAttribute('data-role')] = e; return a; }, {});
+    ok(rf['rl-type'] && rf['rl-who'] && rf['rl-reason'] && rf['rl-who'].value === 'Diwali Fair, Sector 15' && rf['rl-type'].value === 'EVENT_SALE', 'the change form opens filled with the current event and kind');
+    set(rf['rl-who'], 'Diwali Fair, Sector 16'); set(rf['rl-reason'], 'wrong sector');
+    click(qa('#viewStock .hgroup button').find((b) => /^Save change$/.test(text(b)))); await until(() => /Sector 16/.test(text(q('#viewStock'))), 5000, 'the relabelled entry').catch(() => {});
+    ok(await onHand('atta-kesari') === k1 && await onHand('atta-original') === o1, 'changing who it was for does not move stock');
+    const e16 = qa('#viewStock .hgroup').filter((g) => /Sector 16/.test(text(g)) && !/Cancelled/.test(text(g.querySelector('.ghead'))));
+    ok(e16.length === 1 && /5 boxes/.test(text(e16[0])), 'History shows the new entry: Sector 16, 5 boxes');
+    ok(qa('#viewStock .hgroup').some((g) => /Sector 15/.test(text(g)) && /Cancelled/.test(text(g))), 'and the old Sector 15 entry stays, shown as cancelled');
+    let asked = ''; o.win.prompt = (m) => { asked = m; return 'entered twice'; };
+    click(btn(e16[0].querySelector('.ghead'), /^Reverse whole entry$/)); await until(async () => (await onHand('atta-kesari')) === k1 + 3, 5000, 'stock to come back').catch(() => {});
+    ok(/whole entry/i.test(asked) && await onHand('atta-kesari') === k1 + 3 && await onHand('atta-original') === o1 + 2, 'Reverse whole entry puts all 5 boxes back with one tap');
+    await until(() => eg().length === 0, 3000, 'the entry to read cancelled').catch(() => {});
+    ok(eg().length === 0, 'no live Diwali Fair entry is left (the cancelled ones say Cancelled)');
     ok(o.errors.length === 0, 'no page errors on the multi take-out (' + o.errors.join(' | ').slice(0, 200) + ')');
     o.close();
   });

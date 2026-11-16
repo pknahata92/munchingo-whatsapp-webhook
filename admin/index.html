@@ -37,7 +37,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .sechead{margin:18px 2px 6px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 .sechead:first-child{margin-top:4px}.sechead.await{color:var(--tx-amber)}.sechead.with{color:var(--tx-green)}
 .linebtns{display:flex;gap:6px;align-items:center;flex-shrink:0;margin-left:auto}
-.hgroup{border:1px solid var(--line,#e3ddd2);border-radius:10px;margin:8px 0;padding:6px 10px}.ghead{padding:4px 0 2px}.ghead small{display:block}.hgroup .line{padding-left:10px;border-top:1px dashed var(--line,#e3ddd2)}.hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
+.hgroup{border:1px solid var(--line,#e3ddd2);border-radius:10px;margin:8px 0;padding:6px 10px}.ghead{padding:4px 0 2px}.ghead small{display:block}.hgroup .line{padding-left:10px;border-top:1px dashed var(--line,#e3ddd2)}.relabel{margin:6px 0}.relabel label{display:block;margin-top:6px}.relabel input,.relabel select{width:100%;box-sizing:border-box}.hline{flex-wrap:wrap;align-items:center}.hline>div:first-child{flex:1 1 190px;min-width:0}
 .sechead small{display:block;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink2);font-size:12px;margin-top:1px}
 .badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.04em}
 .b-late{background:#B3261E;color:#fff}.card.late{border-left:5px solid #B3261E}.meta.late{color:var(--tx-red);font-weight:600}.b-test{background:#E8E1F4;color:#5A3E99}.b-topack{background:#FDF0D5;color:var(--amber)}.b-packed{background:#E3ECF6;color:var(--navy)}.b-shipped{background:#DDEFE3;color:var(--green)}.b-delivered{background:var(--green);color:#fff}.b-refunded,.b-cancelled{background:#F6DAD8;color:var(--red)}.b-unpaid{background:var(--band);color:var(--ink2)}
@@ -2109,8 +2109,32 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
         return h('div', { class: 'linebtns' }, !m.reversed && m.delivery_id == null && m.type === 'RECEIVE' ? h('button', { class: 'btn small', onclick: function () { correctReceipt(m); } }, 'Correct') : null,
           can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
       };
+      // Whole-entry actions: cancel every live line in one save, or change who/what it was for (cancel + rewrite, stock does not move).
+      var OUT = ['USE', 'DAMAGED', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EVENT_SALE', 'OFFLINE_SALE'];
+      var OUTLBL = { EVENT_SALE: 'Sold at an exhibition or event', SAMPLE: 'Sample or tasting', GIFT: 'Given away to someone', EXHIBITION: 'Taken to an exhibition or event', OFFLINE_SALE: 'Sold offline (bulk order or hamper)', DAMAGED: 'Damaged or not okay', USE: 'Used' };
+      var entryActs = function (e) {
+        var liveRows = e.rows.filter(function (m) { return !m.reversed && m.delivery_id == null && CAN.indexOf(m.type) >= 0; });
+        if (!liveRows.length) return null;
+        var ids = liveRows.map(function (m) { return m.id; }), m0 = liveRows[0], box = h('div', {});
+        var bits = [e.rows.length < 2 ? null : h('button', { class: 'btn ghost small', type: 'button', onclick: function (ev) { var why = prompt('Cancel this whole entry (' + ids.length + ' line' + (ids.length === 1 ? '' : 's') + ')? Why? (reversing lines are added; nothing is deleted)'); if (!why) return; ev.target.disabled = true; api('/admin/api/inventory/reverse-entry', { method: 'POST', body: { ids: ids, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed ' + r.reversed + ' lines' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse whole entry')];
+        if (OUT.indexOf(m0.type) >= 0 && liveRows.every(function (m) { return m.qty < 0 && OUT.indexOf(m.type) >= 0; })) bits.push(h('button', { class: 'btn ghost small', type: 'button', onclick: function () {
+          if (box.firstChild) { box.textContent = ''; return; }
+          var type = h('select', { 'data-role': 'rl-type' }, OUT.filter(function (t) { return t !== 'USE'; }).concat(m0.type === 'USE' ? ['USE'] : []).map(function (t) { return h('option', { value: t, selected: t === m0.type }, OUTLBL[t]); }));
+          var who = h('input', { 'data-role': 'rl-who', value: (m0.type === 'OFFLINE_SALE' ? m0.party : m0.ref) || '', placeholder: 'who or which event' });
+          var inv = h('input', { 'data-role': 'rl-invoice', value: m0.type === 'OFFLINE_SALE' ? (m0.ref || '') : '', placeholder: 'invoice number (or PENDING)' });
+          var note = h('input', { 'data-role': 'rl-note', value: m0.note || '', placeholder: 'note' });
+          var why = h('input', { 'data-role': 'rl-reason', placeholder: 'why (e.g. billed after all)' });
+          var save = h('button', { class: 'btn small', type: 'button', onclick: function () {
+            save.disabled = true;
+            api('/admin/api/inventory/relabel-entry', { method: 'POST', body: { ids: ids, type: type.value, who: who.value, invoice: inv.value, note: note.value, reason: why.value } }).then(function (r) { save.disabled = false; if (!r.ok) return toast(r.error || 'Failed', 6000); toast('Changed. Stock did not move.', 5000); invHistory(); });
+          } }, 'Save change');
+          box.appendChild(h('div', { class: 'relabel' }, h('p', { class: 'muted' }, 'Stock does not move. The old lines are cancelled and the same boxes are written again with the new details.'), h('label', {}, 'What happened'), type, h('label', {}, 'Who or which event'), who, h('label', {}, 'Invoice number (sold offline only)'), inv, h('label', {}, 'Note'), note, h('label', {}, 'Why'), why, h('div', { class: 'acts' }, save, h('button', { class: 'btn ghost small', type: 'button', onclick: function () { box.textContent = ''; } }, 'Cancel'))));
+        } }, 'Change who or what'));
+        return h('div', {}, h('div', { class: 'acts' }, bits), box);
+      };
       var single = function (m) {
-        return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, what(m, m.reversed ? ' · Cancelled' : '', m.lot_code))), buttons(m));
+        var acts = entryActs({ rows: [m] });
+        return h('div', { class: 'hsingle' }, h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, what(m, m.reversed ? ' · Cancelled' : '', m.lot_code))), buttons(m)), m.reversed || OUT.indexOf(m.type) < 0 ? null : acts);
       };
       var G = window.MunchingoHistoryGroups;
       var entries = G ? G.group(j.movements, { truncated: j.movements.length >= 200 }) : j.movements.map(function (m) { return { rows: [m] }; });
@@ -2118,7 +2142,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
         if (e.rows.length === 1) return single(e.rows[0]);
         var m0 = e.rows[0], flag = e.allReversed ? ' · Cancelled' : e.someReversed ? ' · partly cancelled' : '';
         return h('div', { class: 'hgroup' },
-          h('div', { class: 'ghead' }, h('b', {}, e.total + ' boxes: ' + e.boxes.map(function (b) { return b.slug + ' ' + b.qty; }).join(', ')), h('small', {}, what(m0, flag, null))),
+          h('div', { class: 'ghead' }, h('b', {}, e.total + ' boxes: ' + e.boxes.map(function (b) { return b.slug + ' ' + b.qty; }).join(', ')), h('small', {}, what(m0, flag, null)), entryActs(e)),
           e.rows.map(function (m) { return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (m.reversed ? 'Cancelled' : '') + (m.lot_code ? (m.reversed ? ' · ' : '') + 'lot ' + m.lot_code : ''))), buttons(m)); }));
       });
       invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), chips, section('Latest ' + lines.length + (lines.length === 1 ? ' entry' : ' entries'), lines.length ? lines : h('p', { class: 'muted' }, 'Nothing here.'))]);

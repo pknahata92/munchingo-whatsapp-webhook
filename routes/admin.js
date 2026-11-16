@@ -145,6 +145,8 @@ router.post('/admin/api/inventory/hamper', sw((req, inv) => inv.offlineHamper({ 
 router.post('/admin/api/inventory/count', sw((req, inv) => inv.count({ ...(req.body || {}), actor: req.admin })));
 router.post('/admin/api/inventory/low', sw((req, inv) => inv.setLow({ slug: (req.body || {}).slug, low: !!(req.body || {}).low })));
 router.post('/admin/api/inventory/reverse', sw((req, inv) => inv.reverse({ id: Number((req.body || {}).id), reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));
+router.post('/admin/api/inventory/reverse-entry', sw((req, inv) => inv.reverseEntry({ ids: (req.body || {}).ids, reason: (req.body || {}).reason, actor: req.admin, isOwner: req.admin.role === 'owner' })));
+router.post('/admin/api/inventory/relabel-entry', sw((req, inv) => { const b = req.body || {}; return inv.relabelEntry({ ids: b.ids, type: b.type, who: b.who, invoice: b.invoice, note: b.note, reason: b.reason, actor: req.admin, isOwner: req.admin.role === 'owner' }); }));
 // Meta and Google follow the admin (utils/channelSync.js). Staff and owner see the lines; only the owner switches, checks or sets up.
 // errors: what the run after Test with Original, Switch on all four or Check now could not do, in plain words, apart from the lines.
 const BAD_SWITCH = 'Choose Meta or Google, and off, test or all.';
