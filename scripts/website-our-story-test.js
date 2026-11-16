@@ -85,5 +85,8 @@ ok(meta('meta[property="og:image"]') === 'https://munchingo.com/images/bikaner-b
 ok(a && a.headline === 'Why we started Munchingo', 'Article headline unchanged');
 ok(a && !isNaN(Date.parse(a.datePublished)) && Date.parse(a.dateModified) >= Date.parse(a.datePublished), 'Article dates parse and modified >= published');
 
+// 6. the family photo and the AI-made family picture are gone from the site files (Prashant, 17 Nov: delete them)
+for (const f of ['images/family-thali.jpg', 'images/family-thali.webp', 'images/family.jpg']) ok(!fs.existsSync(path.join(SITE, f)), f + ' is deleted');
+
 console.log('website-our-story: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
