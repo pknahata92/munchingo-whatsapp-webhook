@@ -156,6 +156,25 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 .refuse{border:1.5px solid var(--red);background:#FBE4E0;color:#2A1A12;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px;cursor:default;overflow-wrap:anywhere}
 .refuse>b{color:#A63B38}.refuse label,.refuse .muted{color:#5B4537}
 @media (prefers-color-scheme:dark){.refuse{background:#3E1F1D;color:var(--ink)}.refuse>b{color:var(--tx-red)}.refuse label,.refuse .muted{color:var(--ink2)}}
+/* ── Calm layer (17 Nov 2026): one spacing rhythm (4/8/12/16/24), warm accents, quieter alerts and badges. CSS only. ── */
+:root{--s2:8px;--s3:12px;--s4:16px;--s5:24px;--accent:var(--navy);--accent-tx:#fff;--accent-sub:#ffffffbb}
+@media (prefers-color-scheme:dark){:root{--accent:#3B2D20;--accent-tx:#F2DFAE;--accent-sub:#F2DFAEbb}}
+.chip.on,.step.on{background:var(--accent);border-color:var(--accent);color:var(--accent-tx)}.step.on small{color:var(--accent-sub)}
+.dayhead{background:var(--accent);color:var(--accent-tx);margin:var(--s5) 0 var(--s3)}.dayhead:first-child{margin-top:var(--s2)}
+#toast{background:var(--accent);color:var(--accent-tx)}
+.card{padding:14px var(--s4);margin-bottom:var(--s3)}
+.sec{padding:14px var(--s4);margin:var(--s3) 0}
+.sechead{margin:var(--s5) 2px var(--s2)}
+.acts{gap:var(--s2);margin-top:var(--s3)}
+.hcard{margin:var(--s3) 0;padding:14px var(--s4)}
+.needs{gap:0;background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:var(--s2) 0 var(--s3)}
+.need{border:0;border-bottom:1px solid var(--line);border-left:4px solid var(--terra);border-radius:0;background:transparent;min-height:48px;padding:10px var(--s4)}
+.need:last-child{border-bottom:0}.need.hot{border-left-color:var(--red)}.need.calm{border-left-color:var(--green)}.need b{font-size:20px}.need:hover{background:var(--band)}
+@media(max-width:520px){#viewStock>.acts .btn,#viewStock .sec>.acts .btn,.hcard .acts .btn{flex:1 1 calc(50% - 4px)}#viewStock .hcard .acts .btn{flex:1 1 calc(50% - 4px)}}
+@media (prefers-color-scheme:dark){
+  .b-test{background:#2E2646;color:#CDBDF5}.b-topack{background:#3A2C12;color:#E6B450}.b-packed{background:#1E3350;color:#A9C9F2}.b-shipped{background:#173A27;color:#7AD3A0}
+  .b-refunded,.b-cancelled{background:#4A211E;color:#F29A93}.b-gift{background:#43261B;color:#F5BFA5}.badge.b-stale{background:#4A211E;color:#F29A93}.b-unpaid{background:var(--band);color:var(--ink2)}
+}
 </style>
 </head>
 <body>
