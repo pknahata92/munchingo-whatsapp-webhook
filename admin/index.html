@@ -123,7 +123,7 @@ header small{color:var(--ink2);opacity:1}
 
 /* ── New delivery (phone first: one column, big targets, nothing wider than the screen) ── */
 .dlgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 10px;align-items:end}
-.dlg4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 6px;align-items:end}.dlg4 input{padding:10px 8px}
+.dlg4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 6px;align-items:end}.dlg4 input{padding:10px 8px}.dlgrid input,.dlg4 input{height:46px}.dlgrid{row-gap:2px}
 .dlf{min-width:0}.dlf label{overflow-wrap:anywhere}
 .dlrow h3 small{letter-spacing:.04em;text-transform:none;color:var(--ink2)}
 .dltick{display:flex;gap:10px;align-items:flex-start;text-transform:none;letter-spacing:0;font-size:14px;font-weight:500;color:var(--ink);margin:12px 0;cursor:pointer}
@@ -2378,7 +2378,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
               api('/admin/api/prices', { method: 'POST', body: { slug: r.slug, price: price.value, mrp: mrp.value } }).then(function (x) { toast(x.ok ? r.name + ' updated' : (x.error || 'Failed'), 5000); openPrices(); });
             } }, 'Save')));
       });
-      ownerPanel('Prices', [note, section('Selling price per unit, GST included'), h('div', { class: 'sec' }, rows)]);
+      ownerPanel('Prices', [note, section('Selling price per unit, GST included', rows)]);
     });
   }
   // ── Reviews (owner): stars per flavour, comment as plain text, publish only with consent, hide only for a fixed reason ──
@@ -2509,7 +2509,7 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       newCode();
 
       var kindSeg = seg([['percent', '% off'], ['flat', '₹ off']], function () { return st.kind; }, function (v) { st.kind = v; });
-      var quick = h('div', { class: 'acts', style: 'margin:4px 0 0' }, [[1, '+1 day'], [7, '+1 week'], [30, '+1 month']].map(function (q) {
+      var quick = h('div', { class: 'acts', style: 'margin:8px 0 0' }, [[1, '+1 day'], [7, '+1 week'], [30, '+1 month']].map(function (q) {
         return h('button', { type: 'button', class: 'btn small ghost', onclick: function () { var s0 = el.starts.value || istPlus(0); el.ends.value = new Date(Date.parse(s0 + 'T00:00:00Z') + q[0] * 86400000).toISOString().slice(0, 10); el.noEnd.checked = false; refresh(); } }, q[1]);
       }));
       var whoSeg = seg([['anyone', 'Anyone'], ['new', 'New customers only'], ['one', 'One person']], function () { return st.who; }, function (v) { st.who = v; });

@@ -1520,6 +1520,9 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     await until(() => /Prices/.test(text(q('#panel'))) && qa('#panel input').length > 0, 4000, 'the Prices screen');
     const panel = text(q('#panel'));
     ok(panel.includes('Set by the box rule (3 Flavors: 8% off singles; all 4: 12.5% off)'), 'the Prices screen shows the box rule text');
+    // 17 Nov 2026: the heading and the price rows are ONE card (the heading used to sit alone in an empty-looking card above the rows)
+    const head = qa('#panel .sec h3').find((h3) => /Selling price per unit/.test(text(h3)));
+    ok(!!head && head.parentElement.querySelectorAll('.sw').length >= 4, 'the "Selling price per unit" heading shares its card with the price rows');
     const cards = qa('#panel .sw'); const set = (re) => cards.find((c) => re.test(text(c.querySelector('b'))));
     const trio = set(/Trio/), full = set(/Full Range/), single = set(/Original/);
     ok(trio && full && trio.querySelectorAll('input').length === 0 && full.querySelectorAll('input').length === 0 && trio.querySelectorAll('button').length === 0, 'the two set rows have no editable input and no Save button');
