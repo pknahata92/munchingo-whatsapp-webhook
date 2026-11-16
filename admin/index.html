@@ -167,6 +167,11 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 .sechead{margin:var(--s5) 2px var(--s2)}
 .acts{gap:var(--s2);margin-top:var(--s3)}
 .hcard{margin:var(--s3) 0;padding:14px var(--s4)}
+.hcard{border-left:4px solid var(--kc,var(--line))}.k-in{--kc:var(--green)}.k-sale{--kc:var(--terra)}.k-gift{--kc:var(--gold)}.k-bad{--kc:var(--red)}.k-fix{--kc:var(--ink2)}.hcard.gone{--kc:var(--line)}
+.htop{display:flex;gap:var(--s3);align-items:flex-start}.hmain{flex:1;min-width:0}.big{flex:none;text-align:right;min-width:48px}.big b{display:block;font-size:26px;line-height:1}.big small{display:block;margin-top:4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
+.fchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}.fchip{--fc:#8A7A6A;display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px 3px 8px;font-size:12.5px;font-weight:600;background:color-mix(in srgb,var(--fc) 18%,transparent);border:1px solid color-mix(in srgb,var(--fc) 45%,transparent)}.fchip i{width:9px;height:9px;border-radius:50%;background:var(--fc);flex:none}
+.fo{--fc:#7C2230}.fk{--fc:#A9582F}.fa{--fc:#4F6579}.fs{--fc:#6B4F63}
+@media (prefers-color-scheme:dark){.fo{--fc:#D4627B}.fk{--fc:#E08A55}.fa{--fc:#86A8C4}.fs{--fc:#B792AD}}
 @media(max-width:699px){
 .needs{gap:0;background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:var(--s2) 0 var(--s3)}
 .need{border:0;border-bottom:1px solid var(--line);border-left:4px solid var(--terra);border-radius:0;background:transparent;min-height:48px;padding:10px var(--s4)}
@@ -2126,6 +2131,15 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       // The page is built to be calm: one card per entry. Bold title (what happened and for whom), the boxes under it, who and when in a
       // lighter line, then at most two or three buttons. The flavour lines of a multi-flavour entry are folded away behind "See the N lines".
       var WHO_REF = ['GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'EVENT_SALE'];
+      // Real Flavor names (from the stock list, e.g. "Atta Kesari"), never the short codes; each Flavor keeps its pack colour as a small dot.
+      var NAME = {}; ((state.inv && state.inv.items) || []).forEach(function (i) { NAME[i.slug] = i.name; });
+      var full = function (slug) { return NAME[slug] || slug; };
+      var shortName = function (slug) { return full(slug).replace(/^Atta\s+/i, ''); };
+      var FLAVORDER = ['atta-original', 'atta-kesari', 'atta-ajwain', 'atta-lite-sugar'];   // always the same order: Original, Kesari, Ajwain, Sugar-Lite
+      var FLAVC = { 'atta-original': 'fo', 'atta-kesari': 'fk', 'atta-ajwain': 'fa', 'atta-lite-sugar': 'fs' };
+      var chip = function (slug, qty) { return h('span', { class: 'fchip ' + (FLAVC[slug] || 'fx') }, h('i', {}), shortName(slug) + ' ×' + qty); };
+      var kindOf = function (t) { return ['RECEIVE', 'RETURN', 'EXHIBITION_RETURN'].indexOf(t) >= 0 ? 'k-in' : ['OFFLINE_SALE', 'EVENT_SALE'].indexOf(t) >= 0 ? 'k-sale' : t === 'DAMAGED' ? 'k-bad' : t === 'COUNT_FIX' ? 'k-fix' : 'k-gift'; };
+      var big = function (n, word) { return h('div', { class: 'big' }, h('b', {}, String(n)), h('small', {}, word)); };
       var parts = function (m, flag, lot) {
         var who = m.type === 'OFFLINE_SALE' ? (m.party || '') : (m.ref && WHO_REF.indexOf(m.type) >= 0 ? m.ref : '');
         return { title: (LBL[m.type] || m.type) + (who ? ' · ' + who : '') + (flag || ''),
@@ -2167,19 +2181,30 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
       };
       var G = window.MunchingoHistoryGroups;
       var entries = G ? G.group(j.movements, { truncated: j.movements.length >= 200 }) : j.movements.map(function (m) { return { rows: [m] }; });
-      var lines = entries.slice(0, 60).map(function (e) {
+      var shown = entries.slice(0, 60);
+      var card = function (e) {
         if (e.rows.length === 1) {
-          var m = e.rows[0], p = parts(m, m.reversed ? ' · Cancelled' : '', m.lot_code);
-          return h('div', { class: 'hcard hsingle line hline' + (m.reversed ? ' gone' : '') }, h('div', { class: 'ttl' }, p.title), h('small', { class: 'sub' }, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug + (p.detail ? ' · ' + p.detail : '')), h('small', { class: 'meta' }, p.meta), entryActs(e));
+          var m = e.rows[0], p = parts(m, m.reversed ? ' · Cancelled' : '', m.lot_code), q = Math.abs(m.qty);
+          return h('div', { class: 'hcard hsingle line hline ' + kindOf(m.type) + (m.reversed ? ' gone' : '') },
+            h('div', { class: 'htop' }, h('div', { class: 'hmain' }, h('div', { class: 'ttl' }, p.title), p.detail ? h('small', { class: 'sub' }, p.detail) : null, h('div', { class: 'fchips' }, chip(m.item_slug, q)), h('small', { class: 'meta' }, p.meta)), big((m.qty > 0 ? '+' : '−') + q, q === 1 ? 'box' : 'boxes')),
+            entryActs(e));
         }
         var m0 = e.rows[0], flag = e.allReversed ? ' · Cancelled' : e.someReversed ? ' · partly cancelled' : '', pg = parts(m0, flag, null), n = e.rows.length;
-        var lineBox = h('div', { class: 'hlines', hidden: true }, e.rows.map(function (m) { return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + m.item_slug), h('small', {}, (m.reversed ? 'Cancelled' : '') + (m.lot_code ? (m.reversed ? ' · ' : '') + 'lot ' + m.lot_code : ''))), buttons(m)); }));
+        var lineBox = h('div', { class: 'hlines', hidden: true }, e.rows.map(function (m) { return h('div', { class: 'line hline' }, h('div', {}, h('b', {}, (m.qty > 0 ? '+' : '') + m.qty + ' ' + full(m.item_slug)), h('small', {}, (m.reversed ? 'Cancelled' : '') + (m.lot_code ? (m.reversed ? ' · ' : '') + 'lot ' + m.lot_code : ''))), buttons(m)); }));
         var tog = h('button', { class: 'lnk', type: 'button', onclick: function () { lineBox.hidden = !lineBox.hidden; tog.textContent = lineBox.hidden ? 'See the ' + n + ' lines' : 'Hide the lines'; } }, 'See the ' + n + ' lines');
-        return h('div', { class: 'hcard hgroup' + (e.allReversed ? ' gone' : '') },
-          h('div', { class: 'ghead' }, h('div', { class: 'ttl' }, pg.title), h('small', { class: 'sub' }, e.total + ' boxes' + (pg.detail ? ' · ' + pg.detail : '')), h('small', { class: 'meta' }, pg.meta), h('small', { class: 'sub' }, e.boxes.map(function (b) { return b.slug + ' ' + b.qty; }).join(', ')), entryActs(e), tog),
+        return h('div', { class: 'hcard hgroup ' + kindOf(m0.type) + (e.allReversed ? ' gone' : '') },
+          h('div', { class: 'ghead' }, h('div', { class: 'htop' }, h('div', { class: 'hmain' }, h('div', { class: 'ttl' }, pg.title), pg.detail ? h('small', { class: 'sub' }, pg.detail) : null, h('div', { class: 'fchips' }, e.boxes.slice().sort(function (x, y) { var ix = FLAVORDER.indexOf(x.slug), iy = FLAVORDER.indexOf(y.slug); return (ix < 0 ? 9 : ix) - (iy < 0 ? 9 : iy); }).map(function (b) { return chip(b.slug, b.qty); })), h('small', { class: 'meta' }, pg.meta)), big(e.total, e.total === 1 ? 'box' : 'boxes')), entryActs(e), tog),
           lineBox);
+      };
+      // Newest first, under a heading per day with how many entries that day (same look as the orders list).
+      var tally = {}; shown.forEach(function (e) { var k = dayKey(e.rows[0].created_at); tally[k] = (tally[k] || 0) + 1; });
+      var lines = [], lastDay = null;
+      shown.forEach(function (e) {
+        var k = dayKey(e.rows[0].created_at);
+        if (k !== lastDay) { lastDay = k; lines.push(h('div', { class: 'dayhead' }, h('b', {}, dayLabel(e.rows[0].created_at)), ' ', h('span', {}, tally[k] + (tally[k] === 1 ? ' entry' : ' entries')))); }
+        lines.push(card(e));
       });
-      invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), chips, section('Latest ' + lines.length + (lines.length === 1 ? ' entry' : ' entries'), lines.length ? lines : h('p', { class: 'muted' }, 'Nothing here.'))]);
+      invShow('Stock history', [h('div', { class: 'acts' }, h('button', { class: 'btn ghost small', onclick: openInventory }, 'Back to inventory')), chips, section('Latest ' + shown.length + (shown.length === 1 ? ' entry' : ' entries'), lines.length ? lines : h('p', { class: 'muted' }, 'Nothing here.'))]);
     });
   }
   // ── Shipping labels from the orders: the server fetches each Delhivery label, this page lays them out on 13 x 19 in (see labelsheet.js) ──

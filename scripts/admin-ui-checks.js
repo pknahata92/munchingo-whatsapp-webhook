@@ -147,12 +147,17 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     // 16 Nov 2026: one take-out is one entry in History, with its flavours inside (the ledger keeps a row per flavour)
     const grp = qa('#viewStock .hgroup').filter((g) => /Diwali Fair, Sector 15/.test(text(g)));
     ok(grp.length === 1, 'History shows the several-flavour take-out as ONE entry (saw ' + grp.length + ')');
-    ok(grp.length === 1 && /5 boxes/.test(text(grp[0])) && /atta-kesari/.test(text(grp[0])) && /atta-original/.test(text(grp[0])) && /Sold at event/.test(text(grp[0])), 'the entry names the event, the total (5 boxes) and both flavours');
+    ok(grp.length === 1 && /Kesari/.test(text(grp[0])) && /Original/.test(text(grp[0])) && /Sold at event/.test(text(grp[0])) && !/atta-/.test(text(grp[0])), 'the entry names the event and both Flavors by their real names, never the short codes');
     ok(grp.length === 1 && grp[0].querySelectorAll('.line').length === 2, 'the two lines stay inside the entry, each with its own Cancel line button');
     // 17 Nov 2026: the calm layout. One card per entry with a bold title, boxes, and who and when; flavour lines are folded away
     const card = grp[0];
     ok(card && card.classList.contains('hcard') && /Sold at event · Diwali Fair, Sector 15/.test(text(card.querySelector('.ttl'))), 'the card title reads kind and event: Sold at event · Diwali Fair, Sector 15');
-    ok(card && /^5 boxes/.test(text(card.querySelector('.sub'))) && !!card.querySelector('.meta'), 'under it: the boxes, then who and when in a lighter line');
+    ok(card && /^5\s*boxes$/.test(text(card.querySelector('.big'))) && !!card.querySelector('.meta'), 'a big "5 boxes" count on the right, and who and when in a lighter line');
+    const chipsTxt = card ? Array.from(card.querySelectorAll('.fchip')).map((c) => text(c)).sort().join('|') : '';
+    ok(chipsTxt === 'Kesari ×3|Original ×2', 'the Flavors show as little chips with their count (saw ' + chipsTxt + ')');
+    ok(card && card.classList.contains('k-sale'), 'the card carries its kind colour (sale)');
+    const heads = qa('#viewStock .dayhead').map((d) => text(d));
+    ok(heads.length >= 1 && /Today/.test(heads[0]) && /entr/.test(heads[0]), 'History is grouped under day headings, newest first (saw ' + heads.join(' | ') + ')');
     const lineBox = card && card.querySelector('.hlines');
     ok(!!lineBox && lineBox.hidden === true, 'the flavour lines are folded away at first');
     const tog = card && Array.from(card.querySelectorAll('button')).find((b) => /^See the 2 lines$/.test(text(b)));
@@ -174,7 +179,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     click(qa('#viewStock .hgroup button').find((b) => /^Save change$/.test(text(b)))); await until(() => /Sector 16/.test(text(q('#viewStock'))), 5000, 'the relabelled entry').catch(() => {});
     ok(await onHand('atta-kesari') === k1 && await onHand('atta-original') === o1, 'changing who it was for does not move stock');
     const e16 = qa('#viewStock .hgroup').filter((g) => /Sector 16/.test(text(g)) && !/Cancelled/.test(text(g.querySelector('.ghead'))));
-    ok(e16.length === 1 && /5 boxes/.test(text(e16[0])), 'History shows the new entry: Sector 16, 5 boxes');
+    ok(e16.length === 1 && /5\s*boxes/.test(text(e16[0])), 'History shows the new entry: Sector 16, 5 boxes');
     ok(qa('#viewStock .hgroup').some((g) => /Sector 15/.test(text(g)) && /Cancelled/.test(text(g))), 'and the old Sector 15 entry stays, shown as cancelled');
     let asked = ''; o.win.prompt = (m) => { asked = m; return 'entered twice'; };
     click(btn(e16[0].querySelector('.ghead'), /^Cancel entry$/)); await until(async () => (await onHand('atta-kesari')) === k1 + 3, 5000, 'stock to come back').catch(() => {});
@@ -484,7 +489,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
 
     // Correct the Sugar-Lite receipt (33 received, 3 damaged) to 36 received, 0 damaged
     const before = (await apiGet('/admin/api/inventory')).items.find((i) => i.slug === 'atta-lite-sugar').on_hand;
-    click(btn(lines.find((l) => /atta-lite-sugar/.test(text(l))), /^Correct$/));
+    click(btn(lines.find((l) => /Sugar-Lite/.test(text(l))), /^Correct$/));
     await until(() => /Correct receipt: Atta Sugar-Lite/.test(text(q('#viewStock'))), 4000, 'the correct form');
     const inputs = qa('#viewStock input');
     ok(inputs[0].value === '33' && inputs[1].value === '3' && inputs.some((i) => i.value === '15OCT26'), 'the form is filled with the old receipt: 33 received, 3 damaged, lot 15OCT26 (saw ' + inputs.map((i) => i.value).join('/') + ')');
@@ -515,7 +520,7 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     // read the previous view on a slow run, and the late redraw then hit the closed window (flaky until 29 Oct 2026).
     const shown = (chip, linesOk) => until(() => !!byText('#viewStock .chip.on', chip) && linesOk(qa('#viewStock .line')), 5000, 'the history to show ' + chip);
     click(byText('#viewStock .chip', /^Received$/)); await shown(/^Received$/, (ls) => ls.length >= 2 && ls.every((l) => /Received/.test(ent(l)))).catch(() => {});
-    lines = qa('#viewStock .line').filter((l) => /atta-lite-sugar/.test(text(l)));
+    lines = qa('#viewStock .line').filter((l) => /Sugar-Lite/.test(text(l)));
     const oldLine = lines.find((l) => /\+33/.test(text(l))), newLine = lines.find((l) => /\+36/.test(text(l)));
     ok(!!oldLine && /Cancelled/.test(text(oldLine)) && !btn(oldLine, /^(Correct|Cancel entry|Cancel line)$/), 'the old receipt now says Cancelled and offers no Correct or Cancel (' + (oldLine ? text(oldLine).slice(0, 80) : 'missing') + ')');
     ok(!!newLine && !!btn(newLine, /^Correct$/), 'the new receipt is there, and can itself be corrected');
