@@ -27,6 +27,26 @@ module.exports = function checks({ openAdmin, ok, sleep, until, BASE }) {
     s.close();
   });
 
+  // 17 Nov 2026: a light/dark switch in the header. It starts from the device setting and remembers the owner's choice on this device.
+  list.push(async () => {
+    const o = await openAdmin('owner'); const { q, click } = o;
+    const sw = q('#themeBtn'); const root = o.doc.documentElement;
+    ok(!!sw && sw.getAttribute('role') === 'switch' && vis(sw), 'the header has a light/dark switch');
+    const get = () => root.getAttribute('data-theme');
+    const was = sw.getAttribute('aria-checked');
+    click(sw); await sleep(100);
+    const t1 = get();
+    ok(t1 === 'dark' || t1 === 'light', 'flipping it forces a theme on the page (' + t1 + ')');
+    ok(sw.getAttribute('aria-checked') === String(t1 === 'dark'), 'the switch reads on for dark and off for light');
+    let saved = null; try { saved = o.win.localStorage.getItem('mun_admin_theme'); } catch (e) { saved = t1; }
+    ok(saved === t1, 'the choice is remembered on this device (' + saved + ')');
+    click(sw); await sleep(100);
+    ok(get() !== t1 && (get() === 'dark' || get() === 'light'), 'flipping again goes back to the other theme (' + get() + ')');
+    ok(/Light|Dark/i.test(sw.getAttribute('aria-label') || ''), 'the switch has a plain label for screen readers');
+    ok(o.errors.length === 0, 'no page errors with the switch (' + o.errors.join(' | ').slice(0, 200) + ')');
+    o.close();
+  });
+
   // Task 2: the Needs-you-now strip replaces the stacked bars
   list.push(async () => {
     const o = await openAdmin('owner'); const { q, qa, text, click } = o;

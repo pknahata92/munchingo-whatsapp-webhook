@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<script>try{var t=localStorage.getItem('mun_admin_theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
 <title>Munchingo Admin</title>
 <style>
 :root{--navy:#0B2D50;--gold:#CEAD5E;--terra:#A35A34;--terra-d:#86482A;--cream:#FAF6EB;--paper:#FFFDF8;--ink:#2A1A12;--ink2:#5B4537;--line:#E4D6BE;--band:#F3E6CC;--green:#2A6F44;--red:#A63B38;--amber:#8A5A0F;--tx-terra:#A35A34;--tx-red:#A63B38;--tx-green:#2A6F44;--tx-amber:#8A5A0F}
-@media (prefers-color-scheme:dark){:root{--cream:#1B1612;--paper:#241D18;--ink:#F3EADB;--ink2:#C9B9A4;--line:#3A2F27;--band:#2B231C;--tx-terra:#E39A72;--tx-red:#F08A83;--tx-green:#6FCB94;--tx-amber:#E6B450}}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--cream:#1B1612;--paper:#241D18;--ink:#F3EADB;--ink2:#C9B9A4;--line:#3A2F27;--band:#2B231C;--tx-terra:#E39A72;--tx-red:#F08A83;--tx-green:#6FCB94;--tx-amber:#E6B450}}
+:root[data-theme="dark"]{--cream:#1B1612;--paper:#241D18;--ink:#F3EADB;--ink2:#C9B9A4;--line:#3A2F27;--band:#2B231C;--tx-terra:#E39A72;--tx-red:#F08A83;--tx-green:#6FCB94;--tx-amber:#E6B450}
 *{box-sizing:border-box}html,body{margin:0}
 body{background:var(--cream);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
 header{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px;position:sticky;top:0;z-index:20}
@@ -155,10 +157,12 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 .nlline,.upline{flex-direction:column;align-items:stretch;gap:4px}.nlline .acts,.upline .acts{margin-top:2px}
 .refuse{border:1.5px solid var(--red);background:#FBE4E0;color:#2A1A12;border-radius:12px;padding:10px 12px;margin-top:8px;font-size:13px;cursor:default;overflow-wrap:anywhere}
 .refuse>b{color:#A63B38}.refuse label,.refuse .muted{color:#5B4537}
-@media (prefers-color-scheme:dark){.refuse{background:#3E1F1D;color:var(--ink)}.refuse>b{color:var(--tx-red)}.refuse label,.refuse .muted{color:var(--ink2)}}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .refuse{background:#3E1F1D;color:var(--ink)}:root:not([data-theme="light"]) .refuse>b{color:var(--tx-red)}:root:not([data-theme="light"]) .refuse label,:root:not([data-theme="light"]) .refuse .muted{color:var(--ink2)}}
+:root[data-theme="dark"] .refuse{background:#3E1F1D;color:var(--ink)}:root[data-theme="dark"] .refuse>b{color:var(--tx-red)}:root[data-theme="dark"] .refuse label,:root[data-theme="dark"] .refuse .muted{color:var(--ink2)}
 /* ── Calm layer (17 Nov 2026): one spacing rhythm (4/8/12/16/24), warm accents, quieter alerts and badges. CSS only. ── */
-:root{--s2:8px;--s3:12px;--s4:16px;--s5:24px;--accent:var(--navy);--accent-tx:#fff;--accent-sub:#ffffffbb}
-@media (prefers-color-scheme:dark){:root{--accent:#3B2D20;--accent-tx:#F2DFAE;--accent-sub:#F2DFAEbb}}
+:root{--s2:8px;--s3:12px;--s4:16px;--s5:24px;--accent:#43301F;--accent-tx:#FAEFD2;--accent-sub:#FAEFD2bb}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--accent:#3B2D20;--accent-tx:#F2DFAE;--accent-sub:#F2DFAEbb}}
+:root[data-theme="dark"]{--accent:#3B2D20;--accent-tx:#F2DFAE;--accent-sub:#F2DFAEbb}
 .chip.on,.step.on{background:var(--accent);border-color:var(--accent);color:var(--accent-tx)}.step.on small{color:var(--accent-sub)}
 .dayhead{background:var(--accent);color:var(--accent-tx);margin:var(--s5) 0 var(--s3)}.dayhead:first-child{margin-top:var(--s2)}
 #toast{background:var(--accent);color:var(--accent-tx)}
@@ -171,7 +175,14 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 .htop{display:flex;gap:var(--s3);align-items:flex-start}.hmain{flex:1;min-width:0}.big{flex:none;text-align:right;min-width:48px}.big b{display:block;font-size:26px;line-height:1}.big small{display:block;margin-top:4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
 .fchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}.fchip{--fc:#8A7A6A;display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px 3px 8px;font-size:12.5px;font-weight:600;background:color-mix(in srgb,var(--fc) 18%,transparent);border:1px solid color-mix(in srgb,var(--fc) 45%,transparent)}.fchip i{width:9px;height:9px;border-radius:50%;background:var(--fc);flex:none}
 .fo{--fc:#7C2230}.fk{--fc:#A9582F}.fa{--fc:#4F6579}.fs{--fc:#6B4F63}
-@media (prefers-color-scheme:dark){.fo{--fc:#D4627B}.fk{--fc:#E08A55}.fa{--fc:#86A8C4}.fs{--fc:#B792AD}}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .fo{--fc:#D4627B}:root:not([data-theme="light"]) .fk{--fc:#E08A55}:root:not([data-theme="light"]) .fa{--fc:#86A8C4}:root:not([data-theme="light"]) .fs{--fc:#B792AD}}
+:root[data-theme="dark"] .fo{--fc:#D4627B}:root[data-theme="dark"] .fk{--fc:#E08A55}:root[data-theme="dark"] .fa{--fc:#86A8C4}:root[data-theme="dark"] .fs{--fc:#B792AD}
+#themeBtn{padding:0 4px;display:inline-flex;align-items:center;border:0;background:transparent}#themeBtn:hover{border-color:transparent}
+.tsw{position:relative;display:block;width:54px;height:30px;border-radius:999px;background:var(--band);border:1px solid var(--line)}
+.tsw::before,.tsw::after{position:absolute;top:50%;transform:translateY(-50%);font-size:13px;line-height:1;color:var(--ink2)}.tsw::before{content:"\2600";left:8px}.tsw::after{content:"\263E";right:9px}
+.tsw i{position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:var(--terra);transition:transform .18s}
+#themeBtn[aria-checked="true"] .tsw i{transform:translateX(24px)}#themeBtn:focus-visible{outline:2px solid var(--terra);outline-offset:2px;border-radius:999px}
+@media(max-width:520px){.tsw{width:48px}#themeBtn[aria-checked="true"] .tsw i{transform:translateX(18px)}}
 @media(max-width:699px){
 .needs{gap:0;background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:var(--s2) 0 var(--s3)}
 .need{border:0;border-bottom:1px solid var(--line);border-left:4px solid var(--terra);border-radius:0;background:transparent;min-height:48px;padding:10px var(--s4)}
@@ -179,10 +190,8 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 }
 @media(min-width:700px){.needs{gap:var(--s3);margin:var(--s2) 0 var(--s4)}.need{padding:12px var(--s4)}.need b{font-size:22px}}
 @media(max-width:520px){#viewStock>.acts .btn,#viewStock .sec>.acts .btn,.hcard .acts .btn{flex:1 1 calc(50% - 4px)}#viewStock .hcard .acts .btn{flex:1 1 calc(50% - 4px)}}
-@media (prefers-color-scheme:dark){
-  .b-test{background:#2E2646;color:#CDBDF5}.b-topack{background:#3A2C12;color:#E6B450}.b-packed{background:#1E3350;color:#A9C9F2}.b-shipped{background:#173A27;color:#7AD3A0}
-  .b-refunded,.b-cancelled{background:#4A211E;color:#F29A93}.b-gift{background:#43261B;color:#F5BFA5}.badge.b-stale{background:#4A211E;color:#F29A93}.b-unpaid{background:var(--band);color:var(--ink2)}
-}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .b-test{background:#2E2646;color:#CDBDF5}:root:not([data-theme="light"]) .b-topack{background:#3A2C12;color:#E6B450}:root:not([data-theme="light"]) .b-packed{background:#1E3350;color:#A9C9F2}:root:not([data-theme="light"]) .b-shipped{background:#173A27;color:#7AD3A0}:root:not([data-theme="light"]) .b-refunded,:root:not([data-theme="light"]) .b-cancelled{background:#4A211E;color:#F29A93}:root:not([data-theme="light"]) .b-gift{background:#43261B;color:#F5BFA5}:root:not([data-theme="light"]) .badge.b-stale{background:#4A211E;color:#F29A93}:root:not([data-theme="light"]) .b-unpaid{background:var(--band);color:var(--ink2)}}
+:root[data-theme="dark"] .b-test{background:#2E2646;color:#CDBDF5}:root[data-theme="dark"] .b-topack{background:#3A2C12;color:#E6B450}:root[data-theme="dark"] .b-packed{background:#1E3350;color:#A9C9F2}:root[data-theme="dark"] .b-shipped{background:#173A27;color:#7AD3A0}:root[data-theme="dark"] .b-refunded,:root[data-theme="dark"] .b-cancelled{background:#4A211E;color:#F29A93}:root[data-theme="dark"] .b-gift{background:#43261B;color:#F5BFA5}:root[data-theme="dark"] .badge.b-stale{background:#4A211E;color:#F29A93}:root[data-theme="dark"] .b-unpaid{background:var(--band);color:var(--ink2)}
 </style>
 </head>
 <body>
@@ -206,8 +215,17 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
 <div id="app" hidden>
   <header>
     <span class="logo"><img src="/admin/logo.png" alt="Munchingo"></span><span class="sp"></span><small id="who"></small>
-    <button class="hdrbtn plain" id="helpBtn" aria-label="Help" type="button">?</button><button class="hdrbtn plain" id="out" type="button">Sign out</button>
+    <button class="hdrbtn plain" id="themeBtn" role="switch" aria-checked="false" aria-label="Dark mode" type="button"><span class="tsw"><i></i></span></button><button class="hdrbtn plain" id="helpBtn" aria-label="Help" type="button">?</button><button class="hdrbtn plain" id="out" type="button">Sign out</button>
   </header>
+  <script>
+  (function () {   // light/dark switch: starts from the device setting; a tap forces the other theme and remembers it on this device
+    var btn = document.getElementById('themeBtn'), root = document.documentElement;
+    function effective() { var t = root.getAttribute('data-theme'); if (t) return t; try { return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (e) { return 'light'; } }
+    function paint() { var d = effective() === 'dark'; btn.setAttribute('aria-checked', String(d)); btn.title = d ? 'Dark mode is on. Tap for light.' : 'Light mode is on. Tap for dark.'; }
+    btn.addEventListener('click', function () { var next = effective() === 'dark' ? 'light' : 'dark'; root.setAttribute('data-theme', next); try { localStorage.setItem('mun_admin_theme', next); } catch (e) {} paint(); });
+    paint();
+  })();
+  </script>
   <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
     <button class="tab on" data-tab="orders" role="tab" aria-selected="true" type="button">Orders</button>
     <button class="tab" data-tab="stock" role="tab" aria-selected="false" type="button">Stock</button>
