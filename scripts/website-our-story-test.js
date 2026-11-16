@@ -67,7 +67,7 @@ const img = art.querySelector('figure img');
 ok(img, 'the article has a photo');
 if (img) {
   const src = img.getAttribute('src');
-  ok(src === 'images/family-thali.webp' && fs.existsSync(path.join(SITE, src)), 'photo is images/family-thali.webp and exists');
+  ok(src === 'images/bikaner-baking.webp' && fs.existsSync(path.join(SITE, src)), 'photo is images/bikaner-baking.webp (Bikaner shoot, photo 6) and exists');
   ok(fs.existsSync(path.join(SITE, src)) && fs.statSync(path.join(SITE, src)).size < 200 * 1024, 'photo file under 200 KB');
   ok(+img.getAttribute('width') > 0 && +img.getAttribute('height') > 0, 'photo has width and height');
   ok(norm(img.getAttribute('alt')).length >= 20, 'photo has a real alt text');
@@ -78,7 +78,9 @@ const ld = [...d.querySelectorAll('script[type="application/ld+json"]')].map((s)
 const graph = ld.flatMap((j) => j['@graph'] || [j]);
 const a = graph.find((x) => x['@type'] === 'Article');
 ok(a && a.author && a.author.name === 'Prashant Nahata', 'Article schema with author');
-ok(a && /family-thali\.webp$/.test(String(a.image)), 'Article schema image is the photo');
+ok(a && /bikaner-baking\.webp$/.test(String(a.image)), 'Article schema image is the photo');
+ok(!/family-thali/.test(read('our-story.html')), 'no family photo on the page (Prashant, 17 Nov: family members)');
+ok(meta('meta[property="og:image"]') === 'https://munchingo.com/images/bikaner-baking.jpg' && fs.existsSync(path.join(SITE, 'images/bikaner-baking.jpg')), 'share image is images/bikaner-baking.jpg and exists');
 ok(a && a.headline === 'Why we started Munchingo', 'Article headline unchanged');
 ok(a && !isNaN(Date.parse(a.datePublished)) && Date.parse(a.dateModified) >= Date.parse(a.datePublished), 'Article dates parse and modified >= published');
 
