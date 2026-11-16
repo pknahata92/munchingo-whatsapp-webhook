@@ -96,5 +96,26 @@ const onHand = async (inv, slug) => (await inv.overview()).items.find((i) => i.s
   await rejects(inv.relabelEntry({ ids: old, type: 'OFFLINE_SALE', who: 'Z', invoice: 'PENDING', reason: 'r', actor: A, isOwner: false }), /owner/, 'staff cannot relabel an entry older than a day');
   ok((await inv.relabelEntry({ ids: old, type: 'OFFLINE_SALE', who: 'Z', invoice: 'INV-1', reason: 'r', actor: A, isOwner: true })).lines === old.length, 'the owner can');
 
+  // ── independent review, 16 Nov 2026 ──
+  const addRow = async (o) => { await st.insert([{ item_slug: 'atta-original', lot_code: '15OCT26', best_before: '2027-01-13', ...o }]); return st.mv[st.mv.length - 1].id; };
+  // event lines are netted by the event return, not by reversals: refuse them here
+  const ex = await addRow({ type: 'EXHIBITION', qty: -3, ref: 'Diwali Mela' });
+  await rejects(inv.reverseEntry({ ids: [ex], reason: 'x', actor: A, isOwner: true }), /event/i, 'an event line cannot be reversed as an entry');
+  await rejects(inv.relabelEntry({ ids: [ex], type: 'GIFT', who: 'x', reason: 'x', actor: A, isOwner: true }), /event/i, 'an event line cannot be relabelled');
+  // only the kinds History offers can be reversed by hand: rejected-lot and expired lines belong to the delivery flow
+  for (const type of ['SUPPLIER_RETURN', 'EXPIRED']) {
+    const id1 = await addRow({ type, qty: -2, note: 'x' });
+    await rejects(inv.reverseEntry({ ids: [id1], reason: 'x', actor: A, isOwner: true }), /cannot be reversed here/, type + ' cannot be reversed as an entry');
+    await rejects(inv.reverse({ id: id1, reason: 'x', actor: A, isOwner: true }), /cannot be reversed here/, type + ' cannot be reversed as a single line either');
+  }
+  // the damage reason travels with the line
+  const dm = await addRow({ type: 'DAMAGED', qty: -1, note: 'crushed', reason: 'transit' });
+  await inv.relabelEntry({ ids: [dm], type: 'DAMAGED', who: '', note: 'crushed in the van', reason: 'fix note', actor: A });
+  ok(st.mv.some((m) => m.type === 'DAMAGED' && m.note === 'crushed in the van' && m.reason === 'transit'), 'a relabelled damaged line keeps its damage reason');
+  ok(st.mv.some((m) => m.type === 'REVERSAL' && m.reverses_id === dm && m.reason === 'transit'), 'and so does its reversal');
+  // bad kinds and bad ids give plain errors
+  for (const bad of ['constructor', 'toString', '__proto__']) await rejects(inv.relabelEntry({ ids: [dm], type: bad, who: '', reason: 'x', actor: A }), /Choose what happened/, 'kind "' + bad + '" is refused in plain words');
+  for (const bad of [[true], [[2]], ['1e30'], [1e30], ['abc'], [-1], [1.5]]) await rejects(inv.reverseEntry({ ids: bad, reason: 'x', actor: A, isOwner: true }), /No such line|No lines|whole numbers/, 'id ' + JSON.stringify(bad) + ' is refused');
+
   console.log(`entry-actions-test: ${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

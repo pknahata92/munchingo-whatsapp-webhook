@@ -21,6 +21,8 @@ const DUP_WINDOW_MS = 15 * 60_000;
 const DAMAGED_ON_RECEIPT = 'Damaged or not okay on receipt';
 const DAMAGE_REASONS = new Set(['transit', 'supplier', 'repack']);
 const HISTORY_TYPES = new Set(['RECEIVE', 'DAMAGED', 'SALE', 'SALE_UNDO', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX', 'REVERSAL', 'SUPPLIER_RETURN', 'EXPIRED']);
+// The kinds of line History lets a person cancel by hand. Rejected-lot and expired lines belong to the delivery flow, so they are not here.
+const HAND_REVERSIBLE = new Set(['RECEIVE', 'DAMAGED', 'USE', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EXHIBITION_RETURN', 'OFFLINE_SALE', 'EVENT_SALE', 'RETURN', 'COUNT_FIX']);
 const REVERSE_FREE_MS = 24 * 3_600_000;       // anyone can reverse their own slip within a day; later needs the owner
 // A stock_settings time (the database writes now()::text, e.g. '2026-11-08 15:10:00+00') as milliseconds; null when it is missing or unreadable.
 const tsMs = (v) => { if (v == null || v === '') return null; const n = Date.parse(v); return Number.isNaN(n) ? null : n; };
@@ -518,22 +520,24 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Why a line cannot be cancelled by hand, or null when it can. Shared by reverse() and the whole-entry actions.
   async function reverseBlock(m, isOwner) {
     if (m.type === 'REVERSAL' || m.type === 'SALE' || m.type === 'SALE_UNDO') return new StockError(m.type === 'REVERSAL' ? 'A reversal cannot be reversed. Enter the correct line instead.' : 'Sales are handled by the order. Use Undo on the order.', 409);
+    if (!HAND_REVERSIBLE.has(m.type)) return new StockError('This kind of line cannot be reversed here.', 409);
     if (m.delivery_id != null) return new StockError('This line came from a delivery. Use Correct whole delivery or Fix lot.', 409);
     if (m.reverses_id || await store.reversalOf(m.id)) return new StockError('This line was already reversed.', 409);
     if (!isOwner && Date.now() - Date.parse(m.created_at) > REVERSE_FREE_MS) return new StockError('Only the owner can reverse a line older than a day.', 403);
     return null;
   }
-  const reversalRow = (m, rs, actor) => ({ item_slug: m.item_slug, qty: -m.qty, type: 'REVERSAL', lot_code: m.lot_code, best_before: m.best_before, ref: m.ref, note: rs, reverses_id: m.id, ...who(actor) });
+  const reversalRow = (m, rs, actor) => ({ item_slug: m.item_slug, qty: -m.qty, type: 'REVERSAL', lot_code: m.lot_code, best_before: m.best_before, ref: m.ref, note: rs, reverses_id: m.id, ...(m.reason ? { reason: m.reason } : {}), ...who(actor) });
   // The lines of one entry, each checked; any problem refuses the whole thing so nothing is half done.
   async function entryLines(ids, isOwner) {
-    const list = [...new Set((Array.isArray(ids) ? ids : []).map(Number))];
+    const list = [...new Set((Array.isArray(ids) ? ids : []).map((x) => ((typeof x === 'number' && Number.isSafeInteger(x) && x > 0) || (typeof x === 'string' && /^[0-9]{1,15}$/.test(x) && Number(x) > 0)) ? Number(x) : NaN))];
     if (!list.length) throw new StockError('No lines chosen.');
     if (list.length > 200) throw new StockError('Too many lines in one entry.');
     const lines = [];
     for (const id of list) {
-      const m = Number.isInteger(id) ? await store.movement(id) : null;
+      const m = Number.isSafeInteger(id) ? await store.movement(id) : null;
       if (!m) throw new StockError('No such line.', 404);
       const block = await reverseBlock(m, isOwner); if (block) throw block;
+      if (m.type === 'EXHIBITION' || m.type === 'EXHIBITION_RETURN') throw new StockError('Event lines are looked after by Event return, so they cannot be changed here.', 409);   // the event view counts only the event lines, not reversals
       lines.push(m);
     }
     return lines;
@@ -561,7 +565,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
   // Rows are never edited: each old line is cancelled and the same boxes (same lot, same best before) are written again with the new
   // label, all in one save. The history keeps the old label, the cancellation and the new line.
   async function relabelEntry({ ids, type, who: whoFor, invoice, note, reason, actor, isOwner }) {
-    if (!TYPES_OUT[type]) throw new StockError('Choose what happened: used, damaged, sample, gift, event or sold offline.');
+    if (!Object.hasOwn(TYPES_OUT, type)) throw new StockError('Choose what happened: used, damaged, sample, gift, event or sold offline.');
     const forWhom = cleanText(whoFor, 80);
     if (NEEDS_WHO[type] && !forWhom) throw new StockError(NEEDS_WHO[type]);
     const inv = cleanText(invoice, 40);
@@ -574,7 +578,7 @@ function makeInventory(store, { now = () => Date.now() } = {}) {
       const nt = note == null ? (m.note || null) : (cleanText(note, 300) || null);
       if (type === 'DAMAGED' && !nt) throw new StockError('Add a short note on what was wrong.');
       const base = type === 'OFFLINE_SALE' ? { type, note: nt, ref: inv, party: forWhom } : { type, note: nt, ref: forWhom || null, party: null };
-      rows.push(reversalRow(m, rs, actor), { ...base, item_slug: m.item_slug, qty: m.qty, lot_code: m.lot_code, best_before: m.best_before, ...who(actor) });
+      rows.push(reversalRow(m, rs, actor), { ...base, item_slug: m.item_slug, qty: m.qty, lot_code: m.lot_code, best_before: m.best_before, ...(type === 'DAMAGED' && m.reason ? { reason: m.reason } : {}), ...who(actor) });
     }
     await store.insert(rows);
     return { ok: true, lines: lines.length };
@@ -788,6 +792,7 @@ function supabaseStore() {
   const c = () => require('./database').client();
   const ok = ({ data, error }) => {
     if (error) {
+      if (error.code === '23505' && /stock_movements_reverse_once/.test(error.message)) throw new StockError('This line was already reversed.', 409);   // two taps at once: the database lets only one through
       const missing = error.code === '42P01' || /does not exist|schema cache/.test(error.message);
       if (missing && /stock_lots|stock_deliveries|stock_save_delivery|delivery_id|counted_at/.test(error.message)) throw new Error('Run batch_receiving_migration.sql in Supabase first.');   // not the bill-once clash: that is a 23505, not a missing table
       throw new Error(missing ? (/party|stock_totals/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : 'Run stock_ledger_migration.sql in Supabase first.') : (/stock_movements_type_check/.test(error.message) ? 'Run stock_offline_migration.sql in Supabase first.' : error.message));

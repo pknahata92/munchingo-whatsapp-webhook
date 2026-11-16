@@ -2110,10 +2110,10 @@ label.dlphoto{display:inline-flex;align-items:center;text-transform:none;letter-
           can ? h('button', { class: 'btn ghost small', onclick: function (e) { var why = prompt('Cancel this line? Why? (a reversing line is added; nothing is deleted)'); if (!why) return; e.target.disabled = true; api('/admin/api/inventory/reverse', { method: 'POST', body: { id: m.id, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse') : null);
       };
       // Whole-entry actions: cancel every live line in one save, or change who/what it was for (cancel + rewrite, stock does not move).
-      var OUT = ['USE', 'DAMAGED', 'SAMPLE', 'GIFT', 'EXHIBITION', 'EVENT_SALE', 'OFFLINE_SALE'];
+      var OUT = ['USE', 'DAMAGED', 'SAMPLE', 'GIFT', 'EVENT_SALE', 'OFFLINE_SALE'];   // event lines (EXHIBITION) are looked after by Event return, so no whole-entry actions on them
       var OUTLBL = { EVENT_SALE: 'Sold at an exhibition or event', SAMPLE: 'Sample or tasting', GIFT: 'Given away to someone', EXHIBITION: 'Taken to an exhibition or event', OFFLINE_SALE: 'Sold offline (bulk order or hamper)', DAMAGED: 'Damaged or not okay', USE: 'Used' };
       var entryActs = function (e) {
-        var liveRows = e.rows.filter(function (m) { return !m.reversed && m.delivery_id == null && CAN.indexOf(m.type) >= 0; });
+        var liveRows = e.rows.filter(function (m) { return !m.reversed && m.delivery_id == null && CAN.indexOf(m.type) >= 0 && m.type !== 'EXHIBITION' && m.type !== 'EXHIBITION_RETURN'; });
         if (!liveRows.length) return null;
         var ids = liveRows.map(function (m) { return m.id; }), m0 = liveRows[0], box = h('div', {});
         var bits = [e.rows.length < 2 ? null : h('button', { class: 'btn ghost small', type: 'button', onclick: function (ev) { var why = prompt('Cancel this whole entry (' + ids.length + ' line' + (ids.length === 1 ? '' : 's') + ')? Why? (reversing lines are added; nothing is deleted)'); if (!why) return; ev.target.disabled = true; api('/admin/api/inventory/reverse-entry', { method: 'POST', body: { ids: ids, reason: why } }).then(function (r) { toast(r.ok ? 'Reversed ' + r.reversed + ' lines' : (r.error || 'Failed'), 5000); refreshLow(); invHistory(); }); } }, 'Reverse whole entry')];
